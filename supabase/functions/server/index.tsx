@@ -4454,4 +4454,105 @@ app.post(`${root}/voice/word/end`, async (c) => {
   return c.json({ game: null });
 });
 
+const voiceTurnSeconds = 10;
+const voiceTurnLaps = 3;
+const voiceTurnThemes = ["赤いもの", "丸いもの", "春に見るもの", "台所にあるもの", "果物", "甘いもの", "乗り物", "動物", "夏のもの", "秋のもの", "冬のもの", "町にあるお店"];
+const voiceShiritoriStarts = ["りんご", "さくら", "たまご", "みかん", "ひまわり", "でんしゃ"];
+type VoiceTurnState = {
+  id: string;
+  status: "playing" | "finished";
+  mode: "shiritori" | "association";
+  theme: string;
+  order: string[];
+  turn: number;
+  turnStartedAt: number;
+  ok: Record<string, number>;
+  miss: Record<string, number>;
+  updatedAt: number;
+};
+const voiceTurnKey = (groupId: string) => `sawakai:voice-turn:${groupId}`;
+
+function publicVoiceTurn(state: VoiceTurnState) {
+  return {
+    ...state,
+    seconds: voiceTurnSeconds,
+    maxTurns: state.order.length * voiceTurnLaps,
+    serverNow: Date.now(),
+  };
+}
+
+app.get(`${root}/voice/turn`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const state = (await kv.get(voiceTurnKey(context.groupId))) as VoiceTurnState | null;
+  return c.json({ game: state ? publicVoiceTurn(state) : null });
+});
+
+app.post(`${root}/voice/turn/start`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const key = voiceTurnKey(context.groupId);
+  const current = (await kv.get(key)) as VoiceTurnState | null;
+  if (current && current.status === "playing") {
+    return c.json({ game: publicVoiceTurn(current) });
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const names = cleanVoiceNames(body.names);
+  if (!names.includes(context.session.name)) names.unshift(context.session.name);
+  const mode = body.mode === "association" ? "association" : "shiritori";
+  const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+  const state: VoiceTurnState = {
+    id: crypto.randomUUID(),
+    status: "playing",
+    mode,
+    theme: mode === "association" ? pick(voiceTurnThemes) : pick(voiceShiritoriStarts),
+    order: shuffled(names).slice(0, voiceMaxMembers),
+    turn: 0,
+    turnStartedAt: Date.now(),
+    ok: {},
+    miss: {},
+    updatedAt: Date.now(),
+  };
+  await kv.set(key, state);
+  return c.json({ game: publicVoiceTurn(state) });
+});
+
+// ok=言えた / miss=言えなかった / timeout=時間切れ。turn は二重操作を防ぐための番号
+app.post(`${root}/voice/turn/action`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const key = voiceTurnKey(context.groupId);
+  const state = (await kv.get(key)) as VoiceTurnState | null;
+  if (!state || state.status !== "playing") return c.json({ game: null });
+  const body = await c.req.json().catch(() => ({}));
+  if (body.turn !== state.turn) return c.json({ game: publicVoiceTurn(state) });
+  const action = body.action;
+  if (action === "timeout") {
+    if (Date.now() - state.turnStartedAt < (voiceTurnSeconds - 2) * 1000) {
+      return c.json({ game: publicVoiceTurn(state) });
+    }
+  } else if (action !== "ok" && action !== "miss") {
+    return c.json({ game: publicVoiceTurn(state) });
+  }
+  const speaker = state.order[state.turn % state.order.length];
+  const ok = { ...state.ok };
+  const miss = { ...state.miss };
+  if (action === "ok") ok[speaker] = (ok[speaker] ?? 0) + 1;
+  else miss[speaker] = (miss[speaker] ?? 0) + 1;
+  const turn = state.turn + 1;
+  const next: VoiceTurnState =
+    turn >= state.order.length * voiceTurnLaps
+      ? { ...state, ok, miss, turn, status: "finished", updatedAt: Date.now() }
+      : { ...state, ok, miss, turn, turnStartedAt: Date.now(), updatedAt: Date.now() };
+  await kv.set(key, next);
+  return c.json({ game: publicVoiceTurn(next) });
+});
+
+app.post(`${root}/voice/turn/end`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  await kv.del(voiceTurnKey(context.groupId));
+  return c.json({ game: null });
+});
+
 Deno.serve(app.fetch);

@@ -4489,7 +4489,7 @@ input:focus-visible {
 }
 .voice-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   margin-top: 20px;
   gap: 8px;
 }

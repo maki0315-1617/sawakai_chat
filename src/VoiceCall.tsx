@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
 import VoiceGame from "./VoiceGame";
 import VoiceWordGame from "./VoiceWordGame";
+import VoiceTurnGame from "./VoiceTurnGame";
 
 type VoiceCallProps = {
   apiRoot: string;
@@ -21,7 +22,7 @@ export default function VoiceCall({
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
-  const [gameTab, setGameTab] = useState<"quiz" | "word">("quiz");
+  const [gameTab, setGameTab] = useState<"quiz" | "word" | "turn">("quiz");
   const [names, setNames] = useState<string[]>([]);
   const [speaking, setSpeaking] = useState<string[]>([]);
   const roomRef = useRef<Room | null>(null);
@@ -178,9 +179,22 @@ export default function VoiceCall({
               >
                 🗣️ 言葉あて
               </button>
+              <button
+                className={`voice-button ${gameTab === "turn" ? "voice-button--join" : ""}`}
+                onClick={() => setGameTab("turn")}
+              >
+                🔤 しりとり・連想
+              </button>
             </div>
             {gameTab === "quiz" ? (
               <VoiceGame
+                apiRoot={apiRoot}
+                headers={headers}
+                myName={myName}
+                names={names}
+              />
+            ) : gameTab === "turn" ? (
+              <VoiceTurnGame
                 apiRoot={apiRoot}
                 headers={headers}
                 myName={myName}
