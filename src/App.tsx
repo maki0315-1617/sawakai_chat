@@ -4157,10 +4157,21 @@ export default function App() {
       setAppBadge?: (count?: number) => Promise<void>;
       clearAppBadge?: () => Promise<void>;
     };
-    if (appBadgeEnabled && totalGroupUnread > 0) {
-      void badgeNavigator.setAppBadge?.(totalGroupUnread);
+    const badgeCount = appBadgeEnabled ? totalGroupUnread : 0;
+    if (badgeCount > 0) {
+      void badgeNavigator.setAppBadge?.(badgeCount)?.catch(() => undefined);
     } else {
-      void badgeNavigator.clearAppBadge?.();
+      void badgeNavigator.clearAppBadge?.()?.catch(() => undefined);
+    }
+    if ("serviceWorker" in navigator) {
+      void navigator.serviceWorker.ready
+        .then((registration) =>
+          registration.active?.postMessage({
+            type: "SAWAKAI_BADGE_SYNC",
+            count: badgeCount,
+          }),
+        )
+        .catch(() => undefined);
     }
   }, [appBadgeEnabled, groupName, totalGroupUnread]);
 

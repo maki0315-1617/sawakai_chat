@@ -1,5 +1,26 @@
-const CACHE_NAME = "sawakai-shell-v8";
+const CACHE_NAME = "sawakai-shell-v9";
+const BADGE_CACHE = "sawakai-badge";
 const scopeUrl = new URL("./", self.registration.scope);
+const badgeKey = new URL("__badge-count", scopeUrl).href;
+
+async function readBadgeCount() {
+  const cache = await caches.open(BADGE_CACHE);
+  const response = await cache.match(badgeKey);
+  return response ? Number(await response.text()) || 0 : 0;
+}
+
+async function writeBadgeCount(count) {
+  const cache = await caches.open(BADGE_CACHE);
+  await cache.put(badgeKey, new Response(String(count)));
+  if (count > 0) await self.navigator?.setAppBadge?.(count);
+  else await self.navigator?.clearAppBadge?.();
+}
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SAWAKAI_BADGE_SYNC") {
+    event.waitUntil(writeBadgeCount(Math.max(0, Number(event.data.count) || 0)));
+  }
+});
 const shellFiles = [
   scopeUrl.href,
   new URL("manifest.webmanifest", scopeUrl).href,
@@ -26,7 +47,7 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== CACHE_NAME)
+            .filter((key) => key !== CACHE_NAME && key !== BADGE_CACHE)
             .map((key) => caches.delete(key)),
         ),
       )
@@ -69,7 +90,7 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(Promise.resolve(self.navigator?.clearAppBadge?.()));
+  event.waitUntil(writeBadgeCount(0));
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
@@ -99,7 +120,7 @@ self.addEventListener("push", (event) => {
     Promise.all([
       self.registration.showNotification(title, options),
       payload.appBadge
-        ? self.navigator?.setAppBadge?.()
+        ? readBadgeCount().then((count) => writeBadgeCount(count + 1))
         : Promise.resolve(),
       self.clients
         .matchAll({ type: "window", includeUncontrolled: true })
