@@ -1,17 +1,18 @@
 {
-  "title": "茶話会・みんなで脳活",
-  "description": "高齢者にも使いやすい、招待制グループチャットと脳活を一緒に楽しめるアプリです。",
-  "icons": {
-    "icon": "/pwa-icon-192.png"
-  },
-  "customScripts": {
-    "headEnd": "<link rel=\"manifest\" href=\"manifest.webmanifest\"><meta name=\"theme-color\" content=\"#287c70\"><meta name=\"mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-status-bar-style\" content=\"default\"><meta name=\"apple-mobile-web-app-title\" content=\"茶話会・みんなで脳活\"><link rel=\"apple-touch-icon\" href=\"pwa-icon-192.png\">"
-  },
-  "robots": {
-    "index": false
-  },
-  "accessibility": {
-    "addBypassLinks": false,
-    "ignoreReducedMotion": false
-  }
+    "title":  "茶話会・みんなで脳活｜AIチャット｜ロンAIシステムズ",
+    "description":  "茶話会・AIチャット「みんなで脳活」。ロンAI（ロンAIシステムズ）が提供する、高齢者にも使いやすい招待制グループチャットと脳活・認知症トレーニング（クイズ・しりとり・言葉あてなど）を一緒に楽しめるアプリです。",
+    "icons":  {
+                  "icon":  "/pwa-icon-192.png"
+              },
+    "customScripts":  {
+                          "headEnd":  ""
+                      },
+    "robots":  {
+                   "index":  true
+               },
+    "accessibility":  {
+                          "addBypassLinks":  false,
+                          "ignoreReducedMotion":  false
+                      },
+    "language":  "ja"
 }

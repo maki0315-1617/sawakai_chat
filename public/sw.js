@@ -1,4 +1,4 @@
-const CACHE_NAME = "sawakai-shell-v6";
+const CACHE_NAME = "sawakai-shell-v7";
 const scopeUrl = new URL("./", self.registration.scope);
 const shellFiles = [
   scopeUrl.href,
@@ -12,7 +12,9 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(shellFiles))
+      .then((cache) =>
+        Promise.allSettled(shellFiles.map((file) => cache.add(file))),
+      )
       .then(() => self.skipWaiting()),
   );
 });
