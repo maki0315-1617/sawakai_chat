@@ -1,4 +1,4 @@
-const CACHE_NAME = "sawakai-shell-v7";
+const CACHE_NAME = "sawakai-shell-v8";
 const scopeUrl = new URL("./", self.registration.scope);
 const shellFiles = [
   scopeUrl.href,
