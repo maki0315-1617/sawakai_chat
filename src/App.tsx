@@ -4227,6 +4227,9 @@ export default function App() {
       installPromptRef.current = event as InstallPromptEvent;
       setCanInstall(true);
     };
+    const early = (window as unknown as { __installPrompt?: Event })
+      .__installPrompt;
+    if (early) capturePrompt(early);
     const markInstalled = () => {
       installPromptRef.current = null;
       setCanInstall(false);
