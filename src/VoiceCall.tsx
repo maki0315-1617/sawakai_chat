@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
+import VoiceGame from "./VoiceGame";
 
 type VoiceCallProps = {
   apiRoot: string;
@@ -162,6 +163,12 @@ export default function VoiceCall({
                 通話から抜ける
               </button>
             </div>
+            <VoiceGame
+              apiRoot={apiRoot}
+              headers={headers}
+              myName={myName}
+              names={names}
+            />
           </>
         ) : (
           <>

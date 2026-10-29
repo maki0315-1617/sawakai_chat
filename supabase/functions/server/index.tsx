@@ -4072,7 +4072,28 @@ app.post(`${root}/voice/token`, async (c) => {
   if (!url || !apiKey || !apiSecret) {
     return c.json({ error: "音声通話の設定が完了していません。" }, 503);
   }
-  const { AccessToken } = await import("npm:livekit-server-sdk@2");
+  const { AccessToken, RoomServiceClient } = await import(
+    "npm:livekit-server-sdk@2"
+  );
+  try {
+    const roomClient = new RoomServiceClient(
+      url.replace(/^wss:/, "https:").replace(/^ws:/, "http:"),
+      apiKey,
+      apiSecret,
+    );
+    const members = await roomClient.listParticipants(`sawakai-${groupId}`);
+    const alreadyIn = members.some(
+      (member) => member.identity === `${groupId}:${session.name}`,
+    );
+    if (!alreadyIn && members.length >= voiceMaxMembers) {
+      return c.json(
+        { error: `通話は${voiceMaxMembers}人までです。満員のため参加できません。` },
+        409,
+      );
+    }
+  } catch (error) {
+    console.log("voice participant check skipped", error);
+  }
   const token = new AccessToken(apiKey, apiSecret, {
     identity: `${groupId}:${session.name}`,
     name: session.name,
@@ -4086,6 +4107,213 @@ app.post(`${root}/voice/token`, async (c) => {
     canPublishData: false,
   });
   return c.json({ token: await token.toJwt(), url });
+});
+
+const voiceMaxMembers = 6;
+const voiceGameQuestionCount = 5;
+const voiceGameSeconds = 30;
+type VoiceGameState = {
+  id: string;
+  status: "playing" | "finished";
+  phase: "question" | "reveal";
+  startedBy: string;
+  index: number;
+  questionStartedAt: number;
+  questions: BrainQuestion[];
+  answers: Record<string, number>;
+  scores: Record<string, number>;
+  updatedAt: number;
+};
+const voiceGameKey = (groupId: string) => `sawakai:voice-game:${groupId}`;
+
+function shuffled<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function pickVoiceGameQuestions(): BrainQuestion[] {
+  const pool = [
+    ...safetyBrainQuestionBank,
+    ...Object.values(brainQuestionBank).flat(),
+  ].filter((question) => question.choices.length >= 2);
+  return shuffled(pool)
+    .slice(0, voiceGameQuestionCount)
+    .map((question) => {
+      const order = shuffled(question.choices.map((_, index) => index));
+      return {
+        ...question,
+        choices: order.map((index) => question.choices[index]),
+        correctIndex: order.indexOf(question.correctIndex),
+      };
+    });
+}
+
+// 時間切れなら自動で答え合わせの状態へ進める
+function settleVoiceGame(state: VoiceGameState): VoiceGameState {
+  if (
+    state.status === "playing" &&
+    state.phase === "question" &&
+    Date.now() - state.questionStartedAt >= (voiceGameSeconds + 2) * 1000
+  ) {
+    return revealVoiceGame(state);
+  }
+  return state;
+}
+
+function revealVoiceGame(state: VoiceGameState): VoiceGameState {
+  if (state.phase === "reveal") return state;
+  const correct = state.questions[state.index].correctIndex;
+  const scores = { ...state.scores };
+  for (const [name, choice] of Object.entries(state.answers)) {
+    if (choice === correct) scores[name] = (scores[name] ?? 0) + 1;
+  }
+  return { ...state, phase: "reveal", scores, updatedAt: Date.now() };
+}
+
+function publicVoiceGame(state: VoiceGameState) {
+  const hide = state.status === "playing" && state.phase === "question";
+  return {
+    ...state,
+    seconds: voiceGameSeconds,
+    serverNow: Date.now(),
+    questions: state.questions.map((question, index) =>
+      hide && index === state.index
+        ? { ...question, correctIndex: -1, explanation: "" }
+        : index > state.index
+          ? { ...question, correctIndex: -1, explanation: "" }
+          : question,
+    ),
+  };
+}
+
+async function voiceGameContext(c: any) {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return { error: "もう一度参加してください。", status: 401 as const };
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) {
+    return { error: "このグループには参加していません。", status: 403 as const };
+  }
+  return { session, groupId };
+}
+
+async function loadVoiceGame(groupId: string): Promise<VoiceGameState | null> {
+  const stored = (await kv.get(voiceGameKey(groupId))) as VoiceGameState | null;
+  if (!stored) return null;
+  const settled = settleVoiceGame(stored);
+  if (settled !== stored) await kv.set(voiceGameKey(groupId), settled);
+  return settled;
+}
+
+app.get(`${root}/voice/game`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const state = await loadVoiceGame(context.groupId);
+  return c.json({ game: state ? publicVoiceGame(state) : null });
+});
+
+app.post(`${root}/voice/game/start`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const current = await loadVoiceGame(context.groupId);
+  if (current && current.status === "playing") {
+    return c.json({ game: publicVoiceGame(current) });
+  }
+  const state: VoiceGameState = {
+    id: crypto.randomUUID(),
+    status: "playing",
+    phase: "question",
+    startedBy: context.session.name,
+    index: 0,
+    questionStartedAt: Date.now(),
+    questions: pickVoiceGameQuestions(),
+    answers: {},
+    scores: {},
+    updatedAt: Date.now(),
+  };
+  await kv.set(voiceGameKey(context.groupId), state);
+  return c.json({ game: publicVoiceGame(state) });
+});
+
+app.post(`${root}/voice/game/answer`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const body = await c.req.json().catch(() => ({}));
+  const state = await loadVoiceGame(context.groupId);
+  if (!state || state.status !== "playing" || state.phase !== "question") {
+    return c.json({ game: state ? publicVoiceGame(state) : null });
+  }
+  const choice = Number(body.choice);
+  const question = state.questions[state.index];
+  const name = context.session.name;
+  if (
+    body.index === state.index &&
+    Number.isInteger(choice) &&
+    choice >= 0 &&
+    choice < question.choices.length &&
+    state.answers[name] === undefined
+  ) {
+    state.answers = { ...state.answers, [name]: choice };
+    state.updatedAt = Date.now();
+    await kv.set(voiceGameKey(context.groupId), state);
+  }
+  return c.json({ game: publicVoiceGame(state) });
+});
+
+app.post(`${root}/voice/game/reveal`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const body = await c.req.json().catch(() => ({}));
+  const state = await loadVoiceGame(context.groupId);
+  if (!state) return c.json({ game: null });
+  if (
+    state.status === "playing" &&
+    state.phase === "question" &&
+    body.index === state.index
+  ) {
+    const next = revealVoiceGame(state);
+    await kv.set(voiceGameKey(context.groupId), next);
+    return c.json({ game: publicVoiceGame(next) });
+  }
+  return c.json({ game: publicVoiceGame(state) });
+});
+
+app.post(`${root}/voice/game/next`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const body = await c.req.json().catch(() => ({}));
+  const state = await loadVoiceGame(context.groupId);
+  if (!state) return c.json({ game: null });
+  if (
+    state.status === "playing" &&
+    state.phase === "reveal" &&
+    body.index === state.index
+  ) {
+    const last = state.index + 1 >= state.questions.length;
+    const next: VoiceGameState = last
+      ? { ...state, status: "finished", updatedAt: Date.now() }
+      : {
+          ...state,
+          index: state.index + 1,
+          phase: "question",
+          answers: {},
+          questionStartedAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+    await kv.set(voiceGameKey(context.groupId), next);
+    return c.json({ game: publicVoiceGame(next) });
+  }
+  return c.json({ game: publicVoiceGame(state) });
+});
+
+app.post(`${root}/voice/game/end`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  await kv.del(voiceGameKey(context.groupId));
+  return c.json({ game: null });
 });
 
 Deno.serve(app.fetch);

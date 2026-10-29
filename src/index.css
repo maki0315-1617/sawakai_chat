@@ -4448,3 +4448,42 @@ input:focus-visible {
   opacity: 0.6;
   cursor: default;
 }
+.voice-panel {
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.voice-game {
+  display: grid;
+  margin-top: 20px;
+  padding-top: 16px;
+  gap: 12px;
+  border-top: 2px dashed var(--accent-soft);
+}
+
+.voice-game__title,
+.voice-game__meta {
+  margin: 0;
+  font-size: 18px;
+}
+
+.voice-game__prompt {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.voice-choice {
+  text-align: left;
+  font-size: 20px;
+}
+
+.voice-choice.is-selected {
+  outline: 3px solid var(--accent);
+}
+
+.voice-choice.is-correct {
+  color: #ffffff;
+  background: #15803d;
+}
