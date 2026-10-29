@@ -4316,4 +4316,142 @@ app.post(`${root}/voice/game/end`, async (c) => {
   return c.json({ game: null });
 });
 
+const voiceWordRounds = 6;
+const voiceWordBank: { category: string; words: string[] }[] = [
+  { category: "食べ物", words: ["おにぎり", "カレーライス", "天ぷら", "すき焼き", "たい焼き", "みそ汁", "納豆", "ラーメン", "おでん", "どら焼き"] },
+  { category: "動物", words: ["ぞう", "きりん", "ペンギン", "うさぎ", "たぬき", "カメ", "ひつじ", "イルカ", "ふくろう", "パンダ"] },
+  { category: "季節・行事", words: ["お正月", "桜", "花火", "紅葉", "七夕", "こたつ", "ひなまつり", "お月見", "すいか", "雪だるま"] },
+  { category: "暮らしの道具", words: ["傘", "電子レンジ", "ほうき", "やかん", "めがね", "くつ下", "せんたく機", "ハサミ", "座布団", "こたつ"] },
+  { category: "乗り物・場所", words: ["新幹線", "自転車", "東京タワー", "富士山", "温泉", "動物園", "駅", "郵便局", "公園", "病院"] },
+];
+type VoiceWordState = {
+  id: string;
+  status: "playing" | "finished";
+  host: string;
+  round: number;
+  word: string;
+  category: string;
+  usedWords: string[];
+  scores: Record<string, number>;
+  updatedAt: number;
+};
+const voiceWordKey = (groupId: string) => `sawakai:voice-word:${groupId}`;
+
+function pickVoiceWord(used: string[]) {
+  const all = voiceWordBank.flatMap((entry) =>
+    entry.words.map((word) => ({ category: entry.category, word })),
+  );
+  const fresh = all.filter((entry) => !used.includes(entry.word));
+  const pool = fresh.length > 0 ? fresh : all;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function publicVoiceWord(state: VoiceWordState, name: string) {
+  const isHost = state.host === name;
+  return {
+    id: state.id,
+    status: state.status,
+    host: state.host,
+    round: state.round,
+    maxRounds: voiceWordRounds,
+    category: state.category,
+    word: isHost && state.status === "playing" ? state.word : undefined,
+    scores: state.scores,
+    updatedAt: state.updatedAt,
+  };
+}
+
+function cleanVoiceNames(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((v): v is string => typeof v === "string"))].slice(0, voiceMaxMembers)
+    : [];
+}
+
+app.get(`${root}/voice/word`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const state = (await kv.get(voiceWordKey(context.groupId))) as VoiceWordState | null;
+  return c.json({ game: state ? publicVoiceWord(state, context.session.name) : null });
+});
+
+app.post(`${root}/voice/word/start`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const key = voiceWordKey(context.groupId);
+  const current = (await kv.get(key)) as VoiceWordState | null;
+  if (current && current.status === "playing") {
+    return c.json({ game: publicVoiceWord(current, context.session.name) });
+  }
+  const picked = pickVoiceWord([]);
+  const state: VoiceWordState = {
+    id: crypto.randomUUID(),
+    status: "playing",
+    host: context.session.name,
+    round: 1,
+    word: picked.word,
+    category: picked.category,
+    usedWords: [picked.word],
+    scores: {},
+    updatedAt: Date.now(),
+  };
+  await kv.set(key, state);
+  return c.json({ game: publicVoiceWord(state, context.session.name) });
+});
+
+// 出題者の操作: correct=正解した人を選ぶ / pass=お題を変える / skip=出題者を交代
+app.post(`${root}/voice/word/action`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const me = context.session.name;
+  const key = voiceWordKey(context.groupId);
+  const state = (await kv.get(key)) as VoiceWordState | null;
+  if (!state || state.status !== "playing") return c.json({ game: null });
+  if (state.host !== me) {
+    return c.json({ game: publicVoiceWord(state, me) });
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const names = cleanVoiceNames(body.names);
+  const scores = { ...state.scores };
+  let next: VoiceWordState = { ...state, updatedAt: Date.now() };
+
+  if (body.action === "pass") {
+    const picked = pickVoiceWord(state.usedWords);
+    next = { ...next, word: picked.word, category: picked.category, usedWords: [...state.usedWords, picked.word] };
+  } else if (body.action === "correct" || body.action === "skip") {
+    if (body.action === "correct") {
+      const winner = typeof body.winner === "string" ? body.winner : "";
+      if (!winner || winner === me || !names.includes(winner)) {
+        return c.json({ game: publicVoiceWord(state, me) });
+      }
+      scores[winner] = (scores[winner] ?? 0) + 1;
+      scores[me] = (scores[me] ?? 0) + 1;
+    }
+    if (state.round >= voiceWordRounds) {
+      next = { ...next, scores, status: "finished" };
+    } else {
+      const order = names.includes(me) ? names : [me, ...names];
+      const nextHost = order[(order.indexOf(me) + 1) % order.length];
+      const picked = pickVoiceWord(state.usedWords);
+      next = {
+        ...next,
+        scores,
+        host: nextHost,
+        round: state.round + 1,
+        word: picked.word,
+        category: picked.category,
+        usedWords: [...state.usedWords, picked.word],
+      };
+    }
+  }
+  await kv.set(key, next);
+  return c.json({ game: publicVoiceWord(next, me) });
+});
+
+app.post(`${root}/voice/word/end`, async (c) => {
+  const context = await voiceGameContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  await kv.del(voiceWordKey(context.groupId));
+  return c.json({ game: null });
+});
+
 Deno.serve(app.fetch);

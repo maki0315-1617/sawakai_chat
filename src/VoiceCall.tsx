@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
 import VoiceGame from "./VoiceGame";
+import VoiceWordGame from "./VoiceWordGame";
 
 type VoiceCallProps = {
   apiRoot: string;
@@ -20,6 +21,7 @@ export default function VoiceCall({
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
+  const [gameTab, setGameTab] = useState<"quiz" | "word">("quiz");
   const [names, setNames] = useState<string[]>([]);
   const [speaking, setSpeaking] = useState<string[]>([]);
   const roomRef = useRef<Room | null>(null);
@@ -163,12 +165,35 @@ export default function VoiceCall({
                 通話から抜ける
               </button>
             </div>
-            <VoiceGame
-              apiRoot={apiRoot}
-              headers={headers}
-              myName={myName}
-              names={names}
-            />
+            <div className="voice-tabs" role="tablist">
+              <button
+                className={`voice-button ${gameTab === "quiz" ? "voice-button--join" : ""}`}
+                onClick={() => setGameTab("quiz")}
+              >
+                🧠 脳活クイズ
+              </button>
+              <button
+                className={`voice-button ${gameTab === "word" ? "voice-button--join" : ""}`}
+                onClick={() => setGameTab("word")}
+              >
+                🗣️ 言葉あて
+              </button>
+            </div>
+            {gameTab === "quiz" ? (
+              <VoiceGame
+                apiRoot={apiRoot}
+                headers={headers}
+                myName={myName}
+                names={names}
+              />
+            ) : (
+              <VoiceWordGame
+                apiRoot={apiRoot}
+                headers={headers}
+                myName={myName}
+                names={names}
+              />
+            )}
           </>
         ) : (
           <>

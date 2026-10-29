@@ -4487,3 +4487,17 @@ input:focus-visible {
   color: #ffffff;
   background: #15803d;
 }
+.voice-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 20px;
+  gap: 8px;
+}
+
+.voice-word {
+  padding: 16px;
+  text-align: center;
+  font-size: 32px;
+  background: var(--accent-soft);
+  border-radius: 16px;
+}
