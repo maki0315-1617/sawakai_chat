@@ -1,0 +1,17 @@
+{
+  "title": "茶話会・みんなで脳活",
+  "description": "高齢者にも使いやすい、招待制グループチャットと脳活を一緒に楽しめるアプリです。",
+  "icons": {
+    "icon": "/pwa-icon-192.png"
+  },
+  "customScripts": {
+    "headEnd": "<link rel=\"manifest\" href=\"manifest.webmanifest\"><meta name=\"theme-color\" content=\"#287c70\"><meta name=\"mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-status-bar-style\" content=\"default\"><meta name=\"apple-mobile-web-app-title\" content=\"茶話会・みんなで脳活\"><link rel=\"apple-touch-icon\" href=\"pwa-icon-192.png\">"
+  },
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
