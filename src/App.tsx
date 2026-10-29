@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { projectId, publicAnonKey } from "../utils/supabase/info";
+import VoiceCall from "./VoiceCall";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -3645,6 +3646,7 @@ export default function App() {
   const [groupImageUrl, setGroupImageUrl] = useState("");
   const [showGroup, setShowGroup] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
+  const [showVoice, setShowVoice] = useState(false);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
   const [isSavingGroupName, setIsSavingGroupName] = useState(false);
   const [isSavingProfileImage, setIsSavingProfileImage] = useState(false);
@@ -5107,6 +5109,14 @@ export default function App() {
             <p>{members.length || 4}人が参加中</p>
           </button>
           <button
+            aria-label="グループで音声通話をする"
+            className="brain-header-button voice-header-button"
+            onClick={() => setShowVoice(true)}
+          >
+            <span aria-hidden="true" className="voice-header-button__icon">📞</span>
+            <span>通話</span>
+          </button>
+          <button
             aria-label="みんなで脳活タイムを開く"
             className="brain-header-button"
             onClick={() => setShowBrain(true)}
@@ -5421,6 +5431,15 @@ export default function App() {
           )}
         </div>
       </footer>
+
+      {showVoice && (
+        <VoiceCall
+          apiRoot={apiRoot}
+          headers={apiHeaders(token, activeGroupId)}
+          myName={profile.name}
+          onClose={() => setShowVoice(false)}
+        />
+      )}
 
       {showBrain && (
         <BrainPanel

@@ -4059,4 +4059,33 @@ app.post(`${root}/memory-matches/:matchId/finish`, async (c) => {
   await kv.set(memoryMatchDataKey(context.groupId), activities);
   return c.json({ activity: activities[index] });
 });
+app.post(`${root}/voice/token`, async (c) => {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return c.json({ error: "もう一度参加してください。" }, 401);
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) {
+    return c.json({ error: "このグループには参加していません。" }, 403);
+  }
+  const url = Deno.env.get("LIVEKIT_URL");
+  const apiKey = Deno.env.get("LIVEKIT_API_KEY");
+  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
+  if (!url || !apiKey || !apiSecret) {
+    return c.json({ error: "音声通話の設定が完了していません。" }, 503);
+  }
+  const { AccessToken } = await import("npm:livekit-server-sdk@2");
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity: `${groupId}:${session.name}`,
+    name: session.name,
+    ttl: 60 * 60,
+  });
+  token.addGrant({
+    room: `sawakai-${groupId}`,
+    roomJoin: true,
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: false,
+  });
+  return c.json({ token: await token.toJwt(), url });
+});
+
 Deno.serve(app.fetch);
