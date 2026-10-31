@@ -5566,7 +5566,7 @@ export default function App() {
             <p className="dialog-eyebrow">退出の確認</p>
             <h2 id="leave-confirm-title">{appName}から退出しますか？</h2>
             <p className="dialog-note">
-              退出すると、茶話会の電話（着信）に気づけなくなります。よろしいですか？
+              退出すると、この端末では茶話会の電話（着信）に気づけなくなります。よろしいですか？
               この端末の参加状態を解除します。これまでの会話内容は削除されません。
             </p>
             <div className="dialog-actions">

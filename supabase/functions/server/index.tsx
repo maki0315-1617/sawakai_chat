@@ -1122,6 +1122,10 @@ type PushNotificationOptions = {
   title?: string;
   body?: string;
   tag?: string;
+  // 本文をプレビュー設定に関係なくそのまま表示する（電話通知用）
+  fixedBody?: boolean;
+  ttlSeconds?: number;
+  urgent?: boolean;
 };
 
 async function sendPushNotifications(
@@ -1161,7 +1165,9 @@ async function sendPushNotifications(
   const notifiedNames = new Set<string>();
   await Promise.all(
     activeDevices.map(async (device) => {
-      const body = device.preview
+      const body = options.fixedBody
+        ? options.body ?? ""
+        : device.preview
         ? options.body ??
           (hasAttachment
             ? `${sender}さんからファイルが届きました。`
@@ -1184,6 +1190,12 @@ async function sendPushNotifications(
             url: "./",
             appBadge: device.appBadge,
           }),
+          options.ttlSeconds
+            ? {
+                TTL: options.ttlSeconds,
+                urgency: options.urgent ? "high" : "normal",
+              }
+            : undefined,
         );
         notifiedNames.add(device.name);
       } catch (reason) {
@@ -4153,13 +4165,46 @@ function dmSettle(call: DmCall, now: number): DmCall {
   return call;
 }
 
+async function dmPush(call: DmCall, kind: "ring" | "missed") {
+  try {
+    const time = new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(call.createdAt));
+    await sendPushNotifications(call.groupId, call.caller, "", false, {
+      recipientNames: new Set([call.callee]),
+      title:
+        kind === "ring"
+          ? `${call.caller}さんから電話です`
+          : `${call.caller}さんから電話がありました`,
+      body:
+        kind === "ring"
+          ? "タップして茶話会を開き、電話に出てください。"
+          : `${time}の電話に出られませんでした。`,
+      tag: `dm-${call.id}`,
+      fixedBody: true,
+      ttlSeconds: kind === "ring" ? dmRingSeconds : 60 * 60 * 24,
+      urgent: kind === "ring",
+    });
+  } catch {
+    console.warn("Call push notification failed");
+  }
+}
+
 async function dmLoadCalls(groupId: string): Promise<DmCall[]> {
   const stored = ((await kv.get(dmCallsKey(groupId))) as DmCall[] | undefined) ?? [];
   const now = Date.now();
   let changed = false;
+  const newlyMissed: DmCall[] = [];
   const settled = stored.map((call) => {
     const next = dmSettle(call, now);
-    if (next !== call) changed = true;
+    if (next !== call) {
+      changed = true;
+      if (call.status === "ringing" && next.status === "missed") {
+        newlyMissed.push(next);
+      }
+    }
     return next;
   });
   if (changed) {
@@ -4167,6 +4212,7 @@ async function dmLoadCalls(groupId: string): Promise<DmCall[]> {
     for (const call of settled) {
       if (!dmIsLive(call)) await dmClearActive(call);
     }
+    for (const call of newlyMissed) await dmPush(call, "missed");
   }
   return settled;
 }
@@ -4292,6 +4338,7 @@ app.post(`${root}/dm/call`, async (c) => {
   const active = { callId: call.id, groupId };
   await kv.set(dmActiveKey(session.name), active);
   await kv.set(dmActiveKey(to), active);
+  await dmPush(call, "ring");
   return c.json({ call: dmView(call, session.name) });
 });
 
@@ -4407,6 +4454,9 @@ async function dmAction(
   calls[index] = updated;
   await dmSaveCalls(groupId, calls);
   if (!dmIsLive(updated)) await dmClearActive(updated);
+  if (call.status === "ringing" && updated.status === "missed") {
+    await dmPush(updated, "missed");
+  }
   return c.json({ call: dmView(updated, session.name) });
 }
 

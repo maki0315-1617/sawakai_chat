@@ -737,9 +737,9 @@ export default function DirectCall({
             role="dialog"
           >
             <p className="dialog-eyebrow">電話の着信について</p>
-            <h2 id="dm-listen-title">電話はアプリを開いている間だけ届きます</h2>
+            <h2 id="dm-listen-title">電話の通知について</h2>
             <p className="dialog-note">
-              アプリを閉じていると、電話に気づけません。電話を待つときは、アプリを開いたままにしてください。気づけなかった電話は、次に開いたときにお知らせします。
+              アプリを開いている間は、着信音が鳴ります。アプリを閉じているときは、通知をオンにしていると「〇〇さんから電話です」とお知らせが届きます（音は端末の通知音です）。通知をオンにしていないと、電話に気づけません。
             </p>
             <button
               className="dialog-button dialog-button--send retention-notice__close"
