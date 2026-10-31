@@ -3460,7 +3460,10 @@ app.post(`${root}/voice/transcribe`, async (c) => {
   try {
     const listResponse = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-      { headers: { "x-goog-api-key": apiKey } },
+      {
+        headers: { "x-goog-api-key": apiKey },
+        signal: AbortSignal.timeout(4000),
+      },
     );
     if (listResponse.ok) {
       const listResult = await listResponse.json().catch(() => ({}));
@@ -3483,11 +3486,15 @@ app.post(`${root}/voice/transcribe`, async (c) => {
   const models = [...new Set([...preferred, ...discovered])].slice(0, 6);
   let lastStatus = 0;
   let lastReason = "";
+  const deadline = Date.now() + 35000;
   for (const model of models) {
+    const remaining = deadline - Date.now();
+    if (remaining < 3000) break;
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         {
+          signal: AbortSignal.timeout(Math.min(15000, remaining)),
           method: "POST",
           headers: {
             "Content-Type": "application/json",

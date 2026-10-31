@@ -118,6 +118,7 @@ export default function VoiceInput({
   const chunksRef = useRef<Float32Array[]>([]);
   const timerRef = useRef<number | null>(null);
   const recognitionRef = useRef<DeviceRecognition | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
   const stoppedRef = useRef(false);
   const finishRef = useRef<(() => void) | null>(null);
@@ -156,12 +157,20 @@ export default function VoiceInput({
 
   const transcribe = async (wav: Blob) => {
     setState("sending");
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 45000);
     try {
       const { "Content-Type": _ignored, ...rest } = headersRef.current;
       const response = await fetch(`${apiRoot}/voice/transcribe`, {
         method: "POST",
         headers: { ...rest, "Content-Type": "audio/wav" },
         body: wav,
+        signal: controller.signal,
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || typeof result.text !== "string") {
@@ -172,6 +181,12 @@ export default function VoiceInput({
       }
       onTextRef.current(result.text);
     } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") {
+        if (timedOut) {
+          setError("時間がかかりすぎました。もう一度「話して入力」を押してください。");
+        }
+        return;
+      }
       const serverBusy =
         reason instanceof TranscribeError &&
         [429, 500, 502, 503, 504].includes(reason.status);
@@ -190,6 +205,8 @@ export default function VoiceInput({
         );
       }
     } finally {
+      window.clearTimeout(timeout);
+      abortRef.current = null;
       setState("idle");
     }
   };
@@ -372,6 +389,7 @@ export default function VoiceInput({
   useEffect(
     () => () => {
       cancelledRef.current = true;
+      abortRef.current?.abort();
       recognitionRef.current?.abort();
       stoppedRef.current = true;
       cleanup();
@@ -411,6 +429,18 @@ export default function VoiceInput({
         <p className="voice-input__status" role="status">
           🔴 聞いています。ゆっくり話してください。
           <button className="voice-input__cancel" onClick={cancel} type="button">
+            やめる
+          </button>
+        </p>
+      )}
+      {state === "sending" && (
+        <p className="voice-input__status" role="status">
+          少しお待ちください。
+          <button
+            className="voice-input__cancel"
+            onClick={() => abortRef.current?.abort()}
+            type="button"
+          >
             やめる
           </button>
         </p>
