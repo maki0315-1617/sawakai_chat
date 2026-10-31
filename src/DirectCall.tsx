@@ -104,7 +104,8 @@ function formatClock(value: number) {
 
 function formatDateTime(value: number) {
   const date = new Date(value);
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${formatClock(value)}`;
+  const weekday = "日月火水木金土"[date.getDay()];
+  return `${date.getMonth() + 1}月${date.getDate()}日（${weekday}） ${formatClock(value)}`;
 }
 
 function historyLabel(call: DmCallView) {
@@ -574,8 +575,10 @@ export default function DirectCall({
                   >
                     <div>
                       <strong>{item.peer}さん</strong>
+                      <time className="dm-history__time">
+                        🕒 {formatDateTime(item.createdAt)}
+                      </time>
                       <span>{historyLabel(item)}</span>
-                      <small>{formatDateTime(item.createdAt)}</small>
                     </div>
                     <button
                       className="voice-button"
