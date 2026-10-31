@@ -4109,6 +4109,348 @@ app.post(`${root}/voice/token`, async (c) => {
   return c.json({ token: await token.toJwt(), url });
 });
 
+// ---- 1対1通話 ----
+type DmStatus =
+  | "ringing"
+  | "active"
+  | "ended"
+  | "missed"
+  | "rejected"
+  | "busy";
+type DmCall = {
+  id: string;
+  groupId: string;
+  caller: string;
+  callee: string;
+  status: DmStatus;
+  createdAt: number;
+  answeredAt?: number;
+  endedAt?: number;
+  heartbeat: Record<string, number>;
+  missedSeen?: boolean;
+};
+const dmRingSeconds = 30;
+const dmStaleSeconds = 20;
+const dmHistoryLimit = 30;
+const dmStoreLimit = 300;
+const dmCallsKey = (groupId: string) => `sawakai:dm:calls:${groupId}`;
+const dmActiveKey = (name: string) => `sawakai:dm:active:${name}`;
+const dmIsLive = (call: DmCall) =>
+  call.status === "ringing" || call.status === "active";
+
+// 応答なし・通信途切れの通話を自動で終了させる
+function dmSettle(call: DmCall, now: number): DmCall {
+  if (call.status === "ringing" && now - call.createdAt > dmRingSeconds * 1000) {
+    return { ...call, status: "missed", endedAt: now };
+  }
+  if (call.status === "active") {
+    const base = call.answeredAt ?? call.createdAt;
+    const stale = [call.caller, call.callee].some(
+      (name) => now - (call.heartbeat[name] ?? base) > dmStaleSeconds * 1000,
+    );
+    if (stale) return { ...call, status: "ended", endedAt: now };
+  }
+  return call;
+}
+
+async function dmLoadCalls(groupId: string): Promise<DmCall[]> {
+  const stored = ((await kv.get(dmCallsKey(groupId))) as DmCall[] | undefined) ?? [];
+  const now = Date.now();
+  let changed = false;
+  const settled = stored.map((call) => {
+    const next = dmSettle(call, now);
+    if (next !== call) changed = true;
+    return next;
+  });
+  if (changed) {
+    await kv.set(dmCallsKey(groupId), settled);
+    for (const call of settled) {
+      if (!dmIsLive(call)) await dmClearActive(call);
+    }
+  }
+  return settled;
+}
+
+async function dmSaveCalls(groupId: string, calls: DmCall[]) {
+  await kv.set(dmCallsKey(groupId), calls.slice(-dmStoreLimit));
+}
+
+async function dmClearActive(call: DmCall) {
+  for (const name of [call.caller, call.callee]) {
+    const active = (await kv.get(dmActiveKey(name))) as
+      | { callId: string }
+      | undefined;
+    if (active?.callId === call.id) await kv.del(dmActiveKey(name));
+  }
+}
+
+async function dmLiveCallFor(name: string): Promise<DmCall | null> {
+  const active = (await kv.get(dmActiveKey(name))) as
+    | { callId: string; groupId: string }
+    | undefined;
+  if (!active) return null;
+  const call = (await dmLoadCalls(active.groupId)).find(
+    (item) => item.id === active.callId,
+  );
+  if (call && dmIsLive(call)) return call;
+  await kv.del(dmActiveKey(name));
+  return null;
+}
+
+async function dmInGroupVoice(groupId: string, name: string): Promise<boolean> {
+  const url = Deno.env.get("LIVEKIT_URL");
+  const apiKey = Deno.env.get("LIVEKIT_API_KEY");
+  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
+  if (!url || !apiKey || !apiSecret) return false;
+  try {
+    const { RoomServiceClient } = await import("npm:livekit-server-sdk@2");
+    const roomClient = new RoomServiceClient(
+      url.replace(/^wss:/, "https:").replace(/^ws:/, "http:"),
+      apiKey,
+      apiSecret,
+    );
+    const members = await roomClient.listParticipants(`sawakai-${groupId}`);
+    return members.some((member) => member.identity === `${groupId}:${name}`);
+  } catch {
+    return false;
+  }
+}
+
+function dmView(call: DmCall, me: string) {
+  const outgoing = call.caller === me;
+  return {
+    id: call.id,
+    groupId: call.groupId,
+    peer: outgoing ? call.callee : call.caller,
+    direction: outgoing ? "outgoing" : "incoming",
+    status: call.status,
+    createdAt: call.createdAt,
+    durationSec:
+      call.answeredAt && call.endedAt
+        ? Math.max(0, Math.round((call.endedAt - call.answeredAt) / 1000))
+        : 0,
+  };
+}
+
+async function dmContext(c: any) {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return { error: "もう一度参加してください。", status: 401 as const };
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) {
+    return { error: "このグループには参加していません。", status: 403 as const };
+  }
+  return { session, groupId };
+}
+
+app.post(`${root}/dm/call`, async (c) => {
+  const context = await dmContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const { session, groupId } = context;
+  const body = await c.req.json().catch(() => ({}));
+  const to = typeof body.to === "string" ? body.to : "";
+  if (!to || to === session.name) {
+    return c.json({ error: "通話する相手を選んでください。" }, 400);
+  }
+  const members = await getMembers(groupId);
+  if (!members.some((member) => member.name === to)) {
+    return c.json({ error: "同じグループの人にだけ電話できます。" }, 403);
+  }
+  if (
+    (await dmLiveCallFor(session.name)) ||
+    (await dmInGroupVoice(groupId, session.name))
+  ) {
+    return c.json(
+      { error: "すでに通話中です。先に今の通話を終えてください。" },
+      409,
+    );
+  }
+  const now = Date.now();
+  const calls = await dmLoadCalls(groupId);
+  const busy =
+    (await dmLiveCallFor(to)) || (await dmInGroupVoice(groupId, to));
+  const call: DmCall = {
+    id: crypto.randomUUID(),
+    groupId,
+    caller: session.name,
+    callee: to,
+    status: busy ? "busy" : "ringing",
+    createdAt: now,
+    endedAt: busy ? now : undefined,
+    heartbeat: {},
+  };
+  await dmSaveCalls(groupId, [...calls, call]);
+  if (busy) {
+    return c.json(
+      {
+        busy: true,
+        error: `${to}さんは今、通話中です。しばらくしてからもう一度おかけください。`,
+        call: dmView(call, session.name),
+      },
+      409,
+    );
+  }
+  const active = { callId: call.id, groupId };
+  await kv.set(dmActiveKey(session.name), active);
+  await kv.set(dmActiveKey(to), active);
+  return c.json({ call: dmView(call, session.name) });
+});
+
+app.get(`${root}/dm/poll`, async (c) => {
+  const context = await dmContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const { session, groupId } = context;
+  const calls = await dmLoadCalls(groupId);
+  const now = Date.now();
+  const watchId = c.req.query("watch");
+  let changed = false;
+  const next = calls.map((call) => {
+    if (call.status === "active" && (call.caller === session.name || call.callee === session.name)) {
+      changed = true;
+      return { ...call, heartbeat: { ...call.heartbeat, [session.name]: now } };
+    }
+    return call;
+  });
+  if (changed) await dmSaveCalls(groupId, next);
+  const incoming = next.find(
+    (call) => call.callee === session.name && call.status === "ringing",
+  );
+  const watched = watchId ? next.find((call) => call.id === watchId) : undefined;
+  const missed = next
+    .filter(
+      (call) =>
+        call.callee === session.name && call.status === "missed" && !call.missedSeen,
+    )
+    .slice(-5);
+  return c.json({
+    incoming: incoming ? dmView(incoming, session.name) : null,
+    watched:
+      watched &&
+      (watched.caller === session.name || watched.callee === session.name)
+        ? dmView(watched, session.name)
+        : null,
+    missed: missed.map((call) => dmView(call, session.name)),
+  });
+});
+
+app.get(`${root}/dm/history`, async (c) => {
+  const context = await dmContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const { session, groupId } = context;
+  const calls = (await dmLoadCalls(groupId))
+    .filter((call) => call.caller === session.name || call.callee === session.name)
+    .slice(-dmHistoryLimit)
+    .reverse();
+  return c.json({ calls: calls.map((call) => dmView(call, session.name)) });
+});
+
+app.post(`${root}/dm/seen`, async (c) => {
+  const context = await dmContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const { session, groupId } = context;
+  const body = await c.req.json().catch(() => ({}));
+  const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
+  const calls = await dmLoadCalls(groupId);
+  await dmSaveCalls(
+    groupId,
+    calls.map((call) =>
+      call.callee === session.name && ids.includes(call.id)
+        ? { ...call, missedSeen: true }
+        : call,
+    ),
+  );
+  return c.json({ ok: true });
+});
+
+async function dmAction(
+  c: any,
+  action: "accept" | "reject" | "cancel" | "end",
+) {
+  const context = await dmContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const { session, groupId } = context;
+  const calls = await dmLoadCalls(groupId);
+  const index = calls.findIndex((call) => call.id === c.req.param("id"));
+  const call = calls[index];
+  if (
+    !call ||
+    (call.caller !== session.name && call.callee !== session.name)
+  ) {
+    return c.json({ error: "この通話が見つかりません。" }, 404);
+  }
+  const now = Date.now();
+  let updated = call;
+  if (action === "accept") {
+    if (call.callee !== session.name || call.status !== "ringing") {
+      return c.json({ error: "この電話はもう終了しています。" }, 409);
+    }
+    updated = {
+      ...call,
+      status: "active",
+      answeredAt: now,
+      heartbeat: { [call.caller]: now, [call.callee]: now },
+    };
+  } else if (action === "reject") {
+    if (call.callee === session.name && call.status === "ringing") {
+      updated = { ...call, status: "rejected", endedAt: now };
+    }
+  } else if (action === "cancel") {
+    if (call.caller === session.name && call.status === "ringing") {
+      updated = { ...call, status: "missed", endedAt: now };
+    }
+  } else if (dmIsLive(call)) {
+    updated = {
+      ...call,
+      status: call.status === "ringing" ? "missed" : "ended",
+      endedAt: now,
+    };
+  }
+  calls[index] = updated;
+  await dmSaveCalls(groupId, calls);
+  if (!dmIsLive(updated)) await dmClearActive(updated);
+  return c.json({ call: dmView(updated, session.name) });
+}
+
+app.post(`${root}/dm/:id/accept`, (c) => dmAction(c, "accept"));
+app.post(`${root}/dm/:id/reject`, (c) => dmAction(c, "reject"));
+app.post(`${root}/dm/:id/cancel`, (c) => dmAction(c, "cancel"));
+app.post(`${root}/dm/:id/end`, (c) => dmAction(c, "end"));
+
+app.post(`${root}/dm/:id/token`, async (c) => {
+  const context = await dmContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const { session, groupId } = context;
+  const call = (await dmLoadCalls(groupId)).find(
+    (item) => item.id === c.req.param("id"),
+  );
+  if (
+    !call ||
+    call.status !== "active" ||
+    (call.caller !== session.name && call.callee !== session.name)
+  ) {
+    return c.json({ error: "この通話は終了しています。" }, 409);
+  }
+  const url = Deno.env.get("LIVEKIT_URL");
+  const apiKey = Deno.env.get("LIVEKIT_API_KEY");
+  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
+  if (!url || !apiKey || !apiSecret) {
+    return c.json({ error: "音声通話の設定が完了していません。" }, 503);
+  }
+  const { AccessToken } = await import("npm:livekit-server-sdk@2");
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity: `dm:${call.id}:${session.name}`,
+    name: session.name,
+    ttl: 60 * 60 * 2,
+  });
+  token.addGrant({
+    room: `sawakai-dm-${call.id}`,
+    roomJoin: true,
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: false,
+  });
+  return c.json({ token: await token.toJwt(), url });
+});
+
 const voiceMaxMembers = 6;
 const voiceGameQuestionCount = 5;
 const voiceGameSeconds = 30;

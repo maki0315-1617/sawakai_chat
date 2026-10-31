@@ -8,6 +8,7 @@ import {
 } from "react";
 import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
+import DirectCall from "./DirectCall";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -3647,6 +3648,8 @@ export default function App() {
   const [showGroup, setShowGroup] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
+  const [showDirectCall, setShowDirectCall] = useState(false);
+  const [dmListening, setDmListening] = useState(true);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
   const [isSavingGroupName, setIsSavingGroupName] = useState(false);
   const [isSavingProfileImage, setIsSavingProfileImage] = useState(false);
@@ -5120,41 +5123,63 @@ export default function App() {
               )}
               <h1>{groupName}</h1>
             </span>
-            <p>{members.length || 4}人が参加中</p>
           </button>
+          <span
+            className={`dm-listening ${dmListening ? "" : "is-off"}`}
+            role="status"
+          >
+            {dmListening ? "📞 着信待ち中" : "📵 着信できません"}
+          </span>
+        </div>
+        <nav aria-label="メニュー" className="header-actions">
           <button
             aria-label="グループで音声通話をする"
-            className="brain-header-button voice-header-button"
+            className="header-action"
             onClick={() => setShowVoice(true)}
           >
-            <span aria-hidden="true" className="voice-header-button__icon">📞</span>
-            <span>通話</span>
+            <span aria-hidden="true" className="header-action__icon">📞</span>
+            <span>グループ通話</span>
+          </button>
+          <button
+            aria-label="1対1で電話をする"
+            className="header-action"
+            onClick={() => setShowDirectCall(true)}
+          >
+            <span aria-hidden="true" className="header-action__icon">🤙</span>
+            <span>1対1</span>
           </button>
           <button
             aria-label="みんなで脳活タイムを開く"
-            className="brain-header-button"
+            className="header-action"
             onClick={() => setShowBrain(true)}
           >
-            <BrainIcon />
+            <span aria-hidden="true" className="header-action__icon">
+              <BrainIcon />
+            </span>
             <span>脳活</span>
           </button>
           <button
-            aria-label="参加者と招待コードを見る"
-            className="members-button"
+            aria-label={`参加者と招待コードを見る（${members.length || 4}人が参加中）`}
+            className="header-action"
             onClick={() => {
               setShowGroup(true);
               void loadGroup();
             }}
           >
-            <PeopleIcon />
+            <span aria-hidden="true" className="header-action__icon">
+              <PeopleIcon />
+            </span>
+            <span>参加者</span>
           </button>
           <button
-            className="leave-button"
+            aria-label="退出する"
+            className="header-action header-action--leave"
             onClick={() => setShowLeaveConfirmation(true)}
           >
-            退出
+            <span aria-hidden="true" className="header-action__icon">🚪</span>
+            <span>退出</span>
           </button>
-        </div>
+        </nav>
       </header>
 
       <main className="chat-area">
@@ -5455,6 +5480,26 @@ export default function App() {
         />
       )}
 
+      <DirectCall
+        key={activeGroupId}
+        apiRoot={apiRoot}
+        headers={apiHeaders(token, activeGroupId)}
+        members={members}
+        myName={profile.name}
+        notify={(title, body, tag) => {
+          if (
+            notificationsEnabledRef.current &&
+            "Notification" in window &&
+            Notification.permission === "granted"
+          ) {
+            void showSystemNotification(title, body, tag);
+          }
+        }}
+        onClosePanel={() => setShowDirectCall(false)}
+        onListeningChange={setDmListening}
+        showPanel={showDirectCall}
+      />
+
       {showBrain && (
         <BrainPanel
           activeGroupId={activeGroupId}
@@ -5521,6 +5566,7 @@ export default function App() {
             <p className="dialog-eyebrow">退出の確認</p>
             <h2 id="leave-confirm-title">{appName}から退出しますか？</h2>
             <p className="dialog-note">
+              退出すると、茶話会の電話（着信）に気づけなくなります。よろしいですか？
               この端末の参加状態を解除します。これまでの会話内容は削除されません。
             </p>
             <div className="dialog-actions">
