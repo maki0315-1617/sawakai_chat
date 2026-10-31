@@ -10,6 +10,7 @@ import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput from "./VoiceInput";
+import DocumentsViewer from "./DocumentsViewer";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -3663,6 +3664,7 @@ export default function App() {
   const [showBrain, setShowBrain] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [showDirectCall, setShowDirectCall] = useState(false);
+  const [showDocuments, setShowDocuments] = useState(false);
   const [dmListening, setDmListening] = useState(true);
   const [dmInCall, setDmInCall] = useState(false);
   const [dmPeer, setDmPeer] = useState<string | null>(null);
@@ -6432,13 +6434,10 @@ export default function App() {
               </button>
             )}
             <div className="document-downloads">
-              <strong>資料のダウンロード</strong>
-              <a download href="docs/sawakai-guide.pdf">
-                ご利用ガイド（PDF）
-              </a>
-              <a download href="docs/sawakai-pr.pdf">
-                PR資料（PDF）
-              </a>
+              <strong>ご利用ガイド・PR資料</strong>
+              <button onClick={() => setShowDocuments(true)}>
+                資料を見る・保存する
+              </button>
             </div>
             {isAdmin && canDeleteGroup && (
               <div className="danger-zone">
@@ -6451,6 +6450,10 @@ export default function App() {
             )}
           </section>
         </div>
+      )}
+
+      {showDocuments && (
+        <DocumentsViewer onClose={() => setShowDocuments(false)} />
       )}
 
       {showDeleteGroup && isAdmin && canDeleteGroup && (
