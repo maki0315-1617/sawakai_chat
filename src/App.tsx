@@ -9,6 +9,7 @@ import {
 import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
 import DirectCall from "./DirectCall";
+import VoiceInput from "./VoiceInput";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -3650,6 +3651,7 @@ export default function App() {
   const [showVoice, setShowVoice] = useState(false);
   const [showDirectCall, setShowDirectCall] = useState(false);
   const [dmListening, setDmListening] = useState(true);
+  const [dmInCall, setDmInCall] = useState(false);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
   const [isSavingGroupName, setIsSavingGroupName] = useState(false);
   const [isSavingProfileImage, setIsSavingProfileImage] = useState(false);
@@ -5370,6 +5372,17 @@ export default function App() {
                 rows={2}
                 value={draft}
               />
+              <VoiceInput
+                apiRoot={apiRoot}
+                disabled={showVoice || dmInCall}
+                disabledReason="通話中は、話して入力を使えません。"
+                headers={apiHeaders(token, activeGroupId)}
+                onText={(text) =>
+                  setDraft((current) =>
+                    `${current ? `${current}\n` : ""}${text}`.slice(0, 500),
+                  )
+                }
+              />
               <button
                 className="reply-button reply-button--primary"
                 disabled={!draft.trim()}
@@ -5496,6 +5509,7 @@ export default function App() {
           }
         }}
         onClosePanel={() => setShowDirectCall(false)}
+        onBusyChange={setDmInCall}
         onListeningChange={setDmListening}
         showPanel={showDirectCall}
       />

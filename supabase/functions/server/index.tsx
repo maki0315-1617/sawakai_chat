@@ -3369,6 +3369,132 @@ app.get(`${root}/suggestions`, async (c) => {
 });
 
 
+// ---- 音声入力（録音 → Gemini で文字化。音声は保存しない） ----
+const transcribeMaxBytes = 4 * 1024 * 1024;
+const transcribeWindowMs = 60 * 1000;
+const transcribeMaxPerWindow = 6;
+const transcribeHits = new Map<string, number[]>();
+
+app.post(`${root}/voice/transcribe`, async (c) => {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return c.json({ error: "もう一度参加してください。" }, 401);
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) {
+    return c.json({ error: "このグループには参加していません。" }, 403);
+  }
+  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!apiKey) {
+    return c.json({ error: "音声入力の設定が完了していません。" }, 503);
+  }
+  const now = Date.now();
+  const hits = (transcribeHits.get(session.name) ?? []).filter(
+    (time) => now - time < transcribeWindowMs,
+  );
+  if (hits.length >= transcribeMaxPerWindow) {
+    return c.json(
+      { error: "音声入力を続けて使いすぎました。少し待ってからお試しください。" },
+      429,
+    );
+  }
+  transcribeHits.set(session.name, [...hits, now]);
+
+  const mimeType = (c.req.header("Content-Type") ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (!/^audio\/(webm|mp4|mpeg|mpga|m4a|x-m4a|aac|ogg|wav|x-wav|flac)$/.test(mimeType)) {
+    return c.json({ error: "この録音形式には対応していません。" }, 415);
+  }
+  const audio = new Uint8Array(await c.req.arrayBuffer());
+  if (audio.byteLength < 1000) {
+    return c.json({ error: "声が録音できませんでした。もう一度話してください。" }, 422);
+  }
+  if (audio.byteLength > transcribeMaxBytes) {
+    return c.json({ error: "録音が長すぎます。短く区切って話してください。" }, 413);
+  }
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < audio.length; i += chunk) {
+    binary += String.fromCharCode(...audio.subarray(i, i + chunk));
+  }
+  const data = btoa(binary);
+  const body = JSON.stringify({
+    systemInstruction: {
+      parts: [
+        {
+          text: "音声を日本語の文字に起こしてください。話された内容だけを出力します。「えー」「あのー」などの言い淀みは除き、読みやすい位置に句読点を付けてください。内容の追加、要約、翻訳、返答はしないでください。声が聞き取れない、または無音の場合は空の文字列を返してください。",
+        },
+      ],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data } },
+          { text: "この音声の内容を文字にしてください。" },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: 600,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: { text: { type: "STRING" } },
+        required: ["text"],
+      },
+    },
+  });
+  const models = [
+    Deno.env.get("GEMINI_MODEL"),
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-flash-latest",
+  ]
+    .filter((name): name is string => Boolean(name))
+    .map((name) => name.replace(/^models\//, ""));
+  for (const model of [...new Set(models)]) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
+          body,
+        },
+      );
+      if (!response.ok) continue;
+      const result = await response.json().catch(() => null);
+      const raw = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (typeof raw !== "string") continue;
+      let text = "";
+      try {
+        text = String(JSON.parse(raw).text ?? "");
+      } catch {
+        text = raw;
+      }
+      text = text.trim().slice(0, 500);
+      if (!text) {
+        return c.json(
+          { error: "声が聞き取れませんでした。もう一度、はっきり話してください。" },
+          422,
+        );
+      }
+      return c.json({ text });
+    } catch {
+      continue;
+    }
+  }
+  return c.json(
+    { error: "文字にできませんでした。しばらくしてからお試しください。" },
+    502,
+  );
+});
+
 app.get(`${root}/nine-puzzles/latest`, async (c) => {
   const context = await puzzleRequestContext(c);
   if ("error" in context) {

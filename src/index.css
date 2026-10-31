@@ -4837,6 +4837,61 @@ input:focus-visible {
   line-height: 1.6;
 }
 
+/* 話して入力 */
+.voice-input {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-input__button {
+  min-height: 64px;
+  padding: 12px 16px;
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+  background: var(--accent);
+  border: 0;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.voice-input__button.is-listening {
+  background: #c0392b;
+  animation: dm-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-input__button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.voice-input__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  gap: 8px;
+}
+
+.voice-input__cancel {
+  min-height: 44px;
+  padding: 6px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  background: #f1f1ec;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.voice-input__hint {
+  margin: 0;
+  color: #5f6862;
+  font-size: 16px;
+}
+
 @keyframes dm-pulse {
   50% {
     transform: scale(1.04);

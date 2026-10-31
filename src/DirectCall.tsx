@@ -26,6 +26,7 @@ type DirectCallProps = {
   showPanel: boolean;
   onClosePanel: () => void;
   onListeningChange: (listening: boolean) => void;
+  onBusyChange?: (busy: boolean) => void;
   notify: (title: string, body: string, tag: string) => void;
 };
 
@@ -131,6 +132,7 @@ export default function DirectCall({
   showPanel,
   onClosePanel,
   onListeningChange,
+  onBusyChange,
   notify,
 }: DirectCallProps) {
   const [call, setCall] = useState<DmCallView | null>(null);
@@ -498,6 +500,11 @@ export default function DirectCall({
 
   const others = members.filter((member) => member.name !== myName);
   const busy = call !== null;
+
+  useEffect(() => {
+    onBusyChange?.(phase === "connecting" || phase === "incall");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   return (
     <>
