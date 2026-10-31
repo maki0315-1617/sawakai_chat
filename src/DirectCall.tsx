@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  MutableRefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   AudioPresets,
   RemoteAudioTrack,
@@ -27,7 +33,13 @@ type DirectCallProps = {
   onClosePanel: () => void;
   onListeningChange: (listening: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
+  onCallPeerChange?: (peer: string | null) => void;
+  controlRef?: MutableRefObject<DirectCallControl | null>;
   notify: (title: string, body: string, tag: string) => void;
+};
+export type DirectCallControl = {
+  startCall: (to: string) => void;
+  hangUp: () => void;
 };
 
 const pollIntervalMs = 2000;
@@ -133,6 +145,8 @@ export default function DirectCall({
   onClosePanel,
   onListeningChange,
   onBusyChange,
+  onCallPeerChange,
+  controlRef,
   notify,
 }: DirectCallProps) {
   const [call, setCall] = useState<DmCallView | null>(null);
@@ -505,6 +519,19 @@ export default function DirectCall({
     onBusyChange?.(phase === "connecting" || phase === "incall");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  const peerName = call?.peer ?? null;
+  useEffect(() => {
+    onCallPeerChange?.(peerName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerName]);
+
+  if (controlRef) {
+    controlRef.current = {
+      startCall: (to) => void startCall(to),
+      hangUp: () => void hangUp(),
+    };
+  }
 
   return (
     <>

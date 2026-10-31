@@ -3897,12 +3897,54 @@ input:focus-visible {
 
 .member-row {
   display: flex;
-  align-items: center;
-  min-height: 62px;
-  padding: 7px 12px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 10px 12px;
   background: #f8f7f3;
   border-radius: 14px;
+  gap: 8px;
+}
+
+.member-row__main,
+.member-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.member-row__main {
   gap: 12px;
+}
+
+.member-row__meta {
+  flex-wrap: wrap;
+  padding-left: 54px;
+}
+
+.member-call-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  color: #ffffff;
+  background: #2f8f5b;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  place-items: center;
+}
+
+.member-call-button:disabled {
+  background: #c9cfcb;
+  cursor: not-allowed;
+}
+
+.member-call-button--end {
+  background: #c24a3e;
+}
+
+.member-call-button--end svg {
+  transform: rotate(135deg);
 }
 
 .member-row .avatar {
@@ -4395,13 +4437,11 @@ input:focus-visible {
   }
 
   .member-row {
-    align-items: flex-start;
-    flex-wrap: wrap;
+    align-items: stretch;
   }
 
   .member-admin-actions {
-    width: 100%;
-    padding-left: 54px;
+    padding-left: 0;
   }
 }
 

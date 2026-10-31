@@ -8,7 +8,7 @@ import {
 } from "react";
 import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
-import DirectCall from "./DirectCall";
+import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput from "./VoiceInput";
 
 type AvatarColor = "mint" | "peach" | "sand";
@@ -1132,6 +1132,17 @@ function CloseIcon() {
         stroke="currentColor"
         strokeLinecap="round"
         strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg aria-hidden="true" height="22" viewBox="0 0 24 24" width="22">
+      <path
+        d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"
+        fill="currentColor"
       />
     </svg>
   );
@@ -3654,6 +3665,8 @@ export default function App() {
   const [showDirectCall, setShowDirectCall] = useState(false);
   const [dmListening, setDmListening] = useState(true);
   const [dmInCall, setDmInCall] = useState(false);
+  const [dmPeer, setDmPeer] = useState<string | null>(null);
+  const dmControlRef = useRef<DirectCallControl | null>(null);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
   const [isSavingGroupName, setIsSavingGroupName] = useState(false);
   const [isSavingProfileImage, setIsSavingProfileImage] = useState(false);
@@ -5550,6 +5563,8 @@ export default function App() {
         }}
         onClosePanel={() => setShowDirectCall(false)}
         onBusyChange={setDmInCall}
+        onCallPeerChange={setDmPeer}
+        controlRef={dmControlRef}
         onListeningChange={setDmListening}
         showPanel={showDirectCall}
       />
@@ -6297,6 +6312,7 @@ export default function App() {
             <div className="member-list">
               {members.map((member) => (
                 <div className="member-row" key={member.name}>
+                  <div className="member-row__main">
                   <div className={`avatar avatar--${member.avatar}`}>
                     {member.imageUrl && <img alt="" src={member.imageUrl} />}
                   </div>
@@ -6310,6 +6326,29 @@ export default function App() {
                       {member.isAdmin ? "管理者" : ""}
                     </small>
                   </div>
+                  {member.name !== profile.name &&
+                    (dmPeer === member.name ? (
+                      <button
+                        aria-label={`${member.name}さんとの通話を切る`}
+                        className="member-call-button member-call-button--end"
+                        onClick={() => dmControlRef.current?.hangUp()}
+                      >
+                        <PhoneIcon />
+                      </button>
+                    ) : (
+                      <button
+                        aria-label={`${member.name}さんに電話をかける`}
+                        className="member-call-button"
+                        disabled={
+                          dmPeer !== null || member.callStatus !== "available"
+                        }
+                        onClick={() => dmControlRef.current?.startCall(member.name)}
+                      >
+                        <PhoneIcon />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="member-row__meta">
                   <span
                     className={`member-participation member-participation--${
                       member.participation ?? "unanswered"
@@ -6383,6 +6422,7 @@ export default function App() {
                       )}
                     </div>
                   )}
+                  </div>
                 </div>
               ))}
             </div>
