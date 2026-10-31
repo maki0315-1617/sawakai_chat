@@ -42,6 +42,8 @@ type Member = {
   joinedAt: string;
   lastSeenAt: string;
   avatar: AvatarColor;
+  participation?: "participating" | "not_participating" | null;
+  callStatus?: "available" | "busy" | "offline" | "unknown";
   imageUrl?: string;
   isAdmin?: boolean;
 };
@@ -4103,6 +4105,12 @@ export default function App() {
     };
   }, [token, activeGroupId]);
 
+  useEffect(() => {
+    if (!showGroup || !token || !activeGroupId) return;
+    const interval = window.setInterval(() => void loadGroup(), 5000);
+    return () => window.clearInterval(interval);
+  }, [showGroup, token, activeGroupId]);
+
   const latestMessageId = pendingSend?.id ?? messages.at(-1)?.id;
   useLayoutEffect(() => {
     if (isLoading || !isPositioningMessages || !messageEndRef.current) return;
@@ -4472,6 +4480,38 @@ export default function App() {
     } catch (reason) {
       setGroupError(
         reason instanceof Error ? reason.message : "権限を変更できませんでした。",
+      );
+    } finally {
+      setMemberActionName("");
+    }
+  };
+
+  const setParticipation = async (
+    participation: "participating" | "not_participating",
+  ) => {
+    if (!profile) {
+      setGroupError("参加者情報を確認できません。");
+      return;
+    }
+    setMemberActionName(profile.name);
+    setGroupError("");
+    try {
+      const response = await fetch(
+        `${apiRoot}/group/members/participation`,
+        {
+          method: "POST",
+          headers: apiHeaders(token, activeGroupId),
+          body: JSON.stringify({ participation }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      await loadGroup();
+    } catch (reason) {
+      setGroupError(
+        reason instanceof Error
+          ? reason.message
+          : "参加状況を変更できませんでした。",
       );
     } finally {
       setMemberActionName("");
@@ -6251,6 +6291,9 @@ export default function App() {
             </div>}
 
             <h3>参加者 {members.length}人</h3>
+            <p className="member-participation-help">
+              参加するかどうかを選ぶと、参加者一覧に表示されます。
+            </p>
             <div className="member-list">
               {members.map((member) => (
                 <div className="member-row" key={member.name}>
@@ -6267,6 +6310,62 @@ export default function App() {
                       {member.isAdmin ? "管理者" : ""}
                     </small>
                   </div>
+                  <span
+                    className={`member-participation member-participation--${
+                      member.participation ?? "unanswered"
+                    }`}
+                  >
+                    {member.participation === "participating"
+                      ? "参加中"
+                      : member.participation === "not_participating"
+                        ? "不参加"
+                        : "未回答"}
+                  </span>
+                  <span
+                    className={`member-call-status member-call-status--${
+                      member.callStatus ?? "offline"
+                    }`}
+                  >
+                    {member.callStatus === "available"
+                      ? "通話可能"
+                      : member.callStatus === "busy"
+                        ? "通話中"
+                        : member.callStatus === "offline"
+                          ? "応答待機なし"
+                          : "通話状態不明"}
+                  </span>
+                  {member.name === profile.name && (
+                    <div className="member-participation-actions">
+                      <button
+                        aria-pressed={member.participation === "participating"}
+                        className={
+                          member.participation === "participating"
+                            ? "is-selected"
+                            : ""
+                        }
+                        disabled={memberActionName === profile.name}
+                        onClick={() => void setParticipation("participating")}
+                      >
+                        参加中
+                      </button>
+                      <button
+                        aria-pressed={
+                          member.participation === "not_participating"
+                        }
+                        className={
+                          member.participation === "not_participating"
+                            ? "is-selected"
+                            : ""
+                        }
+                        disabled={memberActionName === profile.name}
+                        onClick={() =>
+                          void setParticipation("not_participating")
+                        }
+                      >
+                        不参加
+                      </button>
+                    </div>
+                  )}
                   {isAdmin && (
                     <div className="member-admin-actions">
                       <button

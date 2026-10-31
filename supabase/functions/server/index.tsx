@@ -58,6 +58,8 @@ type Member = {
   joinedAt: string;
   lastSeenAt: string;
   avatar: Message["avatar"];
+  participation?: "participating" | "not_participating";
+  callStatus?: "available" | "busy" | "offline" | "unknown";
   avatarImage?: {
     path: string;
     signedUrl?: string;
@@ -2098,6 +2100,7 @@ app.get(`${root}/group`, async (c) => {
   if (!group) return c.json({ error: "グループが見つかりません。" }, 404);
   await touchMember(groupId, session.name);
   const members = await getMembersWithImages(groupId);
+  const callStatuses = await getGroupCallStatuses(groupId, members);
   return c.json({
     id: group.id,
     name: group.name,
@@ -2109,6 +2112,8 @@ app.get(`${root}/group`, async (c) => {
       name: member.name,
       joinedAt: member.joinedAt,
       lastSeenAt: member.lastSeenAt,
+      participation: member.participation ?? null,
+      callStatus: callStatuses.get(member.name) ?? "offline",
       avatar: member.avatar,
       imageUrl: member.avatarImage?.signedUrl,
       isAdmin: isGroupAdmin(group, member.name),
@@ -2242,6 +2247,32 @@ app.post(`${root}/group/invite-code`, async (c) => {
     .join("");
   await updateGroup(groupId, { inviteCode: nextCode });
   return c.json({ inviteCode: nextCode });
+});
+
+app.post(`${root}/group/members/participation`, async (c) => {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return c.json({ error: "もう一度参加してください。" }, 401);
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) return c.json({ error: "このグループには参加していません。" }, 403);
+
+  const body = await c.req.json().catch(() => ({}));
+  const participation = body.participation;
+  if (
+    participation !== "participating" &&
+    participation !== "not_participating"
+  ) {
+    return c.json({ error: "参加状況を選択してください。" }, 400);
+  }
+
+  const members = await getMembers(groupId);
+  if (!members.some((member) => member.name === session.name)) {
+    return c.json({ error: "参加者が見つかりません。" }, 404);
+  }
+  const next = members.map((member) =>
+    member.name === session.name ? { ...member, participation } : member,
+  );
+  await kv.set(dataKey(groupId, "members"), next);
+  return c.json({ participation });
 });
 
 app.post(`${root}/group/members/role`, async (c) => {
@@ -4324,6 +4355,10 @@ const dmHistoryLimit = 30;
 const dmStoreLimit = 300;
 const dmCallsKey = (groupId: string) => `sawakai:dm:calls:${groupId}`;
 const dmActiveKey = (name: string) => `sawakai:dm:active:${name}`;
+const dmPresenceKey = (groupId: string, name: string) =>
+  `sawakai:dm:presence:${groupId}:${name}`;
+const dmPresenceFreshMs = 15_000;
+const dmPresenceWriteIntervalMs = 8_000;
 const dmIsLive = (call: DmCall) =>
   call.status === "ringing" || call.status === "active";
 
@@ -4439,6 +4474,60 @@ async function dmInGroupVoice(groupId: string, name: string): Promise<boolean> {
   }
 }
 
+async function dmGroupVoiceParticipants(
+  groupId: string,
+): Promise<Set<string> | null> {
+  const url = Deno.env.get("LIVEKIT_URL");
+  const apiKey = Deno.env.get("LIVEKIT_API_KEY");
+  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
+  if (!url || !apiKey || !apiSecret) return null;
+  try {
+    const { RoomServiceClient } = await import("npm:livekit-server-sdk@2");
+    const roomClient = new RoomServiceClient(
+      url.replace(/^wss:/, "https:").replace(/^ws:/, "http:"),
+      apiKey,
+      apiSecret,
+    );
+    const participants = await roomClient.listParticipants(`sawakai-${groupId}`);
+    const prefix = `${groupId}:`;
+    return new Set(
+      participants
+        .map((participant) => participant.identity)
+        .filter((identity) => identity.startsWith(prefix))
+        .map((identity) => identity.slice(prefix.length)),
+    );
+  } catch {
+    console.warn("Could not check group voice participants for call availability");
+    return null;
+  }
+}
+
+async function getGroupCallStatuses(
+  groupId: string,
+  members: Member[],
+): Promise<Map<string, "available" | "busy" | "offline" | "unknown">> {
+  const now = Date.now();
+  const inGroupVoice = await dmGroupVoiceParticipants(groupId);
+  const statuses = await Promise.all(
+    members.map(async (member) => {
+      const lastPoll = Number(
+        (await kv.get(dmPresenceKey(groupId, member.name))) ?? 0,
+      );
+      if (!Number.isFinite(lastPoll) || now - lastPoll > dmPresenceFreshMs) {
+        return [member.name, "offline"] as const;
+      }
+      const directCall = await dmLiveCallFor(member.name);
+      if (directCall) return [member.name, "busy"] as const;
+      if (!inGroupVoice) return [member.name, "unknown"] as const;
+      return [
+        member.name,
+        inGroupVoice.has(member.name) ? "busy" : "available",
+      ] as const;
+    }),
+  );
+  return new Map(statuses);
+}
+
 function dmView(call: DmCall, me: string) {
   const outgoing = call.caller === me;
   return {
@@ -4523,6 +4612,14 @@ app.get(`${root}/dm/poll`, async (c) => {
   const context = await dmContext(c);
   if ("error" in context) return c.json({ error: context.error }, context.status);
   const { session, groupId } = context;
+  const presenceKey = dmPresenceKey(groupId, session.name);
+  const previousPoll = Number((await kv.get(presenceKey)) ?? 0);
+  if (
+    !Number.isFinite(previousPoll) ||
+    Date.now() - previousPoll >= dmPresenceWriteIntervalMs
+  ) {
+    await kv.set(presenceKey, Date.now());
+  }
   const calls = await dmLoadCalls(groupId);
   const now = Date.now();
   const watchId = c.req.query("watch");

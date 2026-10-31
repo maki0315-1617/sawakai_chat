@@ -3939,6 +3939,88 @@ input:focus-visible {
   display: none;
 }
 
+.member-participation-help {
+  margin: -8px 0 14px;
+  color: var(--accent-muted);
+  font-size: 13px;
+}
+
+.member-row .member-participation {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e8eee9;
+  color: #53665e;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 12px;
+  text-align: center;
+}
+
+.member-row .member-participation--participating {
+  background: #dcefe4;
+  color: #276344;
+}
+
+.member-row .member-participation--not_participating {
+  background: #f3e7e4;
+  color: #85463e;
+}
+
+.member-row .member-call-status {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #ecebe7;
+  color: #68645a;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 12px;
+  text-align: center;
+}
+
+.member-row .member-call-status--available {
+  background: #e2edf6;
+  color: #315d7b;
+}
+
+.member-row .member-call-status--busy {
+  background: #f3e7e4;
+  color: #85463e;
+}
+
+.member-row .member-call-status--unknown {
+  background: #f4eddd;
+  color: #77602e;
+}
+
+.member-participation-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.member-participation-actions button {
+  min-height: 36px;
+  padding: 5px 8px;
+  color: var(--accent);
+  background: #ffffff;
+  border: 1px solid #b8ccc5;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 11px;
+}
+
+.member-participation-actions button.is-selected {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.member-participation-actions button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .member-admin-actions {
   display: flex;
   flex: 0 0 auto;
