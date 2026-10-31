@@ -16,6 +16,58 @@ const noSpeechStopMs = 10000;
 const speechLevel = 0.03;
 const consentKey = "sawakai-voice-input-consent";
 
+function encodeWav(samples: Float32Array, sampleRate: number) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const write = (offset: number, text: string) =>
+    [...text].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)));
+  write(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, i) => {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(44 + i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+  });
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+// 録音形式は端末ごとに違うため、全端末共通の16kHzモノラルWAVに変換する
+async function toWav(blob: Blob) {
+  const Context =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!Context) throw new Error("この端末では録音を変換できません。");
+  const context = new Context();
+  try {
+    const decoded = await context.decodeAudioData(await blob.arrayBuffer());
+    const sampleRate = 16000;
+    const offline = new OfflineAudioContext(
+      1,
+      Math.max(1, Math.ceil(decoded.duration * sampleRate)),
+      sampleRate,
+    );
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await offline.startRendering();
+    return encodeWav(rendered.getChannelData(0), sampleRate);
+  } finally {
+    void context.close().catch(() => undefined);
+  }
+}
+
 function pickMimeType() {
   const candidates = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"];
   return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
@@ -66,11 +118,14 @@ export default function VoiceInput({
   const transcribe = async (blob: Blob) => {
     setState("sending");
     try {
+      const wav = await toWav(blob).catch(() => {
+        throw new Error("録音を処理できませんでした。もう一度話してください。");
+      });
       const { "Content-Type": _ignored, ...rest } = headersRef.current;
       const response = await fetch(`${apiRoot}/voice/transcribe`, {
         method: "POST",
-        headers: { ...rest, "Content-Type": blob.type || "audio/webm" },
-        body: blob,
+        headers: { ...rest, "Content-Type": "audio/wav" },
+        body: wav,
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || typeof result.text !== "string") {

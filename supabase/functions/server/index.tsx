@@ -3418,42 +3418,45 @@ app.post(`${root}/voice/transcribe`, async (c) => {
     binary += String.fromCharCode(...audio.subarray(i, i + chunk));
   }
   const data = btoa(binary);
-  const body = JSON.stringify({
-    systemInstruction: {
-      parts: [
-        {
-          text: "音声を日本語の文字に起こしてください。話された内容だけを出力します。「えー」「あのー」などの言い淀みは除き、読みやすい位置に句読点を付けてください。内容の追加、要約、翻訳、返答はしないでください。声が聞き取れない、または無音の場合は空の文字列を返してください。",
-        },
-      ],
-    },
-    contents: [
-      {
-        role: "user",
+  const buildBody = (model: string) =>
+    JSON.stringify({
+      systemInstruction: {
         parts: [
-          { inlineData: { mimeType, data } },
-          { text: "この音声の内容を文字にしてください。" },
+          {
+            text: "音声を日本語の文字に起こしてください。話された内容だけを出力します。「えー」「あのー」などの言い淀みは除き、読みやすい位置に句読点を付けてください。内容の追加、要約、翻訳、返答、説明はしないでください。声が聞き取れない、または無音の場合は何も出力しないでください。",
+          },
         ],
       },
-    ],
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 600,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: { text: { type: "STRING" } },
-        required: ["text"],
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType, data } },
+            { text: "この音声の内容を文字にしてください。" },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 2048,
+        // 2.5系は「思考」が出力枠を消費して本文が空になるため止める
+        ...(/gemini-2\.5/.test(model)
+          ? { thinkingConfig: { thinkingBudget: 0 } }
+          : {}),
       },
-    },
-  });
+    });
+  const configured = Deno.env.get("GEMINI_MODEL");
   const models = [
-    Deno.env.get("GEMINI_MODEL"),
+    configured,
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
     "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
   ]
     .filter((name): name is string => Boolean(name))
     .map((name) => name.replace(/^models\//, ""));
+  let lastStatus = 0;
+  let lastReason = "";
   for (const model of [...new Set(models)]) {
     try {
       const response = await fetch(
@@ -3464,33 +3467,48 @@ app.post(`${root}/voice/transcribe`, async (c) => {
             "Content-Type": "application/json",
             "x-goog-api-key": apiKey,
           },
-          body,
+          body: buildBody(model),
         },
       );
-      if (!response.ok) continue;
-      const result = await response.json().catch(() => null);
-      const raw = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (typeof raw !== "string") continue;
-      let text = "";
-      try {
-        text = String(JSON.parse(raw).text ?? "");
-      } catch {
-        text = raw;
+      if (!response.ok) {
+        lastStatus = response.status;
+        lastReason = (await response.text().catch(() => "")).slice(0, 300);
+        console.warn(`transcribe ${model} failed`, response.status, lastReason);
+        continue;
       }
-      text = text.trim().slice(0, 500);
+      const result = await response.json().catch(() => null);
+      const parts: { text?: string; thought?: boolean }[] =
+        result?.candidates?.[0]?.content?.parts ?? [];
+      const text = parts
+        .filter((part) => !part.thought && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("")
+        .trim()
+        .slice(0, 500);
       if (!text) {
-        return c.json(
-          { error: "声が聞き取れませんでした。もう一度、はっきり話してください。" },
-          422,
-        );
+        const finish = result?.candidates?.[0]?.finishReason ?? "none";
+        const blocked = result?.promptFeedback?.blockReason ?? "";
+        console.warn(`transcribe ${model} empty`, finish, blocked);
+        if (finish === "STOP" && !blocked) {
+          return c.json(
+            { error: "声が聞き取れませんでした。もう一度、はっきり話してください。" },
+            422,
+          );
+        }
+        lastStatus = 200;
+        lastReason = `finish=${finish} ${blocked}`;
+        continue;
       }
       return c.json({ text });
-    } catch {
-      continue;
+    } catch (reason) {
+      lastReason = String(reason).slice(0, 200);
+      console.warn(`transcribe ${model} error`, lastReason);
     }
   }
   return c.json(
-    { error: "文字にできませんでした。しばらくしてからお試しください。" },
+    {
+      error: `文字にできませんでした。しばらくしてからお試しください。（原因コード：${lastStatus || "通信"}）`,
+    },
     502,
   );
 });
