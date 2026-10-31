@@ -43,7 +43,7 @@ type Member = {
   lastSeenAt: string;
   avatar: AvatarColor;
   participation?: "participating" | "not_participating" | null;
-  callStatus?: "available" | "busy" | "offline" | "unknown";
+  callStatus?: "available" | "busy" | "offline";
   imageUrl?: string;
   isAdmin?: boolean;
 };
@@ -6330,9 +6330,7 @@ export default function App() {
                       ? "通話可能"
                       : member.callStatus === "busy"
                         ? "通話中"
-                        : member.callStatus === "offline"
-                          ? "応答待機なし"
-                          : "通話状態不明"}
+                        : "応答待機なし"}
                   </span>
                   {member.name === profile.name && (
                     <div className="member-participation-actions">

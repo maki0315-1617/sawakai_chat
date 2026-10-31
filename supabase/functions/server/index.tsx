@@ -4476,11 +4476,11 @@ async function dmInGroupVoice(groupId: string, name: string): Promise<boolean> {
 
 async function dmGroupVoiceParticipants(
   groupId: string,
-): Promise<Set<string> | null> {
+): Promise<Set<string>> {
   const url = Deno.env.get("LIVEKIT_URL");
   const apiKey = Deno.env.get("LIVEKIT_API_KEY");
   const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
-  if (!url || !apiKey || !apiSecret) return null;
+  if (!url || !apiKey || !apiSecret) return new Set();
   try {
     const { RoomServiceClient } = await import("npm:livekit-server-sdk@2");
     const roomClient = new RoomServiceClient(
@@ -4498,14 +4498,14 @@ async function dmGroupVoiceParticipants(
     );
   } catch {
     console.warn("Could not check group voice participants for call availability");
-    return null;
+    return new Set();
   }
 }
 
 async function getGroupCallStatuses(
   groupId: string,
   members: Member[],
-): Promise<Map<string, "available" | "busy" | "offline" | "unknown">> {
+): Promise<Map<string, "available" | "busy" | "offline">> {
   const now = Date.now();
   const inGroupVoice = await dmGroupVoiceParticipants(groupId);
   const statuses = await Promise.all(
@@ -4518,7 +4518,6 @@ async function getGroupCallStatuses(
       }
       const directCall = await dmLiveCallFor(member.name);
       if (directCall) return [member.name, "busy"] as const;
-      if (!inGroupVoice) return [member.name, "unknown"] as const;
       return [
         member.name,
         inGroupVoice.has(member.name) ? "busy" : "available",

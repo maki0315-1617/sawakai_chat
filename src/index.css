@@ -3987,11 +3987,6 @@ input:focus-visible {
   color: #85463e;
 }
 
-.member-row .member-call-status--unknown {
-  background: #f4eddd;
-  color: #77602e;
-}
-
 .member-participation-actions {
   display: flex;
   flex: 0 0 auto;
