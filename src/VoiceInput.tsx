@@ -68,6 +68,37 @@ async function toWav(blob: Blob) {
   }
 }
 
+const deviceFallbackMs = 5 * 60 * 1000;
+let deviceModeUntil = 0;
+
+class TranscribeError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type DeviceRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+function getDeviceRecognition(): (new () => DeviceRecognition) | null {
+  const w = window as unknown as {
+    SpeechRecognition?: new () => DeviceRecognition;
+    webkitSpeechRecognition?: new () => DeviceRecognition;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
 function pickMimeType() {
   const candidates = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"];
   return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
@@ -97,9 +128,12 @@ export default function VoiceInput({
   onTextRef.current = onText;
 
   const supported =
-    typeof MediaRecorder !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    !!navigator.mediaDevices?.getUserMedia;
+    (typeof MediaRecorder !== "undefined" &&
+      typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices?.getUserMedia) ||
+    getDeviceRecognition() !== null;
+
+  const recognitionRef = useRef<DeviceRecognition | null>(null);
 
   const cleanup = () => {
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
@@ -111,8 +145,74 @@ export default function VoiceInput({
   };
 
   const stop = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== "inactive") recorder.stop();
+  };
+
+  // サーバーで文字にできないときに、端末の音声認識へ切り替えて聞き取る
+  const beginDevice = () => {
+    const Recognition = getDeviceRecognition();
+    if (!Recognition) {
+      setError("この端末では話して入力を使えません。キーボードのマイクボタンをお使いください。");
+      return;
+    }
+    setError("");
+    const recognition = new Recognition();
+    recognition.lang = "ja-JP";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognitionRef.current = recognition;
+    cancelledRef.current = false;
+    let gotText = false;
+    let failed = false;
+    const startedAt = Date.now();
+    recognition.onresult = (event) => {
+      const text = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join("")
+        .trim();
+      if (text) {
+        gotText = true;
+        onTextRef.current(text);
+      }
+    };
+    recognition.onerror = (event) => {
+      failed = true;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
+      } else if (event.error === "no-speech") {
+        setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
+      } else if (event.error !== "aborted") {
+        setError("端末の機能でも聞き取れませんでした。キーボードのマイクボタンをお使いください。");
+      }
+    };
+    recognition.onend = () => {
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      recognitionRef.current = null;
+      setState("idle");
+      if (!gotText && !failed && !cancelledRef.current) {
+        setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
+      }
+    };
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      setError("端末の機能を開始できませんでした。キーボードのマイクボタンをお使いください。");
+      return;
+    }
+    setSeconds(0);
+    setState("listening");
+    timerRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      setSeconds(Math.floor(elapsed / 1000));
+      if (elapsed >= maxSeconds * 1000) recognition.stop();
+    }, 250);
   };
 
   const transcribe = async (blob: Blob) => {
@@ -129,17 +229,30 @@ export default function VoiceInput({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || typeof result.text !== "string") {
-        throw new Error(result.error ?? "文字にできませんでした。");
+        throw new TranscribeError(
+          result.error ?? "文字にできませんでした。",
+          response.status,
+        );
       }
       onTextRef.current(result.text);
     } catch (reason) {
-      setError(
-        reason instanceof TypeError
-          ? "通信できませんでした。電波の良い場所でもう一度お試しください。"
-          : reason instanceof Error
-            ? reason.message
-            : "文字にできませんでした。",
-      );
+      const serverBusy =
+        reason instanceof TranscribeError &&
+        [429, 500, 502, 503, 504].includes(reason.status);
+      if (serverBusy && getDeviceRecognition()) {
+        deviceModeUntil = Date.now() + deviceFallbackMs;
+        setError(
+          "今回は、端末の機能で聞き取ります。もう一度「話して入力」を押して、話してください。",
+        );
+      } else {
+        setError(
+          reason instanceof TypeError
+            ? "通信できませんでした。電波の良い場所でもう一度お試しください。"
+            : reason instanceof Error
+              ? reason.message
+              : "文字にできませんでした。",
+        );
+      }
     } finally {
       setState("idle");
     }
@@ -239,17 +352,26 @@ export default function VoiceInput({
       setNeedsConsent(true);
       return;
     }
-    void begin();
+    startListening();
+  };
+
+  const startListening = () => {
+    const recorderOk =
+      typeof MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+    if (Date.now() < deviceModeUntil || !recorderOk) beginDevice();
+    else void begin();
   };
 
   const cancel = () => {
     cancelledRef.current = true;
-    stop();
+    if (recognitionRef.current) recognitionRef.current.abort();
+    else stop();
   };
 
   useEffect(
     () => () => {
       cancelledRef.current = true;
+      recognitionRef.current?.abort();
       const recorder = recorderRef.current;
       if (recorder && recorder.state !== "inactive") recorder.stop();
       cleanup();
@@ -312,7 +434,7 @@ export default function VoiceInput({
             <p className="dialog-eyebrow">話して入力について</p>
             <h2 id="voice-input-consent">声を文字にします</h2>
             <p className="dialog-note">
-              話した声は、文字にするためにインターネット上のサービスへ送られます。声は保存されません。文字は送信前に確認して直せます。
+              話した声は、文字にするためにインターネット上のサービス（Google の AI、または端末・ブラウザの音声認識）へ送られます。声は、このアプリには保存されません。文字は送信前に確認して直せます。
             </p>
             <div className="dialog-actions">
               <button
@@ -326,7 +448,7 @@ export default function VoiceInput({
                 onClick={() => {
                   localStorage.setItem(consentKey, "agreed");
                   setNeedsConsent(false);
-                  void begin();
+                  startListening();
                 }}
               >
                 同意して使う
