@@ -4087,6 +4087,30 @@ input:focus-visible {
   border-color: #dfc2be;
 }
 
+.document-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 18px;
+  gap: 8px;
+}
+
+.document-downloads strong {
+  width: 100%;
+  color: #263b38;
+}
+
+.document-downloads a {
+  padding: 10px 14px;
+  color: var(--accent);
+  background: #ffffff;
+  border: 1px solid #b8ccc5;
+  border-radius: 10px;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 13px;
+  text-decoration: none;
+}
+
 .group-error {
   width: 100%;
   margin-top: 14px;

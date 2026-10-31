@@ -6431,6 +6431,15 @@ export default function App() {
                 {groupError} もう一度試す
               </button>
             )}
+            <div className="document-downloads">
+              <strong>資料のダウンロード</strong>
+              <a download href="docs/sawakai-guide.pdf">
+                ご利用ガイド（PDF）
+              </a>
+              <a download href="docs/sawakai-pr.pdf">
+                PR資料（PDF）
+              </a>
+            </div>
             {isAdmin && canDeleteGroup && (
               <div className="danger-zone">
                 <strong>グループの削除</strong>
