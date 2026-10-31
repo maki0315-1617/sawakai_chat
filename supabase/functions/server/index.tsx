@@ -3446,7 +3446,7 @@ app.post(`${root}/voice/transcribe`, async (c) => {
       },
     });
   const configured = Deno.env.get("GEMINI_MODEL");
-  const models = [
+  const preferred = [
     configured,
     "gemini-2.5-flash",
     "gemini-flash-latest",
@@ -3455,9 +3455,35 @@ app.post(`${root}/voice/transcribe`, async (c) => {
   ]
     .filter((name): name is string => Boolean(name))
     .map((name) => name.replace(/^models\//, ""));
+  // 利用できるモデル名をキーから実際に取得し、音声に使える flash 系を追加する
+  const discovered: string[] = [];
+  try {
+    const listResponse = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+      { headers: { "x-goog-api-key": apiKey } },
+    );
+    if (listResponse.ok) {
+      const listResult = await listResponse.json().catch(() => ({}));
+      for (const model of listResult.models ?? []) {
+        const name = String(model.name ?? "").replace(/^models\//, "");
+        if (
+          model.supportedGenerationMethods?.includes("generateContent") &&
+          name.includes("flash") &&
+          !/image|live|tts|thinking|exp|vision|embed/.test(name)
+        ) {
+          discovered.push(name);
+        }
+      }
+    } else {
+      console.warn("transcribe model list failed", listResponse.status);
+    }
+  } catch (reason) {
+    console.warn("transcribe model list error", String(reason).slice(0, 200));
+  }
+  const models = [...new Set([...preferred, ...discovered])].slice(0, 6);
   let lastStatus = 0;
   let lastReason = "";
-  for (const model of [...new Set(models)]) {
+  for (const model of models) {
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,

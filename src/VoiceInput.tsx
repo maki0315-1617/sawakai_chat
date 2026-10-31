@@ -13,61 +13,9 @@ type State = "idle" | "listening" | "sending";
 const maxSeconds = 60;
 const silenceStopMs = 3000;
 const noSpeechStopMs = 10000;
-const speechLevel = 0.03;
+const speechLevel = 0.02;
+const targetRate = 16000;
 const consentKey = "sawakai-voice-input-consent";
-
-function encodeWav(samples: Float32Array, sampleRate: number) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  const write = (offset: number, text: string) =>
-    [...text].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)));
-  write(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  write(8, "WAVE");
-  write(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  write(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  samples.forEach((sample, i) => {
-    const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(44 + i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-  });
-  return new Blob([buffer], { type: "audio/wav" });
-}
-
-// 録音形式は端末ごとに違うため、全端末共通の16kHzモノラルWAVに変換する
-async function toWav(blob: Blob) {
-  const Context =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
-  if (!Context) throw new Error("この端末では録音を変換できません。");
-  const context = new Context();
-  try {
-    const decoded = await context.decodeAudioData(await blob.arrayBuffer());
-    const sampleRate = 16000;
-    const offline = new OfflineAudioContext(
-      1,
-      Math.max(1, Math.ceil(decoded.duration * sampleRate)),
-      sampleRate,
-    );
-    const source = offline.createBufferSource();
-    source.buffer = decoded;
-    source.connect(offline.destination);
-    source.start();
-    const rendered = await offline.startRendering();
-    return encodeWav(rendered.getChannelData(0), sampleRate);
-  } finally {
-    void context.close().catch(() => undefined);
-  }
-}
-
 const deviceFallbackMs = 5 * 60 * 1000;
 let deviceModeUntil = 0;
 
@@ -83,7 +31,9 @@ type DeviceRecognition = {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onresult:
+    | ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void)
+    | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
   start: () => void;
@@ -99,9 +49,55 @@ function getDeviceRecognition(): (new () => DeviceRecognition) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-function pickMimeType() {
-  const candidates = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"];
-  return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
+function getAudioContextClass(): typeof AudioContext | null {
+  return (
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext ??
+    null
+  );
+}
+
+// 端末の録音（44.1k/48kHz）を、音声認識に向いた16kHzへ縮めて16bit WAVにする
+function encodeWav(chunks: Float32Array[], inputRate: number) {
+  let total = 0;
+  chunks.forEach((chunk) => (total += chunk.length));
+  const input = new Float32Array(total);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    input.set(chunk, offset);
+    offset += chunk.length;
+  });
+  const ratio = inputRate / targetRate;
+  const length = Math.floor(input.length / ratio);
+  const samples = new Int16Array(length);
+  for (let i = 0; i < length; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(input.length, Math.max(start + 1, Math.floor((i + 1) * ratio)));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += input[j];
+    const value = Math.max(-1, Math.min(1, sum / (end - start)));
+    samples[i] = value < 0 ? value * 0x8000 : value * 0x7fff;
+  }
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const write = (position: number, text: string) =>
+    [...text].forEach((char, i) => view.setUint8(position + i, char.charCodeAt(0)));
+  write(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, i) => view.setInt16(44 + i * 2, sample, true));
+  return new Blob([buffer], { type: "audio/wav" });
 }
 
 export default function VoiceInput({
@@ -116,28 +112,34 @@ export default function VoiceInput({
   const [error, setError] = useState("");
   const [needsConsent, setNeedsConsent] = useState(false);
 
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
+  const nodeRef = useRef<ScriptProcessorNode | null>(null);
+  const chunksRef = useRef<Float32Array[]>([]);
+  const timerRef = useRef<number | null>(null);
+  const recognitionRef = useRef<DeviceRecognition | null>(null);
   const cancelledRef = useRef(false);
+  const stoppedRef = useRef(false);
+  const finishRef = useRef<(() => void) | null>(null);
   const headersRef = useRef(headers);
   headersRef.current = headers;
   const onTextRef = useRef(onText);
   onTextRef.current = onText;
 
-  const supported =
-    (typeof MediaRecorder !== "undefined" &&
-      typeof navigator !== "undefined" &&
-      !!navigator.mediaDevices?.getUserMedia) ||
-    getDeviceRecognition() !== null;
-
-  const recognitionRef = useRef<DeviceRecognition | null>(null);
+  const canRecord =
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    getAudioContextClass() !== null;
+  const supported = canRecord || getDeviceRecognition() !== null;
 
   const cleanup = () => {
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
     timerRef.current = null;
+    if (nodeRef.current) {
+      nodeRef.current.onaudioprocess = null;
+      nodeRef.current.disconnect();
+      nodeRef.current = null;
+    }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     void contextRef.current?.close().catch(() => undefined);
@@ -149,8 +151,135 @@ export default function VoiceInput({
       recognitionRef.current.stop();
       return;
     }
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== "inactive") recorder.stop();
+    finishRef.current?.();
+  };
+
+  const transcribe = async (wav: Blob) => {
+    setState("sending");
+    try {
+      const { "Content-Type": _ignored, ...rest } = headersRef.current;
+      const response = await fetch(`${apiRoot}/voice/transcribe`, {
+        method: "POST",
+        headers: { ...rest, "Content-Type": "audio/wav" },
+        body: wav,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || typeof result.text !== "string") {
+        throw new TranscribeError(
+          result.error ?? `文字にできませんでした。（原因コード：${response.status}）`,
+          response.status,
+        );
+      }
+      onTextRef.current(result.text);
+    } catch (reason) {
+      const serverBusy =
+        reason instanceof TranscribeError &&
+        [429, 500, 502, 503, 504].includes(reason.status);
+      if (serverBusy && getDeviceRecognition()) {
+        deviceModeUntil = Date.now() + deviceFallbackMs;
+        setError(
+          "今回は、端末の機能で聞き取ります。もう一度「話して入力」を押して、話してください。",
+        );
+      } else {
+        setError(
+          reason instanceof TypeError
+            ? "通信できませんでした。電波の良い場所でもう一度お試しください。"
+            : reason instanceof Error
+              ? reason.message
+              : "文字にできませんでした。",
+        );
+      }
+    } finally {
+      setState("idle");
+    }
+  };
+
+  // iPhoneでは、ボタンを押した直後（同じ操作の中）で音声を準備する必要がある
+  const begin = async () => {
+    setError("");
+    const Context = getAudioContextClass();
+    if (!Context) return;
+    const context = new Context();
+    contextRef.current = context;
+    void context.resume().catch(() => undefined);
+    cancelledRef.current = false;
+    stoppedRef.current = false;
+    chunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      streamRef.current = stream;
+      if (context.state !== "running") await context.resume().catch(() => undefined);
+      const source = context.createMediaStreamSource(stream);
+      const node = context.createScriptProcessor(4096, 1, 1);
+      nodeRef.current = node;
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      source.connect(node);
+      node.connect(mute);
+      mute.connect(context.destination);
+
+      const startedAt = Date.now();
+      let lastVoiceAt = 0;
+      let peakNow = 0;
+      node.onaudioprocess = (event) => {
+        if (stoppedRef.current) return;
+        const data = event.inputBuffer.getChannelData(0);
+        chunksRef.current.push(new Float32Array(data));
+        let peak = 0;
+        for (let i = 0; i < data.length; i += 8) peak = Math.max(peak, Math.abs(data[i]));
+        peakNow = Math.max(peakNow, peak);
+        if (peak > speechLevel) lastVoiceAt = Date.now();
+      };
+
+      finishRef.current = () => {
+        if (stoppedRef.current) return;
+        stoppedRef.current = true;
+        const rate = context.sampleRate;
+        const chunks = chunksRef.current;
+        cleanup();
+        finishRef.current = null;
+        if (cancelledRef.current) {
+          setState("idle");
+          return;
+        }
+        if (!chunks.length || peakNow < 0.005) {
+          setState("idle");
+          setError("声が録音できませんでした。マイクの近くで、もう一度話してください。");
+          return;
+        }
+        void transcribe(encodeWav(chunks, rate));
+      };
+
+      setSeconds(0);
+      setState("listening");
+      timerRef.current = window.setInterval(() => {
+        const now = Date.now();
+        const elapsed = now - startedAt;
+        setSeconds(Math.floor(elapsed / 1000));
+        const heardVoice = lastVoiceAt > 0;
+        if (
+          elapsed >= maxSeconds * 1000 ||
+          (heardVoice && now - lastVoiceAt > silenceStopMs) ||
+          (!heardVoice && elapsed > noSpeechStopMs)
+        ) {
+          finishRef.current?.();
+        }
+      }, 250);
+    } catch (reason) {
+      cleanup();
+      setState("idle");
+      setError(
+        reason instanceof DOMException && reason.name === "NotAllowedError"
+          ? "マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。"
+          : "マイクを使えませんでした。他のアプリで使っていないか確認してください。",
+      );
+    }
   };
 
   // サーバーで文字にできないときに、端末の音声認識へ切り替えて聞き取る
@@ -215,130 +344,9 @@ export default function VoiceInput({
     }, 250);
   };
 
-  const transcribe = async (blob: Blob) => {
-    setState("sending");
-    try {
-      const wav = await toWav(blob).catch(() => {
-        throw new Error("録音を処理できませんでした。もう一度話してください。");
-      });
-      const { "Content-Type": _ignored, ...rest } = headersRef.current;
-      const response = await fetch(`${apiRoot}/voice/transcribe`, {
-        method: "POST",
-        headers: { ...rest, "Content-Type": "audio/wav" },
-        body: wav,
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || typeof result.text !== "string") {
-        throw new TranscribeError(
-          result.error ?? "文字にできませんでした。",
-          response.status,
-        );
-      }
-      onTextRef.current(result.text);
-    } catch (reason) {
-      const serverBusy =
-        reason instanceof TranscribeError &&
-        [429, 500, 502, 503, 504].includes(reason.status);
-      if (serverBusy && getDeviceRecognition()) {
-        deviceModeUntil = Date.now() + deviceFallbackMs;
-        setError(
-          "今回は、端末の機能で聞き取ります。もう一度「話して入力」を押して、話してください。",
-        );
-      } else {
-        setError(
-          reason instanceof TypeError
-            ? "通信できませんでした。電波の良い場所でもう一度お試しください。"
-            : reason instanceof Error
-              ? reason.message
-              : "文字にできませんでした。",
-        );
-      }
-    } finally {
-      setState("idle");
-    }
-  };
-
-  const begin = async () => {
-    setError("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      streamRef.current = stream;
-      const mimeType = pickMimeType();
-      const recorder = new MediaRecorder(
-        stream,
-        mimeType ? { mimeType, audioBitsPerSecond: 32000 } : undefined,
-      );
-      recorderRef.current = recorder;
-      chunksRef.current = [];
-      cancelledRef.current = false;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        const type = recorder.mimeType || mimeType || "audio/webm";
-        const blob = new Blob(chunksRef.current, { type });
-        cleanup();
-        if (cancelledRef.current) {
-          setState("idle");
-          return;
-        }
-        void transcribe(blob);
-      };
-
-      // 話し終わりを検出して自動で止める
-      const Context =
-        window.AudioContext ??
-        (window as unknown as { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      const startedAt = Date.now();
-      let lastVoiceAt = 0;
-      let analyser: AnalyserNode | null = null;
-      if (Context) {
-        const context = new Context();
-        contextRef.current = context;
-        analyser = context.createAnalyser();
-        analyser.fftSize = 1024;
-        context.createMediaStreamSource(stream).connect(analyser);
-      }
-      const buffer = new Uint8Array(analyser?.fftSize ?? 0);
-      recorder.start(1000);
-      setSeconds(0);
-      setState("listening");
-      timerRef.current = window.setInterval(() => {
-        const now = Date.now();
-        const elapsed = now - startedAt;
-        setSeconds(Math.floor(elapsed / 1000));
-        if (analyser) {
-          analyser.getByteTimeDomainData(buffer);
-          let peak = 0;
-          for (const value of buffer) peak = Math.max(peak, Math.abs(value - 128) / 128);
-          if (peak > speechLevel) lastVoiceAt = now;
-        }
-        const heardVoice = lastVoiceAt > 0;
-        if (
-          elapsed >= maxSeconds * 1000 ||
-          (analyser &&
-            ((heardVoice && now - lastVoiceAt > silenceStopMs) ||
-              (!heardVoice && elapsed > noSpeechStopMs)))
-        ) {
-          stop();
-        }
-      }, 250);
-    } catch (reason) {
-      cleanup();
-      setState("idle");
-      setError(
-        reason instanceof DOMException && reason.name === "NotAllowedError"
-          ? "マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。"
-          : "マイクを使えませんでした。他のアプリで使っていないか確認してください。",
-      );
-    }
+  const startListening = () => {
+    if (Date.now() < deviceModeUntil || !canRecord) beginDevice();
+    else void begin();
   };
 
   const press = () => {
@@ -355,25 +363,17 @@ export default function VoiceInput({
     startListening();
   };
 
-  const startListening = () => {
-    const recorderOk =
-      typeof MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
-    if (Date.now() < deviceModeUntil || !recorderOk) beginDevice();
-    else void begin();
-  };
-
   const cancel = () => {
     cancelledRef.current = true;
     if (recognitionRef.current) recognitionRef.current.abort();
-    else stop();
+    else finishRef.current?.();
   };
 
   useEffect(
     () => () => {
       cancelledRef.current = true;
       recognitionRef.current?.abort();
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== "inactive") recorder.stop();
+      stoppedRef.current = true;
       cleanup();
     },
     [],
