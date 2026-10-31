@@ -1,4 +1,4 @@
-const CACHE_NAME = "sawakai-shell-v9";
+const CACHE_NAME = "sawakai-shell-v10";
 const BADGE_CACHE = "sawakai-badge";
 const scopeUrl = new URL("./", self.registration.scope);
 const badgeKey = new URL("__badge-count", scopeUrl).href;
@@ -59,6 +59,8 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
+  // 配布資料（PDF）はキャッシュや画面のHTMLに置き換えず、そのまま取得する
+  if (url.pathname.includes("/docs/") || url.pathname.endsWith(".pdf")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(
