@@ -6064,6 +6064,27 @@ export default function App() {
               </button>
             )}
 
+            <section className="support-card" aria-labelledby="support-title">
+              <p className="support-card__eyebrow">テスト決済</p>
+              <h3 id="support-title">茶話会の運営を応援する</h3>
+              <p>
+                1回500円の任意のご支援です。支援の有無によって、アプリの機能や利用条件は変わりません。
+              </p>
+              <a
+                className="support-card__button"
+                href="https://buy.stripe.com/test_dRmbJ1e3XdKF6de6PpgUM03"
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                テスト決済ページを開く
+              </a>
+              <small>
+                Stripeのテスト用リンクです。テスト以外の支払いには使用しないでください。
+                領収書メールを送るには、Stripe側でメールアドレスの収集と領収書送信を有効にしてください。
+                返金のご相談はお問い合わせ窓口で個別に承ります。
+              </small>
+            </section>
+
             <div className="notification-setting">
               <div>
                 <strong>新着メッセージの通知</strong>

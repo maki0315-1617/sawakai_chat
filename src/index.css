@@ -3369,6 +3369,62 @@ input:focus-visible {
   gap: 14px;
 }
 
+.support-card {
+  margin-top: 18px;
+  padding: 18px;
+  background: #f3f7f4;
+  border: 1px solid #d5e4dc;
+  border-radius: 16px;
+}
+
+.support-card__eyebrow {
+  margin: 0 0 4px;
+  color: var(--accent);
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 12px;
+}
+
+.support-card h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.support-card > p:not(.support-card__eyebrow) {
+  margin: 0;
+  color: #53645d;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.support-card__button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  color: #ffffff;
+  background: var(--accent);
+  border-radius: 12px;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 15px;
+  text-align: center;
+  text-decoration: none;
+}
+
+.support-card__button:focus-visible {
+  outline: 3px solid #f2b95c;
+  outline-offset: 3px;
+}
+
+.support-card small {
+  display: block;
+  margin-top: 10px;
+  color: #6b7771;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .notification-setting div {
   min-width: 0;
 }
