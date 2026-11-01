@@ -199,13 +199,31 @@ export default function DocumentsViewer({ onClose }: { onClose: () => void }) {
   const [docId, setDocId] = useState("guide");
   const doc = docs.find((item) => item.id === docId) ?? docs[0];
 
-  const saveFile = () => {
-    const url = URL.createObjectURL(
-      new Blob([toHtmlFile(doc)], { type: "text/html;charset=utf-8" }),
-    );
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  const saveFile = async () => {
+    const fileName = `sawakai-${doc.id}.html`;
+    const html = toHtmlFile(doc);
+    const file = new File([html], fileName, { type: "text/html" });
+    if (isIOS && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: doc.title });
+        return;
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
+      }
+    }
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    if (isIOS) {
+      window.open(url, "_blank") ?? (window.location.href = url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
+    }
     const link = document.createElement("a");
     link.href = url;
-    link.download = `sawakai-${doc.id}.html`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -213,6 +231,17 @@ export default function DocumentsViewer({ onClose }: { onClose: () => void }) {
   };
 
   const print = () => {
+    if (isIOS) {
+      // iOS（特にホーム画面アプリ）では window.print() が動かないため、印刷用ページを別タブで開く
+      const html = toHtmlFile(doc).replace(
+        "</body>",
+        '<p style="text-align:center"><button onclick="window.print()" style="font-size:18px;padding:10px 20px">印刷 / PDFで保存</button></p></body>',
+      );
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+      window.open(url, "_blank") ?? (window.location.href = url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
+    }
     document.body.classList.add("is-printing-docs");
     const cleanup = () => {
       document.body.classList.remove("is-printing-docs");
