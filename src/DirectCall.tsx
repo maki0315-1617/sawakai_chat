@@ -617,15 +617,26 @@ export default function DirectCall({
     const element = remoteVideoRef.current;
     if (!element || !remoteVideo) return;
     remoteVideo.attach(element);
+    void element.play().catch(() => undefined);
     return () => {
       remoteVideo.detach(element);
     };
-  }, [remoteVideo, phase]);
+  }, [remoteVideo, phase, remoteCamOn]);
 
   useEffect(() => {
     const element = localVideoRef.current;
     if (!element || !localVideo) return;
+    element.muted = true;
     localVideo.attach(element);
+    // 非表示から表示に切り替わった直後は再生が止まることがあるため、明示的に再生する
+    void element.play().catch(() => undefined);
+    const track = localVideo.mediaStreamTrack;
+    console.info("camera track", {
+      label: track.label,
+      readyState: track.readyState,
+      muted: track.muted,
+      settings: track.getSettings(),
+    });
     return () => {
       localVideo.detach(element);
     };
@@ -880,7 +891,7 @@ export default function DirectCall({
               )}
               <video
                 autoPlay
-                className={`dm-video__local ${cameraOn ? "is-on" : ""}`}
+                className={`dm-video__local ${cameraOn ? "is-on" : ""} ${remoteCamOn ? "" : "is-main"}`}
                 muted
                 playsInline
                 ref={localVideoRef}
