@@ -7,10 +7,13 @@ import {
 } from "react";
 import {
   AudioPresets,
+  LocalVideoTrack,
   RemoteAudioTrack,
+  RemoteVideoTrack,
   Room,
   RoomEvent,
   Track,
+  VideoPresets,
 } from "livekit-client";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
@@ -20,6 +23,7 @@ type DmCallView = {
   direction: "outgoing" | "incoming";
   status: DmStatus;
   createdAt: number;
+  answeredAt?: number | null;
   durationSec: number;
 };
 type Phase = "calling" | "incoming" | "connecting" | "incall";
@@ -43,6 +47,10 @@ export type DirectCallControl = {
 };
 
 const pollIntervalMs = 2000;
+const defaultLimitSec = 180;
+const warningSec = 30;
+const timeUpMessage =
+  "3分になったので、通話を終わりました。またお話ししましょう。";
 const listenNoticeKey = "sawakai-dm-listen-notice";
 const volumeSteps = [0.4, 0.6, 0.8, 1];
 
@@ -155,7 +163,13 @@ export default function DirectCall({
   const [muted, setMuted] = useState(false);
   const [volumeIndex, setVolumeIndex] = useState(2);
   const [peerSpeaking, setPeerSpeaking] = useState(false);
-  const [seconds, setSeconds] = useState(0);
+  const [remaining, setRemaining] = useState(defaultLimitSec);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [localVideo, setLocalVideo] = useState<LocalVideoTrack | null>(null);
+  const [remoteVideo, setRemoteVideo] = useState<RemoteVideoTrack | null>(null);
+  const [remoteCamOn, setRemoteCamOn] = useState(false);
+  const [callsLeft, setCallsLeft] = useState<number | null>(null);
   const [tab, setTab] = useState<"pick" | "history">("pick");
   const [history, setHistory] = useState<DmCallView[]>([]);
   const [historyError, setHistoryError] = useState("");
@@ -170,6 +184,10 @@ export default function DirectCall({
   const phaseRef = useRef<Phase | null>(null);
   const roomRef = useRef<Room | null>(null);
   const audioRef = useRef<HTMLDivElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const endsAtRef = useRef(0);
+  const limitSecRef = useRef(defaultLimitSec);
   const remoteTracksRef = useRef<RemoteAudioTrack[]>([]);
   const volumeRef = useRef(volumeSteps[2]);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -206,24 +224,30 @@ export default function DirectCall({
     remoteTracksRef.current = [];
     if (audioRef.current) audioRef.current.innerHTML = "";
     releaseWakeLock();
+    endsAtRef.current = 0;
     setMuted(false);
+    setCameraOn(false);
+    setCameraBusy(false);
+    setLocalVideo(null);
+    setRemoteVideo(null);
+    setRemoteCamOn(false);
+    setRemaining(limitSecRef.current);
     setPeerSpeaking(false);
   };
 
   const finishCall = (message: string) => {
     leaveRoom();
     changeCall(null, null);
-    setSeconds(0);
     if (message) setNotice(message);
   };
 
-  const hangUp = async () => {
+  const hangUp = async (message = "通話を終了しました。") => {
     const current = callRef.current;
     if (!current || hangingUpRef.current) return;
     hangingUpRef.current = true;
     const wasTalking = phaseRef.current === "incall";
     const action = phaseRef.current === "calling" ? "cancel" : phaseRef.current === "incoming" ? "reject" : "end";
-    finishCall(wasTalking ? "通話を終了しました。" : "");
+    finishCall(wasTalking ? message : "");
     try {
       await request(`/dm/${current.id}/${action}`, { method: "POST" });
     } finally {
@@ -253,11 +277,22 @@ export default function DirectCall({
           audioPreset: AudioPresets.speech,
           dtx: true,
           red: true,
+          simulcast: false,
+          videoEncoding: { maxBitrate: 150_000, maxFramerate: 15 },
+        },
+        videoCaptureDefaults: {
+          resolution: VideoPresets.h180.resolution,
+          facingMode: "user",
         },
       });
       roomRef.current = room;
       room
         .on(RoomEvent.TrackSubscribed, (track) => {
+          if (track.kind === Track.Kind.Video) {
+            setRemoteVideo(track as RemoteVideoTrack);
+            setRemoteCamOn(!track.isMuted);
+            return;
+          }
           if (track.kind !== Track.Kind.Audio) return;
           const audioTrack = track as RemoteAudioTrack;
           audioTrack.setVolume(volumeRef.current);
@@ -265,7 +300,28 @@ export default function DirectCall({
           audioRef.current?.appendChild(track.attach());
         })
         .on(RoomEvent.TrackUnsubscribed, (track) => {
+          if (track.kind === Track.Kind.Video) {
+            setRemoteVideo(null);
+            setRemoteCamOn(false);
+            return;
+          }
           track.detach().forEach((element) => element.remove());
+        })
+        .on(RoomEvent.TrackMuted, (publication, participant) => {
+          if (
+            participant !== room.localParticipant &&
+            publication.kind === Track.Kind.Video
+          ) {
+            setRemoteCamOn(false);
+          }
+        })
+        .on(RoomEvent.TrackUnmuted, (publication, participant) => {
+          if (
+            participant !== room.localParticipant &&
+            publication.kind === Track.Kind.Video
+          ) {
+            setRemoteCamOn(true);
+          }
         })
         .on(RoomEvent.ActiveSpeakersChanged, (speakers) =>
           setPeerSpeaking(
@@ -281,9 +337,11 @@ export default function DirectCall({
       await room.connect(result.url, result.token);
       await room.localParticipant.setMicrophoneEnabled(true);
       if (roomRef.current !== room) return;
+      if (endsAtRef.current === 0) {
+        endsAtRef.current = Date.now() + limitSecRef.current * 1000;
+      }
       phaseRef.current = "incall";
       setPhase("incall");
-      setSeconds(0);
       try {
         wakeLockRef.current =
           (await navigator.wakeLock?.request("screen")) ?? null;
@@ -315,6 +373,7 @@ export default function DirectCall({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (typeof result.callsLeft === "number") setCallsLeft(result.callsLeft);
         setNotice(result.error ?? "電話をかけられませんでした。");
         return;
       }
@@ -341,6 +400,31 @@ export default function DirectCall({
       await connectRoom(current.id);
     } catch {
       finishCall("電話に出られませんでした。通信状態を確認してください。");
+    }
+  };
+
+  const toggleCamera = async () => {
+    const room = roomRef.current;
+    if (!room || cameraBusy) return;
+    setCameraBusy(true);
+    const next = !cameraOn;
+    try {
+      await room.localParticipant.setCameraEnabled(next);
+      setCameraOn(next);
+      setLocalVideo(
+        next
+          ? ((room.localParticipant.getTrackPublication(Track.Source.Camera)
+              ?.videoTrack as LocalVideoTrack | undefined) ?? null)
+          : null,
+      );
+    } catch (reason) {
+      setNotice(
+        reason instanceof DOMException && reason.name === "NotAllowedError"
+          ? "カメラが許可されていません。ブラウザの設定でカメラを許可してください。"
+          : "カメラをつけられませんでした。声だけで通話を続けられます。",
+      );
+    } finally {
+      setCameraBusy(false);
     }
   };
 
@@ -396,6 +480,17 @@ export default function DirectCall({
 
         const current = callRef.current;
         const watched = result.watched as DmCallView | null;
+        if (typeof result.limitSec === "number") {
+          limitSecRef.current = result.limitSec;
+        }
+        if (typeof result.callsLeft === "number") setCallsLeft(result.callsLeft);
+        if (watched?.status === "active" && watched.answeredAt) {
+          // 端末の時計ではなくサーバーの時刻を基準に、残り時間を合わせる
+          endsAtRef.current =
+            Date.now() +
+            limitSecRef.current * 1000 -
+            (result.serverNow - watched.answeredAt);
+        }
         if (current && watched) {
           if (watched.status === "active") {
             if (phaseRef.current === "calling") void connectRoom(current.id);
@@ -410,10 +505,16 @@ export default function DirectCall({
             } else if (wasPhase === "incoming") {
               finishCall(`${current.peer}さんからの電話は切れました。`);
             } else if (wasPhase === "incall" || wasPhase === "connecting") {
+              const timeUp =
+                endsAtRef.current > 0 && Date.now() >= endsAtRef.current - 4000;
               finishCall(
-                `通話が終わりました。${
-                  watched.durationSec ? `（${formatDuration(watched.durationSec)}）` : ""
-                }`,
+                timeUp
+                  ? timeUpMessage
+                  : `通話が終わりました。${
+                      watched.durationSec
+                        ? `（${formatDuration(watched.durationSec)}）`
+                        : ""
+                    }`,
               );
             }
           }
@@ -466,9 +567,37 @@ export default function DirectCall({
 
   useEffect(() => {
     if (phase !== "incall") return;
-    const timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
+    const tick = () => {
+      const left = Math.max(
+        0,
+        Math.ceil((endsAtRef.current - Date.now()) / 1000),
+      );
+      setRemaining(left);
+      if (left === 0) void hangUp(timeUpMessage);
+    };
+    tick();
+    const timer = window.setInterval(tick, 500);
     return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  useEffect(() => {
+    const element = remoteVideoRef.current;
+    if (!element || !remoteVideo) return;
+    remoteVideo.attach(element);
+    return () => {
+      remoteVideo.detach(element);
+    };
+  }, [remoteVideo, phase]);
+
+  useEffect(() => {
+    const element = localVideoRef.current;
+    if (!element || !localVideo) return;
+    localVideo.attach(element);
+    return () => {
+      localVideo.detach(element);
+    };
+  }, [localVideo, phase]);
 
   useEffect(
     () => () => {
@@ -575,6 +704,16 @@ export default function DirectCall({
                 <p className="voice-lead">
                   同じグループの人に、1対1で電話できます。相手がアプリを開いていると着信音が鳴ります。
                 </p>
+                <p className="dm-limit-note">
+                  <strong>1回の通話は3分まで、1日3回までです。</strong>
+                  {callsLeft !== null && (
+                    <span className={callsLeft === 0 ? "is-empty" : ""}>
+                      {callsLeft === 0
+                        ? "今日はもうかけられません。また明日おかけください。"
+                        : `今日はあと${callsLeft}回かけられます。`}
+                    </span>
+                  )}
+                </p>
                 {others.length === 0 ? (
                   <p className="voice-lead">電話できる相手がいません。</p>
                 ) : (
@@ -583,7 +722,7 @@ export default function DirectCall({
                       <li key={member.name}>
                         <button
                           className="dm-person"
-                          disabled={busy}
+                          disabled={busy || callsLeft === 0}
                           onClick={() => void startCall(member.name)}
                         >
                           <span className="dm-person__name">{member.name}さん</span>
@@ -671,17 +810,51 @@ export default function DirectCall({
           <h2 className="dm-screen__name">{call.peer}さん</h2>
           {phase === "incall" && (
             <>
-              <p className="dm-screen__time">
-                {String(Math.floor(seconds / 60)).padStart(2, "0")}:
-                {String(seconds % 60).padStart(2, "0")}
+              <p
+                className={`dm-screen__time ${remaining <= warningSec ? "is-warning" : ""}`}
+              >
+                のこり {Math.floor(remaining / 60)}:
+                {String(remaining % 60).padStart(2, "0")}
+              </p>
+              <p className="dm-screen__limit">
+                {remaining <= warningSec
+                  ? `もうすぐ終わります（あと${remaining}秒）`
+                  : "1回の通話は3分までです"}
               </p>
               <p className={`dm-screen__speaking ${peerSpeaking ? "is-on" : ""}`}>
                 {peerSpeaking ? "🔊 話しています" : "　"}
               </p>
             </>
           )}
+          {phase === "incall" && (
+            <div
+              className={`dm-video ${cameraOn || remoteCamOn ? "" : "is-hidden"}`}
+            >
+              <video
+                autoPlay
+                className={`dm-video__remote ${remoteCamOn ? "is-on" : ""}`}
+                playsInline
+                ref={remoteVideoRef}
+              />
+              {!remoteCamOn && (
+                <p className="dm-video__off">
+                  📷 {call.peer}さんのカメラはオフです
+                </p>
+              )}
+              <video
+                autoPlay
+                className={`dm-video__local ${cameraOn ? "is-on" : ""}`}
+                muted
+                playsInline
+                ref={localVideoRef}
+              />
+            </div>
+          )}
           {phase === "calling" && (
             <p className="dm-screen__hint">相手が出るまでお待ちください</p>
+          )}
+          {phase === "incoming" && (
+            <p className="dm-screen__hint">1回の通話は3分までです</p>
           )}
           {phase === "incoming" ? (
             <div className="dm-screen__actions dm-screen__actions--two">
@@ -702,6 +875,20 @@ export default function DirectCall({
             <div className="dm-screen__actions">
               {phase === "incall" && (
                 <>
+                  <button
+                    className={`dm-big-button dm-big-button--sub dm-big-button--camera ${cameraOn ? "is-on" : ""}`}
+                    disabled={cameraBusy}
+                    onClick={() => void toggleCamera()}
+                  >
+                    {cameraOn
+                      ? "📷 カメラはオンです（押すと消します）"
+                      : "📷 カメラをつける"}
+                  </button>
+                  {cameraOn && (
+                    <p className="dm-screen__hint">
+                      あなたの顔が相手に見えています
+                    </p>
+                  )}
                   <button
                     className={`dm-big-button dm-big-button--sub ${muted ? "is-muted" : ""}`}
                     onClick={() => void toggleMute()}

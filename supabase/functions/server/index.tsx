@@ -4351,6 +4351,25 @@ type DmCall = {
 };
 const dmRingSeconds = 30;
 const dmStaleSeconds = 20;
+const dmLimitSeconds = 180;
+const dmLimitGraceSeconds = 3;
+const dmDailyCallLimit = 3;
+const dmTokenTtlSeconds = dmLimitSeconds + 60;
+const dmDayKey = (time: number) =>
+  new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(
+    new Date(time),
+  );
+// 実際に話した発信だけを、日本時間の日付ごとに数える
+const dmCallsLeftToday = (calls: DmCall[], name: string, now: number) => {
+  const today = dmDayKey(now);
+  const used = calls.filter(
+    (call) =>
+      call.caller === name &&
+      call.answeredAt !== undefined &&
+      dmDayKey(call.answeredAt) === today,
+  ).length;
+  return Math.max(0, dmDailyCallLimit - used);
+};
 const dmHistoryLimit = 30;
 const dmStoreLimit = 300;
 const dmCallsKey = (groupId: string) => `sawakai:dm:calls:${groupId}`;
@@ -4369,6 +4388,9 @@ function dmSettle(call: DmCall, now: number): DmCall {
   }
   if (call.status === "active") {
     const base = call.answeredAt ?? call.createdAt;
+    if (now - base > (dmLimitSeconds + dmLimitGraceSeconds) * 1000) {
+      return { ...call, status: "ended", endedAt: now };
+    }
     const stale = [call.caller, call.callee].some(
       (name) => now - (call.heartbeat[name] ?? base) > dmStaleSeconds * 1000,
     );
@@ -4404,17 +4426,40 @@ async function dmPush(call: DmCall, kind: "ring" | "missed") {
   }
 }
 
+// 時間切れの通話は、端末側の操作に頼らずサーバーからも切断する
+async function dmCloseRoom(callId: string) {
+  const url = Deno.env.get("LIVEKIT_URL");
+  const apiKey = Deno.env.get("LIVEKIT_API_KEY");
+  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
+  if (!url || !apiKey || !apiSecret) return;
+  try {
+    const { RoomServiceClient } = await import("npm:livekit-server-sdk@2");
+    const roomClient = new RoomServiceClient(
+      url.replace(/^wss:/, "https:").replace(/^ws:/, "http:"),
+      apiKey,
+      apiSecret,
+    );
+    await roomClient.deleteRoom(`sawakai-dm-${callId}`);
+  } catch {
+    console.warn("Could not close direct call room");
+  }
+}
+
 async function dmLoadCalls(groupId: string): Promise<DmCall[]> {
   const stored = ((await kv.get(dmCallsKey(groupId))) as DmCall[] | undefined) ?? [];
   const now = Date.now();
   let changed = false;
   const newlyMissed: DmCall[] = [];
+  const newlyEnded: DmCall[] = [];
   const settled = stored.map((call) => {
     const next = dmSettle(call, now);
     if (next !== call) {
       changed = true;
       if (call.status === "ringing" && next.status === "missed") {
         newlyMissed.push(next);
+      }
+      if (call.status === "active" && next.status === "ended") {
+        newlyEnded.push(next);
       }
     }
     return next;
@@ -4424,6 +4469,7 @@ async function dmLoadCalls(groupId: string): Promise<DmCall[]> {
     for (const call of settled) {
       if (!dmIsLive(call)) await dmClearActive(call);
     }
+    for (const call of newlyEnded) await dmCloseRoom(call.id);
     for (const call of newlyMissed) await dmPush(call, "missed");
   }
   return settled;
@@ -4536,6 +4582,7 @@ function dmView(call: DmCall, me: string) {
     direction: outgoing ? "outgoing" : "incoming",
     status: call.status,
     createdAt: call.createdAt,
+    answeredAt: call.answeredAt ?? null,
     durationSec:
       call.answeredAt && call.endedAt
         ? Math.max(0, Math.round((call.endedAt - call.answeredAt) / 1000))
@@ -4577,6 +4624,15 @@ app.post(`${root}/dm/call`, async (c) => {
   }
   const now = Date.now();
   const calls = await dmLoadCalls(groupId);
+  if (dmCallsLeftToday(calls, session.name, now) <= 0) {
+    return c.json(
+      {
+        error: `今日は電話をかけられる回数（${dmDailyCallLimit}回）を使いました。また明日おかけください。`,
+        callsLeft: 0,
+      },
+      429,
+    );
+  }
   const busy =
     (await dmLiveCallFor(to)) || (await dmInGroupVoice(groupId, to));
   const call: DmCall = {
@@ -4642,6 +4698,9 @@ app.get(`${root}/dm/poll`, async (c) => {
     )
     .slice(-5);
   return c.json({
+    serverNow: now,
+    limitSec: dmLimitSeconds,
+    callsLeft: dmCallsLeftToday(next, session.name, now),
     incoming: incoming ? dmView(incoming, session.name) : null,
     watched:
       watched &&
@@ -4762,7 +4821,7 @@ app.post(`${root}/dm/:id/token`, async (c) => {
   const token = new AccessToken(apiKey, apiSecret, {
     identity: `dm:${call.id}:${session.name}`,
     name: session.name,
-    ttl: 60 * 60 * 2,
+    ttl: dmTokenTtlSeconds,
   });
   token.addGrant({
     room: `sawakai-dm-${call.id}`,
