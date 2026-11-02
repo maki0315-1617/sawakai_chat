@@ -278,10 +278,10 @@ export default function DirectCall({
           dtx: true,
           red: true,
           simulcast: false,
-          videoEncoding: { maxBitrate: 150_000, maxFramerate: 15 },
+          videoEncoding: { maxBitrate: 300_000, maxFramerate: 15 },
         },
         videoCaptureDefaults: {
-          resolution: VideoPresets.h180.resolution,
+          resolution: VideoPresets.h360.resolution,
           facingMode: "user",
         },
       });
@@ -643,6 +643,7 @@ export default function DirectCall({
 
   const others = members.filter((member) => member.name !== myName);
   const busy = call !== null;
+  const videoMode = phase === "incall" && (cameraOn || remoteCamOn);
 
   useEffect(() => {
     onBusyChange?.(phase === "connecting" || phase === "incall");
@@ -797,7 +798,11 @@ export default function DirectCall({
       )}
 
       {call && phase && (
-        <div className="dm-screen" role="alertdialog" aria-label="1対1通話">
+        <div
+          className={`dm-screen ${videoMode ? "dm-screen--video" : ""}`}
+          role="alertdialog"
+          aria-label="1対1通話"
+        >
           <p className="dm-screen__label">
             {phase === "incoming"
               ? "電話がかかってきました"
@@ -880,9 +885,13 @@ export default function DirectCall({
                     disabled={cameraBusy}
                     onClick={() => void toggleCamera()}
                   >
-                    {cameraOn
-                      ? "📷 カメラはオンです（押すと消します）"
-                      : "📷 カメラをつける"}
+                    {videoMode
+                      ? cameraOn
+                        ? "📷 カメラを消す"
+                        : "📷 カメラをつける"
+                      : cameraOn
+                        ? "📷 カメラはオンです（押すと消します）"
+                        : "📷 カメラをつける"}
                   </button>
                   {cameraOn && (
                     <p className="dm-screen__hint">
@@ -893,7 +902,13 @@ export default function DirectCall({
                     className={`dm-big-button dm-big-button--sub ${muted ? "is-muted" : ""}`}
                     onClick={() => void toggleMute()}
                   >
-                    {muted ? "🔇 マイクがオフです（押すとオン）" : "🎤 マイクはオンです"}
+                    {videoMode
+                      ? muted
+                        ? "🔇 マイクオフ"
+                        : "🎤 マイクオン"
+                      : muted
+                        ? "🔇 マイクがオフです（押すとオン）"
+                        : "🎤 マイクはオンです"}
                   </button>
                   <div className="dm-volume">
                     <button
