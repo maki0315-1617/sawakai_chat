@@ -403,26 +403,58 @@ export default function DirectCall({
     }
   };
 
+  const cameraErrorMessage = (reason: unknown) => {
+    const name = reason instanceof DOMException ? reason.name : "";
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      return "カメラが許可されていません。アドレスバーのカメラの印から許可するか、Windowsの「設定」→「プライバシーとセキュリティ」→「カメラ」で、ブラウザのカメラ使用をオンにしてください。";
+    }
+    if (name === "NotReadableError" || name === "AbortError") {
+      return "カメラを使えませんでした。Zoomなど、ほかのアプリやタブがカメラを使っている可能性があります。閉じてからもう一度お試しください。";
+    }
+    if (name === "NotFoundError" || name === "OverconstrainedError") {
+      return "カメラが見つかりませんでした。カメラが有効か確認してください。";
+    }
+    return "カメラをつけられませんでした。声だけで通話を続けられます。";
+  };
+
   const toggleCamera = async () => {
     const room = roomRef.current;
     if (!room || cameraBusy) return;
     setCameraBusy(true);
     const next = !cameraOn;
     try {
-      await room.localParticipant.setCameraEnabled(next);
-      setCameraOn(next);
-      setLocalVideo(
-        next
-          ? ((room.localParticipant.getTrackPublication(Track.Source.Camera)
-              ?.videoTrack as LocalVideoTrack | undefined) ?? null)
-          : null,
-      );
+      if (!next) {
+        await room.localParticipant.setCameraEnabled(false);
+        setCameraOn(false);
+        setLocalVideo(null);
+        return;
+      }
+      let publication;
+      try {
+        publication = await room.localParticipant.setCameraEnabled(true);
+      } catch (reason) {
+        const name = reason instanceof DOMException ? reason.name : "";
+        if (name === "NotAllowedError" || name === "NotReadableError") {
+          throw reason;
+        }
+        // 解像度などの指定に合わないカメラは、指定なしで再試行する
+        publication = await room.localParticipant.setCameraEnabled(true, {
+          resolution: undefined,
+          facingMode: undefined,
+        });
+      }
+      const track = (publication?.videoTrack ??
+        room.localParticipant.getTrackPublication(Track.Source.Camera)
+          ?.videoTrack) as LocalVideoTrack | undefined;
+      if (!track) throw new Error("camera track missing");
+      setLocalVideo(track);
+      setCameraOn(true);
     } catch (reason) {
-      setNotice(
-        reason instanceof DOMException && reason.name === "NotAllowedError"
-          ? "カメラが許可されていません。ブラウザの設定でカメラを許可してください。"
-          : "カメラをつけられませんでした。声だけで通話を続けられます。",
-      );
+      console.error("camera start failed", reason);
+      await room.localParticipant.setCameraEnabled(false).catch(() => undefined);
+      setCameraOn(false);
+      setLocalVideo(null);
+      setNotice(cameraErrorMessage(reason));
     } finally {
       setCameraBusy(false);
     }
