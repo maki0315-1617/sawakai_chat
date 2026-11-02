@@ -417,6 +417,22 @@ export default function DirectCall({
     return "カメラをつけられませんでした。声だけで通話を続けられます。";
   };
 
+  // スマホ連携などの「仮想カメラ」は黒い映像になることがあるため、内蔵カメラを優先する
+  const pickCameraId = async () => {
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter(
+        (device) => device.kind === "videoinput",
+      );
+      const virtual = /仮想|virtual|obs|phone link|link to windows|droidcam|ndi|snap camera|manycam/i;
+      const real = devices.filter((device) => !virtual.test(device.label));
+      return real.length > 0 && real.length < devices.length
+        ? real[0].deviceId
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const toggleCamera = async () => {
     const room = roomRef.current;
     if (!room || cameraBusy) return;
@@ -431,7 +447,21 @@ export default function DirectCall({
       }
       let publication;
       try {
-        publication = await room.localParticipant.setCameraEnabled(true);
+        let deviceId = await pickCameraId();
+        publication = await room.localParticipant.setCameraEnabled(
+          true,
+          deviceId ? { deviceId: { ideal: deviceId } } : undefined,
+        );
+        if (deviceId === undefined) {
+          // 初回は許可前でカメラ名が取れないため、許可後にもう一度選び直す
+          deviceId = await pickCameraId();
+          if (deviceId) {
+            await room.localParticipant.setCameraEnabled(false);
+            publication = await room.localParticipant.setCameraEnabled(true, {
+              deviceId: { ideal: deviceId },
+            });
+          }
+        }
       } catch (reason) {
         const name = reason instanceof DOMException ? reason.name : "";
         if (name === "NotAllowedError" || name === "NotReadableError") {
@@ -637,7 +667,17 @@ export default function DirectCall({
       muted: track.muted,
       settings: track.getSettings(),
     });
+    // 2秒たっても映像が届かない場合は、画面で原因の見当を伝える
+    const check = window.setTimeout(() => {
+      if (element.videoWidth > 0 && !track.muted) return;
+      setNotice(
+        track.readyState !== "live"
+          ? "カメラが止まっています。Zoomなど、ほかのアプリやタブを閉じてから、もう一度カメラをつけてください。"
+          : "カメラの映像が届いていません。Windowsの「設定」→「プライバシーとセキュリティ」→「カメラ」で、ブラウザのカメラ使用がオンか確認してください。ノートPCのカメラのシャッターやカメラ用のキーがオフになっていないかもご確認ください。",
+      );
+    }, 2500);
     return () => {
+      window.clearTimeout(check);
       localVideo.detach(element);
     };
   }, [localVideo, phase]);
