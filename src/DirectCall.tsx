@@ -423,7 +423,12 @@ export default function DirectCall({
       const devices = (await navigator.mediaDevices.enumerateDevices()).filter(
         (device) => device.kind === "videoinput",
       );
-      const virtual = /仮想|virtual|obs|phone link|link to windows|droidcam|ndi|snap camera|manycam/i;
+      console.info(
+        "camera devices",
+        devices.map((device) => device.label || "(名前なし)"),
+      );
+      const virtual =
+        /仮想|virtual|\bobs\b|phone link|link to windows|droidcam|\bndi\b|snap camera|manycam|pixel|iphone|スマートフォン/i;
       const real = devices.filter((device) => !virtual.test(device.label));
       return real.length > 0 && real.length < devices.length
         ? real[0].deviceId
@@ -448,18 +453,25 @@ export default function DirectCall({
       let publication;
       try {
         let deviceId = await pickCameraId();
-        publication = await room.localParticipant.setCameraEnabled(
-          true,
-          deviceId ? { deviceId: { ideal: deviceId } } : undefined,
-        );
+        const open = (id?: string) =>
+          room.localParticipant.setCameraEnabled(
+            true,
+            id ? { deviceId: { exact: id } } : undefined,
+          );
+        try {
+          publication = await open(deviceId);
+        } catch (reason) {
+          if (!deviceId) throw reason;
+          // 指定したカメラを開けなかったときだけ、指定なしに戻す
+          console.warn("preferred camera failed", reason);
+          publication = await open();
+        }
         if (deviceId === undefined) {
           // 初回は許可前でカメラ名が取れないため、許可後にもう一度選び直す
           deviceId = await pickCameraId();
           if (deviceId) {
             await room.localParticipant.setCameraEnabled(false);
-            publication = await room.localParticipant.setCameraEnabled(true, {
-              deviceId: { ideal: deviceId },
-            });
+            publication = await open(deviceId);
           }
         }
       } catch (reason) {
