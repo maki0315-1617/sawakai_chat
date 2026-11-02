@@ -11,6 +11,7 @@ import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput from "./VoiceInput";
 import DocumentsViewer from "./DocumentsViewer";
+import InstallBanner from "./InstallBanner";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -5132,7 +5133,12 @@ export default function App() {
   };
 
   if (!token || !profile) {
-    return <JoinScreen onJoined={handleJoined} />;
+    return (
+      <>
+        <InstallBanner />
+        <JoinScreen onJoined={handleJoined} />
+      </>
+    );
   }
 
   return (
@@ -5145,6 +5151,7 @@ export default function App() {
             : ""
       }`}
     >
+      <InstallBanner />
       <header className="group-header">
         <div className="group-header__inner">
           <button
