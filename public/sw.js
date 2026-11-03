@@ -1,4 +1,4 @@
-const CACHE_NAME = "sawakai-shell-v10";
+const CACHE_NAME = "sawakai-shell-v11";
 const BADGE_CACHE = "sawakai-badge";
 const scopeUrl = new URL("./", self.registration.scope);
 const badgeKey = new URL("__badge-count", scopeUrl).href;
@@ -75,18 +75,21 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // SPAのフォールバックHTMLを画像などとして保存・再利用しない
+  const isHtml = (response) =>
+    (response.headers.get("content-type") || "").includes("text/html");
+
   event.respondWith(
-    caches.match(request).then(
-      (cached) =>
-        cached ??
-        fetch(request).then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        }),
-    ),
+    caches.match(request).then((cached) => {
+      if (cached && !isHtml(cached)) return cached;
+      return fetch(request).then((response) => {
+        if (response.ok && !isHtml(response)) {
+          const copy = response.clone();
+          void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      });
+    }),
   );
 });
 
