@@ -2355,6 +2355,7 @@ function GroupActivities({
         error={error}
         isAdmin={isAdmin}
         isSubmitting={isBusy}
+        key={activity.id}
         onBack={onBack}
         onFinish={() => void activityAction("finish")}
         onNext={() => setActivity(null)}
