@@ -36,6 +36,29 @@ type ChatMessage = {
   };
 };
 
+function MessageVideo({ src, fileName }: { src: string; fileName: string }) {
+  const [aspectRatio, setAspectRatio] = useState("16 / 9");
+
+  return (
+    <div className="message-video-frame" style={{ aspectRatio }}>
+      <video
+        className="message-media"
+        controls
+        playsInline
+        preload="metadata"
+        src={src}
+        onLoadedMetadata={(event) => {
+          const { videoWidth, videoHeight } = event.currentTarget;
+          if (videoWidth > 0 && videoHeight > 0) {
+            setAspectRatio(`${videoWidth} / ${videoHeight}`);
+          }
+        }}
+        aria-label={fileName}
+      />
+    </div>
+  );
+}
+
 type Profile = {
   name: string;
   imageUrl?: string;
@@ -5370,11 +5393,8 @@ export default function App() {
                           src={message.attachment.signedUrl}
                         />
                       ) : (
-                        <video
-                          className="message-media"
-                          controls
-                          playsInline
-                          preload="metadata"
+                        <MessageVideo
+                          fileName={message.attachment.fileName}
                           src={message.attachment.signedUrl}
                         />
                       ))}
