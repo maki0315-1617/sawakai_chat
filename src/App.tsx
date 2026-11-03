@@ -11,6 +11,7 @@ import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput from "./VoiceInput";
 import DocumentsViewer from "./DocumentsViewer";
+import PicturePuzzle from "./PicturePuzzle";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -193,6 +194,7 @@ type GroupActivityKind =
   | "nine-puzzle"
   | "proverb-puzzle"
   | "memory-match"
+  | "picture-puzzle"
 type ProverbQuestion = {
   id: string
   pieces: string[]
@@ -210,6 +212,8 @@ type GroupActivity = {
   prompt: string
   entries: { name: string; text: string; createdAt: string }[]
   board?: number[]
+  photoIndex?: number
+  scores?: Record<string, number>
   moves?: number
   questions?: ProverbQuestion[]
   questionIndex?: number
@@ -1732,6 +1736,7 @@ function GroupActivities({
         loadLatest("/nine-puzzles/latest"),
         loadLatest("/proverb-puzzles/latest"),
         loadLatest("/memory-matches/latest"),
+        loadLatest("/picture-puzzles/latest"),
       ])
       const candidates = results.flatMap((result) =>
         result.status === "fulfilled" && result.value ? [result.value] : [],
@@ -1833,7 +1838,9 @@ function GroupActivities({
             ? "/proverb-puzzles"
             : kind === "memory-match"
               ? "/memory-matches"
-            : "/activities"
+              : kind === "picture-puzzle"
+                ? "/picture-puzzles"
+                : "/activities"
       const response = await fetch(`${apiRoot}${endpoint}`, {
         method: "POST",
         headers: apiHeaders(token, activeGroupId),
@@ -1868,7 +1875,9 @@ function GroupActivities({
             ? "/proverb-puzzles/invite"
             : kind === "memory-match"
               ? "/memory-matches/invite"
-          : "/activities/invite"
+              : kind === "picture-puzzle"
+                ? "/picture-puzzles/invite"
+                : "/activities/invite"
       const response = await fetch(`${apiRoot}${inviteEndpoint}`, {
         method: "POST",
         headers: apiHeaders(token, activeGroupId),
@@ -1909,7 +1918,9 @@ function GroupActivities({
             ? "proverb-puzzles"
             : activity.kind === "memory-match"
               ? "memory-matches"
-            : "activities"
+              : activity.kind === "picture-puzzle"
+                ? "picture-puzzles"
+                : "activities"
       const response = await fetch(
         `${apiRoot}/${activityRoot}/${activity.id}/${action}`,
         {
@@ -1930,6 +1941,33 @@ function GroupActivities({
         reason instanceof Error
           ? reason.message
           : "操作を完了できませんでした。",
+      )
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const submitPicturePuzzleTime = async (seconds: number) => {
+    if (!activity || activity.kind !== "picture-puzzle") return
+    setIsBusy(true)
+    setError("")
+    try {
+      const response = await fetch(
+        `${apiRoot}/picture-puzzles/${activity.id}/complete`,
+        {
+          method: "POST",
+          headers: apiHeaders(token, activeGroupId),
+          body: JSON.stringify({ seconds }),
+        },
+      )
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      setActivity(result.activity)
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "タイムを記録できませんでした。",
       )
     } finally {
       setIsBusy(false)
@@ -2076,6 +2114,7 @@ function GroupActivities({
     "nine-puzzle": "みんなで9マス",
     "proverb-puzzle": "ことわざ並べ替え",
     "memory-match": "みんなで神経衰弱",
+    "picture-puzzle": "絵合わせ",
   }
   const gameDescriptions: Record<GroupActivityKind, string> = {
     shiritori: "前の言葉の最後の文字から、次の言葉をつなぎます",
@@ -2084,6 +2123,7 @@ function GroupActivities({
     "nine-puzzle": "2枚を選んで入れ替え、1から9まで順番に並べます",
     "proverb-puzzle": "語句を入れ替えて、ランダムなことわざ10問を完成させます",
     "memory-match": "18枚のカードから同じ言葉の9組を見つけます",
+    "picture-puzzle": "全員同じ写真パズルを完成させて、タイムを競います",
   }
   const currentName = activity
     ? activity.participants[activity.turnIndex % activity.participants.length]
@@ -2294,6 +2334,22 @@ function GroupActivities({
     )
   }
 
+  if (activity?.kind === "picture-puzzle") {
+    return (
+      <PicturePuzzle
+        activity={activity}
+        currentName={profile.name}
+        error={error}
+        isAdmin={isAdmin}
+        isSubmitting={isBusy}
+        onBack={onBack}
+        onFinish={() => void activityAction("finish")}
+        onNext={() => setActivity(null)}
+        onSubmit={(seconds) => void submitPicturePuzzleTime(seconds)}
+      />
+    )
+  }
+
   if (!activity) {
     return (
       <div className="group-play-setup">
@@ -2303,7 +2359,7 @@ function GroupActivities({
         <p className="group-play-eyebrow">指先で選んで、みんなで楽しむ</p>
         <h3>みんなの遊び</h3>
         <p className="group-play-lead">
-          大きなボタンを順番に押すだけで楽しめます。
+          遊びを選んで、みんなで楽しみましょう。
         </p>
         <div className="group-play-games">
           {(
@@ -2314,6 +2370,7 @@ function GroupActivities({
               "nine-puzzle",
               "proverb-puzzle",
               "memory-match",
+              "picture-puzzle",
             ] as const
           ).map((value) => (
               <button

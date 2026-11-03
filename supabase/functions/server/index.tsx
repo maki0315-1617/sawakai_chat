@@ -215,6 +215,21 @@ type MemoryMatchSession = {
   attempts: number;
 };
 
+type PicturePuzzleSession = {
+  id: string;
+  kind: "picture-puzzle";
+  participants: string[];
+  turnIndex: number;
+  status: "active" | "finished";
+  createdAt: string;
+  createdBy: string;
+  prompt: string;
+  entries: [];
+  photoIndex: number;
+  board: number[];
+  scores: Record<string, number>;
+};
+
 type AppSession = {
   name: string;
   expiresAt: number;
@@ -253,6 +268,10 @@ function proverbPuzzleDataKey(groupId: string) {
 
 function memoryMatchDataKey(groupId: string) {
   return `sawakai:group:${groupId}:memory-matches`;
+}
+
+function picturePuzzleDataKey(groupId: string) {
+  return `sawakai:group:${groupId}:picture-puzzles`;
 }
 
 function memberDataKey(groupId: string) {
@@ -330,11 +349,21 @@ async function getMemoryMatchSessions(
   );
 }
 
+async function getPicturePuzzleSessions(
+  groupId: string,
+): Promise<PicturePuzzleSession[]> {
+  return (
+    ((await kv.get(picturePuzzleDataKey(groupId))) as
+      | PicturePuzzleSession[]
+      | undefined) ?? []
+  );
+}
+
 async function sendPuzzleInvitations(
   groupId: string,
   sender: string,
   recipientNames: Set<string>,
-  game: "nine" | "proverb" | "memory-match" = "nine",
+  game: "nine" | "proverb" | "memory-match" | "picture-puzzle" = "nine",
 ) {
   const deviceKey = `sawakai:group:${groupId}:push-devices`;
   const devices =
@@ -379,19 +408,23 @@ async function sendPuzzleInvitations(
           },
           JSON.stringify({
             title:
-              game === "proverb"
+              game === "picture-puzzle"
+                ? "絵合わせのお誘い"
+                : game === "proverb"
                 ? "ことわざ並べ替えのお誘い"
                 : game === "memory-match"
                   ? "みんなで神経衰弱のお誘い"
                 : "みんなで9マスのお誘い",
             body: device.preview
-              ? game === "proverb"
+              ? game === "picture-puzzle"
+                ? `${sender}さんから絵合わせのお誘いです。同じ写真の完成タイムを競いましょう。`
+                : game === "proverb"
                 ? `${sender}さんからことわざ並べ替えのお誘いです。みんなで語句を正しい順番に並べましょう。`
                 : game === "memory-match"
                   ? `${sender}さんから神経衰弱のお誘いです。みんなで同じカードを見つけましょう。`
                 : `${sender}さんから9マスパズルのお誘いです。みんなで1から9まで並べましょう。`
               : "みんなの遊びへのお誘いが届きました。",
-            tag: `${game}-puzzle-${groupId}`,
+            tag: `${game}-${game === "picture-puzzle" ? "" : "puzzle-"}${groupId}`,
             url: "./",
             appBadge: device.appBadge,
           }),
@@ -407,7 +440,7 @@ async function sendPuzzleInvitations(
         if (statusCode === 404 || statusCode === 410) {
           expired.add(device.endpoint);
         } else {
-          console.warn("Nine-puzzle invitation could not be delivered");
+          console.warn("Puzzle-game invitation could not be delivered");
         }
       }
     }),
@@ -431,6 +464,41 @@ function shuffledPuzzleBoard() {
       [board[index], board[swapIndex]] = [board[swapIndex], board[index]];
     }
   }
+  return board;
+}
+
+function shuffledPicturePuzzleBoard() {
+  const board = [...Array.from({ length: 15 }, (_, index) => index), -1];
+  let emptyIndex = 15;
+  let previousEmptyIndex = -1;
+
+  for (let move = 0; move < 120; move += 1) {
+    const emptyRow = Math.floor(emptyIndex / 4);
+    const emptyColumn = emptyIndex % 4;
+    const neighbors = board
+      .map((_, index) => index)
+      .filter((index) => {
+        if (index === previousEmptyIndex || board[index] === -1) return false;
+        const rowDistance = Math.abs(Math.floor(index / 4) - emptyRow);
+        const columnDistance = Math.abs((index % 4) - emptyColumn);
+        return rowDistance + columnDistance === 1;
+      });
+    const nextIndex = neighbors[Math.floor(Math.random() * neighbors.length)];
+    board[emptyIndex] = board[nextIndex];
+    board[nextIndex] = -1;
+    previousEmptyIndex = emptyIndex;
+    emptyIndex = nextIndex;
+  }
+
+  if (
+    board.every((tile, index) =>
+      index === board.length - 1 ? tile === -1 : tile === index,
+    )
+  ) {
+    board[15] = board[14];
+    board[14] = -1;
+  }
+
   return board;
 }
 
@@ -4307,6 +4375,156 @@ app.post(`${root}/memory-matches/:matchId/finish`, async (c) => {
   await kv.set(memoryMatchDataKey(context.groupId), activities);
   return c.json({ activity: activities[index] });
 });
+
+app.get(`${root}/picture-puzzles/latest`, async (c) => {
+  const context = await puzzleRequestContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const activity =
+    (await getPicturePuzzleSessions(context.groupId)).at(-1) ?? null;
+  return c.json({ activity });
+});
+
+app.post(`${root}/picture-puzzles`, async (c) => {
+  const context = await puzzleRequestContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
+    return c.json({ error: "管理者が遊びを開始できます。" }, 403);
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const members =
+    ((await kv.get(memberDataKey(context.groupId))) as
+      | Array<{ name: string }>
+      | undefined) ?? [];
+  const memberNames = new Set(members.map((member) => member.name));
+  const participants: string[] = Array.isArray(body.participants)
+    ? [
+        ...new Set<string>(
+          body.participants.filter(
+            (name: unknown): name is string =>
+              typeof name === "string" && memberNames.has(name),
+          ),
+        ),
+      ]
+    : [];
+  if (participants.length < 2) {
+    return c.json({ error: "参加者を2人以上選んでください。" }, 400);
+  }
+
+  const previous = (await getPicturePuzzleSessions(context.groupId)).map(
+    (activity) =>
+      activity.status === "active"
+        ? { ...activity, status: "finished" as const }
+        : activity,
+  );
+  const activity: PicturePuzzleSession = {
+    id: crypto.randomUUID(),
+    kind: "picture-puzzle",
+    participants,
+    turnIndex: 0,
+    status: "active",
+    createdAt: new Date().toISOString(),
+    createdBy: context.session.name,
+    prompt: "同じ写真を完成させて、タイムを競いましょう",
+    entries: [],
+    photoIndex: Math.floor(Math.random() * 5),
+    board: shuffledPicturePuzzleBoard(),
+    scores: {},
+  };
+  await kv.set(
+    picturePuzzleDataKey(context.groupId),
+    [...previous, activity].slice(-30),
+  );
+  return c.json({ activity });
+});
+
+app.post(`${root}/picture-puzzles/invite`, async (c) => {
+  const context = await puzzleRequestContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
+    return c.json({ error: "管理者だけが通知を送れます。" }, 403);
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const members =
+    ((await kv.get(memberDataKey(context.groupId))) as
+      | Array<{ name: string }>
+      | undefined) ?? [];
+  const memberNames = new Set(members.map((member) => member.name));
+  const recipientNames = new Set<string>(
+    Array.isArray(body.participants)
+      ? body.participants.filter(
+          (name: unknown): name is string =>
+            typeof name === "string" &&
+            name !== context.session.name &&
+            memberNames.has(name),
+        )
+      : [],
+  );
+  if (!recipientNames.size) {
+    return c.json({ error: "通知する参加者を1人以上選んでください。" }, 400);
+  }
+  const notifiedCount = await sendPuzzleInvitations(
+    context.groupId,
+    context.session.name,
+    recipientNames,
+    "picture-puzzle",
+  );
+  return c.json({ notifiedCount, selectedCount: recipientNames.size });
+});
+
+app.post(`${root}/picture-puzzles/:puzzleId/complete`, async (c) => {
+  const context = await puzzleRequestContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const activities = await getPicturePuzzleSessions(context.groupId);
+  const index = activities.findIndex(
+    (activity) => activity.id === c.req.param("puzzleId"),
+  );
+  if (index < 0) return c.json({ error: "このゲームが見つかりません。" }, 404);
+  const activity = activities[index];
+  if (!activity.participants.includes(context.session.name)) {
+    return c.json({ error: "このゲームの参加者ではありません。" }, 403);
+  }
+  if (activity.scores[context.session.name] !== undefined) {
+    return c.json({ activity });
+  }
+  if (activity.status !== "active") {
+    return c.json({ error: "このゲームは終了しています。" }, 409);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const seconds = Number(body.seconds);
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
+    return c.json({ error: "タイムを正しく読み取れませんでした。" }, 400);
+  }
+  const scores = { ...activity.scores, [context.session.name]: seconds };
+  const complete = activity.participants.every(
+    (name) => scores[name] !== undefined,
+  );
+  const updated: PicturePuzzleSession = {
+    ...activity,
+    scores,
+    status: complete ? "finished" : "active",
+  };
+  activities[index] = updated;
+  await kv.set(picturePuzzleDataKey(context.groupId), activities);
+  return c.json({ activity: updated });
+});
+
+app.post(`${root}/picture-puzzles/:puzzleId/finish`, async (c) => {
+  const context = await puzzleRequestContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
+    return c.json({ error: "管理者だけが終了できます。" }, 403);
+  }
+  const activities = await getPicturePuzzleSessions(context.groupId);
+  const index = activities.findIndex(
+    (activity) => activity.id === c.req.param("puzzleId"),
+  );
+  if (index < 0) return c.json({ error: "このゲームが見つかりません。" }, 404);
+  activities[index] = { ...activities[index], status: "finished" };
+  await kv.set(picturePuzzleDataKey(context.groupId), activities);
+  return c.json({ activity: activities[index] });
+});
+
 app.post(`${root}/voice/token`, async (c) => {
   const session = await getSession(c.req.header("X-Session-Token"));
   if (!session) return c.json({ error: "もう一度参加してください。" }, 401);

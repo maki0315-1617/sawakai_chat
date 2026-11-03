@@ -1,0 +1,443 @@
+import { useEffect, useRef, useState } from "react"
+
+const GRID_SIZE = 4
+
+const EMPTY_TILE = -1
+
+const photos = [
+  { name: "花", src: "flower.jpg" },
+
+  { name: "木", src: "tree.jpg" },
+
+  { name: "お祭り", src: "festival.jpg" },
+
+  { name: "人物", src: "portrait.jpg" },
+
+  { name: "イラスト", src: "icon.jpg" },
+].map((photo) => ({
+  ...photo,
+
+  src: `${import.meta.env.BASE_URL}assets/picture-puzzle/${photo.src}`,
+}))
+
+type PicturePuzzleActivity = {
+  id: string
+
+  participants: string[]
+
+  status: "active" | "finished"
+
+  photoIndex?: number
+
+  board?: number[]
+
+  scores?: Record<string, number>
+}
+
+type PicturePuzzleProps = {
+  activity: PicturePuzzleActivity
+
+  currentName: string
+
+  error: string
+
+  isAdmin: boolean
+
+  isSubmitting: boolean
+
+  onBack: () => void
+
+  onFinish: () => void
+
+  onNext: () => void
+
+  onSubmit: (seconds: number) => void
+}
+
+function isAdjacent(first: number, second: number) {
+  const rowDistance = Math.abs(
+    Math.floor(first / GRID_SIZE) - Math.floor(second / GRID_SIZE),
+  )
+
+  const columnDistance = Math.abs((first % GRID_SIZE) - (second % GRID_SIZE))
+
+  return rowDistance + columnDistance === 1
+}
+
+function isValidBoard(board: number[]) {
+  return (
+    board.length === GRID_SIZE * GRID_SIZE &&
+    new Set(board).size === GRID_SIZE * GRID_SIZE &&
+    board.includes(EMPTY_TILE) &&
+    board.every(
+      (tile) =>
+        tile === EMPTY_TILE ||
+        (Number.isInteger(tile) && tile >= 0 && tile < 15),
+    )
+  )
+}
+
+function isPuzzleComplete(board: number[]) {
+  return (
+    board.length === GRID_SIZE * GRID_SIZE &&
+    board.every((tile, index) =>
+      index === board.length - 1 ? tile === EMPTY_TILE : tile === index,
+    )
+  )
+}
+
+function formatTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60)
+
+  const remainder = seconds % 60
+
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+}
+
+export default function PicturePuzzle({
+  activity,
+
+  currentName,
+
+  error,
+
+  isAdmin,
+
+  isSubmitting,
+
+  onBack,
+
+  onFinish,
+
+  onNext,
+
+  onSubmit,
+}: PicturePuzzleProps) {
+  const initialBoard = activity.board ?? []
+
+  const [board, setBoard] = useState(initialBoard)
+
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+
+  const [solvedSeconds, setSolvedSeconds] = useState<number | null>(null)
+
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+
+  const startedAt = useRef<number | null>(null)
+
+  const draggedIndex = useRef<number | null>(null)
+
+  const ignoreNextClick = useRef(false)
+
+  const photo = photos[activity.photoIndex ?? -1]
+
+  const isParticipant = activity.participants.includes(currentName)
+
+  const submittedSeconds = activity.scores?.[currentName]
+
+  const hasSubmitted = submittedSeconds !== undefined
+
+  const complete = solvedSeconds !== null || hasSubmitted
+
+  const canPlay =
+    isParticipant && activity.status === "active" && !complete && !isSubmitting
+
+  const rankedScores = activity.participants
+
+    .flatMap((name) => {
+      const seconds =
+        name === currentName && solvedSeconds !== null
+          ? solvedSeconds
+          : activity.scores?.[name]
+
+      return seconds === undefined ? [] : [{ name, seconds }]
+    })
+
+    .sort((first, second) => first.seconds - second.seconds)
+
+  const waitingNames = activity.participants.filter(
+    (name) =>
+      activity.scores?.[name] === undefined &&
+      !(name === currentName && solvedSeconds !== null),
+  )
+
+  const solvedCount = rankedScores.length
+
+  useEffect(() => {
+    if (startedAt.current === null || complete) return
+
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(
+        Math.floor((Date.now() - (startedAt.current ?? Date.now())) / 1000),
+      )
+    }, 250)
+
+    return () => window.clearInterval(timer)
+  }, [complete, board])
+
+  const moveTile = (fromIndex: number, toIndex: number) => {
+    if (
+      !canPlay ||
+      toIndex < 0 ||
+      board[toIndex] !== EMPTY_TILE ||
+      !isAdjacent(fromIndex, toIndex)
+    ) {
+      return false
+    }
+
+    startedAt.current ??= Date.now()
+
+    const nextBoard = [...board]
+
+    nextBoard[toIndex] = nextBoard[fromIndex]
+
+    nextBoard[fromIndex] = EMPTY_TILE
+
+    setBoard(nextBoard)
+
+    setSelectedIndex(null)
+
+    if (isPuzzleComplete(nextBoard)) {
+      const seconds = Math.max(
+        1,
+
+        Math.floor((Date.now() - startedAt.current) / 1000),
+      )
+
+      setSolvedSeconds(seconds)
+
+      onSubmit(seconds)
+    }
+
+    return true
+  }
+
+  const handleTileClick = (index: number) => {
+    if (ignoreNextClick.current || !canPlay) {
+      ignoreNextClick.current = false
+
+      return
+    }
+
+    if (board[index] === EMPTY_TILE) {
+      if (selectedIndex !== null) moveTile(selectedIndex, index)
+
+      return
+    }
+
+    const emptyIndex = board.indexOf(EMPTY_TILE)
+
+    if (isAdjacent(index, emptyIndex)) {
+      moveTile(index, emptyIndex)
+    } else {
+      setSelectedIndex((current) => (current === index ? null : index))
+    }
+  }
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canPlay || !(event.target instanceof Element)) return
+
+    const tile = event.target.closest<HTMLElement>("[data-tile-index]")
+
+    if (!tile || Number(tile.dataset.tileValue) === EMPTY_TILE) return
+
+    draggedIndex.current = Number(tile.dataset.tileIndex)
+
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const fromIndex = draggedIndex.current
+
+    draggedIndex.current = null
+
+    if (fromIndex === null) return
+
+    const target = document
+
+      .elementFromPoint(event.clientX, event.clientY)
+
+      ?.closest<HTMLElement>("[data-tile-index]")
+
+    const toIndex = target ? Number(target.dataset.tileIndex) : -1
+
+    if (toIndex !== fromIndex && moveTile(fromIndex, toIndex)) {
+      ignoreNextClick.current = true
+
+      window.setTimeout(() => {
+        ignoreNextClick.current = false
+      }, 0)
+    }
+  }
+
+  if (!photo || !isValidBoard(initialBoard)) {
+    return (
+      <div className="group-play-active">
+        <button className="group-play-back" onClick={onBack} type="button">
+          脳活タイムへ戻る
+        </button>
+        <p className="group-play-error" role="alert">
+          絵合わせの問題を読み込めませんでした。管理者にお知らせください。
+        </p>
+      </div>
+    )
+  }
+
+  const result = (
+    <div className="picture-puzzle-rankings">
+      <h4>グループランキング</h4>
+      {rankedScores.map((entry, index) => (
+        <div key={entry.name}>
+          <strong>{index + 1}位</strong>
+          <span>{entry.name}さん</span>
+          <b>{formatTime(entry.seconds)}</b>
+        </div>
+      ))}
+      {waitingNames.map((name) => (
+        <div className="is-waiting" key={name}>
+          <strong>挑戦中</strong>
+          <span>{name}さん</span>
+          <b>--:--</b>
+        </div>
+      ))}
+    </div>
+  )
+
+  if (activity.status === "finished") {
+    return (
+      <div className="group-play-review picture-puzzle-review">
+        <button className="group-play-back" onClick={onBack} type="button">
+          脳活タイムへ戻る
+        </button>
+        <div className="group-play-review__hero">
+          <span>タイムアタック終了</span>
+          <h3>絵合わせ</h3>
+          <strong>{solvedCount}人が完成しました</strong>
+        </div>
+        {result}
+        {isAdmin ? (
+          <button className="group-play-start" onClick={onNext} type="button">
+            次の遊びを選ぶ
+          </button>
+        ) : (
+          <p className="group-play-waiting">
+            管理者が次の遊びを始めるまでお待ちください。
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="group-play-active picture-puzzle-screen">
+      <button className="group-play-back" onClick={onBack} type="button">
+        脳活タイムへ戻る
+      </button>
+      <div className="group-play-heading">
+        <span>絵合わせ・タイム競争</span>
+        <strong>
+          {solvedCount}人 / {activity.participants.length}人 完成
+        </strong>
+      </div>
+      <div className="picture-puzzle-status" aria-live="polite">
+        <div>
+          <span>あなたのタイム</span>
+          <strong>
+            {hasSubmitted
+              ? formatTime(submittedSeconds)
+              : complete
+                ? formatTime(solvedSeconds ?? 0)
+                : formatTime(elapsedSeconds)}
+          </strong>
+        </div>
+        <div>
+          <span>参加者</span>
+          <strong>
+            {solvedCount} / {activity.participants.length}
+          </strong>
+        </div>
+      </div>
+      <div className="picture-puzzle-guide">
+        <img alt={`${photo.name}の完成見本`} src={photo.src} />
+        <p>
+          {!isParticipant
+            ? "今回は観戦です。参加者の完成タイムを見守りましょう。"
+            : complete
+              ? "タイムを記録しました。みんなの完成を待ちましょう。"
+              : startedAt.current === null
+                ? `${photo.name}の写真を見本に、空いている場所へ動かしましょう。最初の一手から計測します。`
+                : `${photo.name}の写真を見本に、空いている場所へピースを動かしましょう。`}
+        </p>
+      </div>
+      <div
+        aria-label={`${photo.name}の絵合わせパズル`}
+        className="picture-puzzle-grid"
+        onPointerCancel={() => {
+          draggedIndex.current = null
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        role="group"
+      >
+        {board.map((tile, index) => {
+          const empty = tile === EMPTY_TILE
+
+          const tileRow = Math.floor(tile / GRID_SIZE)
+
+          const tileColumn = tile % GRID_SIZE
+
+          return (
+            <button
+              aria-label={empty ? "空きマス" : `${tile + 1}番のピース`}
+              aria-pressed={selectedIndex === index}
+              className={`picture-puzzle-tile ${empty ? "is-empty" : ""} ${
+                selectedIndex === index ? "is-selected" : ""
+              }`}
+              data-tile-index={index}
+              data-tile-value={tile}
+              disabled={!canPlay}
+              key={tile}
+              onClick={() => handleTileClick(index)}
+              style={
+                empty
+                  ? undefined
+                  : {
+                      backgroundImage: `url("${photo.src}")`,
+
+                      backgroundPosition: `${(tileColumn / (GRID_SIZE - 1)) * 100}% ${
+                        (tileRow / (GRID_SIZE - 1)) * 100
+                      }%`,
+                    }
+              }
+              type="button"
+            >
+              {empty ? "空き" : null}
+            </button>
+          )
+        })}
+      </div>
+      <p className="picture-puzzle-hint">
+        ピースを空きマスへドラッグ。タップして選び、空きマスをタップしても動かせます。
+      </p>
+      {error && <p className="group-play-error">{error}</p>}
+      {solvedSeconds !== null && !hasSubmitted && (
+        <button
+          className="group-play-start"
+          disabled={isSubmitting}
+          onClick={() => onSubmit(solvedSeconds)}
+          type="button"
+        >
+          {isSubmitting ? "タイムを記録しています…" : "タイムをもう一度送る"}
+        </button>
+      )}
+      {result}
+      {isAdmin && (
+        <div className="group-play-admin">
+          <button onClick={onFinish} type="button">
+            タイム競争を終了
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
