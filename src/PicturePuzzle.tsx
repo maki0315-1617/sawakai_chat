@@ -506,6 +506,8 @@ export default function PicturePuzzle({
   }
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    draggedIndex.current = null
+
     if (!canPlay || !(event.target instanceof Element)) return
 
     const tile = event.target.closest<HTMLElement>("[data-tile-index]")
@@ -513,8 +515,6 @@ export default function PicturePuzzle({
     if (!tile || Number(tile.dataset.tileValue) === EMPTY_TILE) return
 
     draggedIndex.current = Number(tile.dataset.tileIndex)
-
-    event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
