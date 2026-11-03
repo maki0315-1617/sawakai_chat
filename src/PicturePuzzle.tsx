@@ -35,7 +35,7 @@ type PicturePuzzleActivity = {
 }
 
 type PicturePuzzleProps = {
-  activity: PicturePuzzleActivity
+  activity?: PicturePuzzleActivity
 
   currentName: string
 
@@ -47,11 +47,43 @@ type PicturePuzzleProps = {
 
   onBack: () => void
 
-  onFinish: () => void
+  onFinish?: () => void
 
-  onNext: () => void
+  onNext?: () => void
 
-  onSubmit: (seconds: number) => void
+  onSubmit?: (seconds: number) => void
+}
+
+function createPracticeRound() {
+  const board = [...Array.from({ length: 15 }, (_, index) => index), EMPTY_TILE]
+  let emptyIndex = 15
+  let previousEmptyIndex = -1
+
+  for (let move = 0; move < 120; move += 1) {
+    const neighbors = board
+      .map((_, index) => index)
+      .filter(
+        (index) =>
+          board[index] !== EMPTY_TILE &&
+          isAdjacent(index, emptyIndex) &&
+          index !== previousEmptyIndex,
+      )
+    const nextIndex = neighbors[Math.floor(Math.random() * neighbors.length)]
+    board[emptyIndex] = board[nextIndex]
+    board[nextIndex] = EMPTY_TILE
+    previousEmptyIndex = emptyIndex
+    emptyIndex = nextIndex
+  }
+
+  if (isPuzzleComplete(board)) {
+    board[15] = board[14]
+    board[14] = EMPTY_TILE
+  }
+
+  return {
+    photoIndex: Math.floor(Math.random() * photos.length),
+    board,
+  }
 }
 
 function isAdjacent(first: number, second: number) {
@@ -113,9 +145,21 @@ export default function PicturePuzzle({
 
   onSubmit,
 }: PicturePuzzleProps) {
-  const initialBoard = activity.board ?? []
+  const [practiceRound, setPracticeRound] = useState(createPracticeRound)
+  const game =
+    activity ??
+    {
+      id: "practice",
+      participants: [currentName],
+      status: "active",
+      photoIndex: practiceRound.photoIndex,
+      board: practiceRound.board,
+      scores: {},
+    } satisfies PicturePuzzleActivity
+  const isPractice = activity === undefined
+  const initialBoard = game.board ?? []
 
-  const [board, setBoard] = useState(initialBoard)
+  const [board, setBoard] = useState(() => initialBoard)
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
@@ -129,39 +173,50 @@ export default function PicturePuzzle({
 
   const ignoreNextClick = useRef(false)
 
-  const photo = photos[activity.photoIndex ?? -1]
+  const photo = photos[game.photoIndex ?? -1]
 
-  const isParticipant = activity.participants.includes(currentName)
+  const isParticipant = game.participants.includes(currentName)
 
-  const submittedSeconds = activity.scores?.[currentName]
+  const submittedSeconds = game.scores?.[currentName]
 
   const hasSubmitted = submittedSeconds !== undefined
 
   const complete = solvedSeconds !== null || hasSubmitted
 
   const canPlay =
-    isParticipant && activity.status === "active" && !complete && !isSubmitting
+    isParticipant && game.status === "active" && !complete && !isSubmitting
 
-  const rankedScores = activity.participants
+  const rankedScores = game.participants
 
     .flatMap((name) => {
       const seconds =
         name === currentName && solvedSeconds !== null
           ? solvedSeconds
-          : activity.scores?.[name]
+          : game.scores?.[name]
 
       return seconds === undefined ? [] : [{ name, seconds }]
     })
 
     .sort((first, second) => first.seconds - second.seconds)
 
-  const waitingNames = activity.participants.filter(
+  const waitingNames = game.participants.filter(
     (name) =>
-      activity.scores?.[name] === undefined &&
+      game.scores?.[name] === undefined &&
       !(name === currentName && solvedSeconds !== null),
   )
 
   const solvedCount = rankedScores.length
+
+  const restartPractice = () => {
+    const nextRound = createPracticeRound()
+    setPracticeRound(nextRound)
+    setBoard(nextRound.board)
+    setElapsedSeconds(0)
+    setSolvedSeconds(null)
+    setSelectedIndex(null)
+    startedAt.current = null
+    draggedIndex.current = null
+  }
 
   useEffect(() => {
     if (startedAt.current === null || complete) return
@@ -206,7 +261,7 @@ export default function PicturePuzzle({
 
       setSolvedSeconds(seconds)
 
-      onSubmit(seconds)
+      if (!isPractice) onSubmit?.(seconds)
     }
 
     return true
@@ -303,7 +358,7 @@ export default function PicturePuzzle({
     </div>
   )
 
-  if (activity.status === "finished") {
+  if (game.status === "finished") {
     return (
       <div className="group-play-review picture-puzzle-review">
         <button className="group-play-back" onClick={onBack} type="button">
@@ -336,7 +391,9 @@ export default function PicturePuzzle({
       <div className="group-play-heading">
         <span>絵合わせ・タイム競争</span>
         <strong>
-          {solvedCount}人 / {activity.participants.length}人 完成
+          {isPractice
+            ? "ひとりで練習"
+            : `${solvedCount}人 / ${game.participants.length}人 完成`}
         </strong>
       </div>
       <div className="picture-puzzle-status" aria-live="polite">
@@ -353,7 +410,9 @@ export default function PicturePuzzle({
         <div>
           <span>参加者</span>
           <strong>
-            {solvedCount} / {activity.participants.length}
+            {isPractice
+              ? "15ピース"
+              : `${solvedCount} / ${game.participants.length}`}
           </strong>
         </div>
       </div>
@@ -363,7 +422,9 @@ export default function PicturePuzzle({
           {!isParticipant
             ? "今回は観戦です。参加者の完成タイムを見守りましょう。"
             : complete
-              ? "タイムを記録しました。みんなの完成を待ちましょう。"
+              ? isPractice
+                ? "完成しました！すばらしい記録です。"
+                : "タイムを記録しました。みんなの完成を待ちましょう。"
               : startedAt.current === null
                 ? `${photo.name}の写真を見本に、空いている場所へ動かしましょう。最初の一手から計測します。`
                 : `${photo.name}の写真を見本に、空いている場所へピースを動かしましょう。`}
@@ -420,7 +481,7 @@ export default function PicturePuzzle({
         ピースを空きマスへドラッグ。タップして選び、空きマスをタップしても動かせます。
       </p>
       {error && <p className="group-play-error">{error}</p>}
-      {solvedSeconds !== null && !hasSubmitted && (
+      {!isPractice && solvedSeconds !== null && !hasSubmitted && (
         <button
           className="group-play-start"
           disabled={isSubmitting}
@@ -430,8 +491,17 @@ export default function PicturePuzzle({
           {isSubmitting ? "タイムを記録しています…" : "タイムをもう一度送る"}
         </button>
       )}
-      {result}
-      {isAdmin && (
+      {!isPractice && result}
+      {isPractice && complete && (
+        <button
+          className="nine-puzzle-restart"
+          onClick={restartPractice}
+          type="button"
+        >
+          もう一度練習する
+        </button>
+      )}
+      {!isPractice && isAdmin && (
         <div className="group-play-admin">
           <button onClick={onFinish} type="button">
             タイム競争を終了

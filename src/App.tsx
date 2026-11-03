@@ -1706,6 +1706,7 @@ function GroupActivities({
   const [isPuzzlePractice, setIsPuzzlePractice] = useState(false)
   const [isProverbPractice, setIsProverbPractice] = useState(false)
   const [isMemoryMatchPractice, setIsMemoryMatchPractice] = useState(false)
+  const [isPicturePuzzlePractice, setIsPicturePuzzlePractice] = useState(false)
   const [selectedPuzzleIndex, setSelectedPuzzleIndex] = useState<number | null>(
     null,
   )
@@ -2165,6 +2166,18 @@ function GroupActivities({
     return <MemoryMatchPractice onBack={() => setIsMemoryMatchPractice(false)} />
   }
 
+  if (isPicturePuzzlePractice) {
+    return (
+      <PicturePuzzle
+        currentName={profile.name}
+        error=""
+        isAdmin={false}
+        isSubmitting={false}
+        onBack={() => setIsPicturePuzzlePractice(false)}
+      />
+    )
+  }
+
   if (isBusy && !activity) {
     return <div className="group-play-loading">準備しています…</div>
   }
@@ -2412,6 +2425,15 @@ function GroupActivities({
           >
             <strong>ひとりで練習する</strong>
             <span>18枚・9組のカードですぐに始められます</span>
+          </button>
+        )}
+        {kind === "picture-puzzle" && (
+          <button
+            className="nine-puzzle-practice-launch"
+            onClick={() => setIsPicturePuzzlePractice(true)}
+          >
+            <strong>ひとりで練習する</strong>
+            <span>参加者選択なしで始めて、写真パズルに挑戦できます</span>
           </button>
         )}
         <h4>遊ぶ人を選ぶ</h4>
