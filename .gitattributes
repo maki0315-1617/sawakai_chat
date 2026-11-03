@@ -148,3 +148,6 @@
 # PWA assets must be real files (Vercel does not fetch Git LFS objects)
 public/*.png -filter -diff -merge binary
 
+
+# Puzzle photos are bundled by Vite at build time; Vercel does not fetch LFS objects, so keep them as plain binaries.
+src/assets/picture-puzzle/*.jpg -filter -diff -merge binary
