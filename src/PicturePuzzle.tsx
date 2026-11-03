@@ -472,7 +472,21 @@ export default function PicturePuzzle({
               }
               type="button"
             >
-              {empty ? "空き" : null}
+              {empty ? (
+                "空き"
+              ) : (
+                <img
+                  alt=""
+                  aria-hidden="true"
+                  className="picture-puzzle-tile-image"
+                  draggable={false}
+                  src={photo.src}
+                  style={{
+                    left: `${tileColumn * -100}%`,
+                    top: `${tileRow * -100}%`,
+                  }}
+                />
+              )}
             </button>
           )
         })}

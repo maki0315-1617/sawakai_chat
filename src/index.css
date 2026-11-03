@@ -5524,13 +5524,13 @@ input:focus-visible {
 }
 
 .picture-puzzle-tile {
+  position: relative;
   display: grid;
   min-width: 0;
+  overflow: hidden;
   padding: 0;
   color: #53665e;
   background-color: #ffffff;
-  background-repeat: no-repeat;
-  background-size: 400% 400%;
   border: 2px solid #ffffff;
   border-radius: 8px;
   cursor: grab;
@@ -5538,6 +5538,15 @@ input:focus-visible {
   font-family: "Noto Sans JP:Bold", sans-serif;
   font-size: 13px;
   place-items: center;
+}
+
+.picture-puzzle-tile-image {
+  position: absolute;
+  width: 400%;
+  max-width: none;
+  height: 400%;
+  object-fit: fill;
+  pointer-events: none;
 }
 
 .picture-puzzle-tile:active {
