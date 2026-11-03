@@ -1,23 +1,25 @@
 import { useEffect, useRef, useState } from "react"
+import flowerPhoto from "./assets/picture-puzzle/flower.jpg"
+import treePhoto from "./assets/picture-puzzle/tree.jpg"
+import festivalPhoto from "./assets/picture-puzzle/festival.jpg"
+import portraitPhoto from "./assets/picture-puzzle/portrait.jpg"
+import iconPhoto from "./assets/picture-puzzle/icon.jpg"
 
 const GRID_SIZE = 4
 
 const EMPTY_TILE = -1
 
 const photos = [
-  { name: "花", src: "flower.jpg" },
+  { name: "花", src: flowerPhoto },
 
-  { name: "木", src: "tree.jpg" },
+  { name: "木", src: treePhoto },
 
-  { name: "お祭り", src: "festival.jpg" },
+  { name: "お祭り", src: festivalPhoto },
 
-  { name: "人物", src: "portrait.jpg" },
+  { name: "人物", src: portraitPhoto },
 
-  { name: "イラスト", src: "icon.jpg" },
-].map((photo) => ({
-  ...photo,
-  src: `${import.meta.env.BASE_URL}assets/picture-puzzle/${photo.src}?v=2`,
-}))
+  { name: "イラスト", src: iconPhoto },
+]
 
 type PicturePuzzleActivity = {
   id: string
