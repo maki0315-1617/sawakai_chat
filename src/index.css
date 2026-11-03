@@ -5495,6 +5495,55 @@ input:focus-visible {
   gap: 12px;
 }
 
+.picture-puzzle-guide-image {
+  padding: 0;
+  background: none;
+  border: 0;
+  flex: 0 0 auto;
+  cursor: zoom-in;
+}
+
+.picture-puzzle-guide-text {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.picture-puzzle-guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.picture-puzzle-guide-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  color: #2f6f62;
+  font-size: 14px;
+  font-weight: 700;
+  background: #ffffff;
+  border: 2px solid #b9cfc6;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.picture-puzzle-guide.is-large {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.picture-puzzle-guide.is-large .picture-puzzle-guide-image {
+  cursor: zoom-out;
+}
+
+.picture-puzzle-guide.is-large img {
+  width: min(100%, 430px);
+  height: auto;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  display: block;
+}
+
 .picture-puzzle-guide img {
   width: 70px;
   height: 70px;

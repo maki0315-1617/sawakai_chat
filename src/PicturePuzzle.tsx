@@ -337,6 +337,10 @@ export default function PicturePuzzle({
 
   const [hintCount, setHintCount] = useState(0)
 
+  const [guideVisible, setGuideVisible] = useState(true)
+
+  const [guideLarge, setGuideLarge] = useState(false)
+
   const startedAt = useRef<number | null>(null)
 
   const draggedIndex = useRef<number | null>(null)
@@ -380,6 +384,8 @@ export default function PicturePuzzle({
   const penaltySeconds = isPractice ? 0 : hintCount * HINT_PENALTY_SECONDS
 
   const hintPlan = useRef<HintPlan | null>(null)
+
+  const boardSolved = isPuzzleComplete(board)
 
   const getHintMove = (current: number[]) => {
     const key = boardKey(current)
@@ -629,19 +635,51 @@ export default function PicturePuzzle({
           </strong>
         </div>
       </div>
-      <div className="picture-puzzle-guide">
-        <img alt={`${photo.name}の完成見本`} src={photo.src} />
-        <p>
-          {!isParticipant
-            ? "今回は観戦です。参加者の完成タイムを見守りましょう。"
-            : complete
-              ? isPractice
-                ? "完成しました！すばらしい記録です。"
-                : "タイムを記録しました。みんなの完成を待ちましょう。"
-              : startedAt.current === null
-                ? `${photo.name}の写真を見本に、空いている場所へ動かしましょう。最初の一手から計測します。`
-                : `${photo.name}の写真を見本に、空いている場所へピースを動かしましょう。`}
-        </p>
+      <div
+        className={`picture-puzzle-guide ${guideLarge ? "is-large" : ""}`}
+      >
+        {guideVisible && (
+          <button
+            aria-label={guideLarge ? "見本を小さくする" : "見本を拡大する"}
+            className="picture-puzzle-guide-image"
+            onClick={() => setGuideLarge((value) => !value)}
+            type="button"
+          >
+            <img alt={`${photo.name}の完成見本`} src={photo.src} />
+          </button>
+        )}
+        <div className="picture-puzzle-guide-text">
+          <p>
+            {!isParticipant
+              ? "今回は観戦です。参加者の完成タイムを見守りましょう。"
+              : complete
+                ? isPractice
+                  ? "完成しました！すばらしい記録です。"
+                  : "タイムを記録しました。みんなの完成を待ちましょう。"
+                : startedAt.current === null
+                  ? `${photo.name}の写真を見本に、空いている場所へ動かしましょう。最初の一手から計測します。`
+                  : `${photo.name}の写真を見本に、空いている場所へピースを動かしましょう。`}
+          </p>
+          <div className="picture-puzzle-guide-actions">
+            {guideVisible && (
+              <button
+                onClick={() => setGuideLarge((value) => !value)}
+                type="button"
+              >
+                {guideLarge ? "小さくする" : "見本を拡大"}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setGuideVisible((value) => !value)
+                setGuideLarge(false)
+              }}
+              type="button"
+            >
+              {guideVisible ? "見本を消す" : "見本を表示"}
+            </button>
+          </div>
+        </div>
       </div>
       <div
         aria-label={`${photo.name}の絵合わせパズル`}
@@ -654,15 +692,19 @@ export default function PicturePuzzle({
         role="group"
       >
         {board.map((tile, index) => {
-          const empty = tile === EMPTY_TILE
+          const filledGap = tile === EMPTY_TILE && boardSolved
 
-          const tileRow = Math.floor(tile / GRID_SIZE)
+          const empty = tile === EMPTY_TILE && !filledGap
 
-          const tileColumn = tile % GRID_SIZE
+          const shownTile = filledGap ? GRID_SIZE * GRID_SIZE - 1 : tile
+
+          const tileRow = Math.floor(shownTile / GRID_SIZE)
+
+          const tileColumn = shownTile % GRID_SIZE
 
           return (
             <button
-              aria-label={empty ? "空きマス" : `${tile + 1}番のピース`}
+              aria-label={empty ? "空きマス" : `${shownTile + 1}番のピース`}
               aria-pressed={selectedIndex === index}
               className={`picture-puzzle-tile ${empty ? "is-empty" : ""} ${
                 selectedIndex === index ? "is-selected" : ""
