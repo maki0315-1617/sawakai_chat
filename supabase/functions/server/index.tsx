@@ -1395,24 +1395,23 @@ async function getMessagesWithMedia(
 ): Promise<Message[]> {
   const messages = sourceMessages ?? (await getMessages(groupId));
   const refreshBefore = Date.now() + 60 * 60 * 1000;
-  const needsRefresh = messages.some(
-    (message) =>
-      message.attachment &&
-      (!message.attachment.signedUntil ||
-        new Date(message.attachment.signedUntil).getTime() < refreshBefore),
-  );
-  if (!needsRefresh) return messages;
+  const isStale = (message: Message) =>
+    Boolean(message.attachment) &&
+    (!message.attachment!.signedUntil ||
+      new Date(message.attachment!.signedUntil).getTime() < refreshBefore);
+  if (!messages.some(isStale)) return messages;
 
   await ensureMediaBucket();
   const client = supabase();
+  const refreshed = new Map<string, Message>();
   const next = await Promise.all(
     messages.map(async (message) => {
-      if (!message.attachment) return message;
+      if (!message.attachment || !isStale(message)) return message;
       const { data, error } = await client.storage
         .from(mediaBucket)
         .createSignedUrl(message.attachment.path, 24 * 60 * 60);
       if (error || !data?.signedUrl) return message;
-      return {
+      const updated = {
         ...message,
         attachment: {
           ...message.attachment,
@@ -1420,10 +1419,17 @@ async function getMessagesWithMedia(
           signedUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         },
       };
+      refreshed.set(message.id, updated);
+      return updated;
     }),
   );
-  if (!sourceMessages) {
-    await kv.set(dataKey(groupId, "messages"), next);
+  if (refreshed.size) {
+    // 更新後のURLを保存しないと、ポーリングのたびにURLが変わって動画が再読み込みされる
+    const stored = sourceMessages ? await getMessages(groupId) : next;
+    await kv.set(
+      dataKey(groupId, "messages"),
+      stored.map((message) => refreshed.get(message.id) ?? message),
+    );
   }
   return next;
 }

@@ -136,7 +136,25 @@ type BrainQuestion = {
 
 function mergeUniqueMessages(...pages: ChatMessage[][]): ChatMessage[] {
   const messages = new Map<string, ChatMessage>()
-  pages.flat().forEach((message) => messages.set(message.id, message))
+  pages.flat().forEach((message) => {
+    const previous = messages.get(message.id)
+    // 同じ添付はURLを保持し、動画の再読み込みを防ぐ
+    const keepUrl =
+      previous?.attachment?.signedUrl &&
+      previous.attachment.path === message.attachment?.path
+    messages.set(
+      message.id,
+      keepUrl && message.attachment
+        ? {
+            ...message,
+            attachment: {
+              ...message.attachment,
+              signedUrl: previous!.attachment!.signedUrl,
+            },
+          }
+        : message,
+    )
+  })
   return [...messages.values()]
 }
 
