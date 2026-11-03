@@ -226,8 +226,8 @@ type PicturePuzzleSession = {
   prompt: string;
   entries: [];
   photoIndex: number;
-  board: number[];
   scores: Record<string, number>;
+  hints?: Record<string, number>;
 };
 
 type AppSession = {
@@ -4495,13 +4495,18 @@ app.post(`${root}/picture-puzzles/:puzzleId/complete`, async (c) => {
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
     return c.json({ error: "タイムを正しく読み取れませんでした。" }, 400);
   }
+  const hintCount = Number.isInteger(Number(body.hints))
+    ? Math.min(Math.max(Number(body.hints), 0), 1000)
+    : 0;
   const scores = { ...activity.scores, [context.session.name]: seconds };
+  const hints = { ...(activity.hints ?? {}), [context.session.name]: hintCount };
   const complete = activity.participants.every(
     (name) => scores[name] !== undefined,
   );
   const updated: PicturePuzzleSession = {
     ...activity,
     scores,
+    hints,
     status: complete ? "finished" : "active",
   };
   activities[index] = updated;

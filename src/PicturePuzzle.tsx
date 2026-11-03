@@ -33,6 +33,8 @@ type PicturePuzzleActivity = {
   board?: number[]
 
   scores?: Record<string, number>
+
+  hints?: Record<string, number>
 }
 
 type PicturePuzzleProps = {
@@ -52,7 +54,7 @@ type PicturePuzzleProps = {
 
   onNext?: () => void
 
-  onSubmit?: (seconds: number) => void
+  onSubmit?: (seconds: number, hintCount: number) => void
 }
 
 function createPracticeRound() {
@@ -85,6 +87,121 @@ function createPracticeRound() {
     photoIndex: Math.floor(Math.random() * photos.length),
     board,
   }
+}
+
+const HINT_PENALTY_SECONDS = 10
+
+const SEARCH_NODE_LIMIT = 120000
+
+function manhattanDistance(board: number[]) {
+  let total = 0
+
+  board.forEach((tile, index) => {
+    if (tile === EMPTY_TILE) return
+
+    total +=
+      Math.abs(Math.floor(tile / GRID_SIZE) - Math.floor(index / GRID_SIZE)) +
+      Math.abs((tile % GRID_SIZE) - (index % GRID_SIZE))
+  })
+
+  return total
+}
+
+// 最短手の1手目（動かすピースの位置）を返す。探索が長引く場合は距離が最も縮む手にする。
+function findHintMove(board: number[]) {
+  const tiles = [...board]
+
+  const startEmpty = tiles.indexOf(EMPTY_TILE)
+
+  const neighborsOf = (empty: number) =>
+    tiles.map((_, index) => index).filter((index) => isAdjacent(index, empty))
+
+  if (startEmpty < 0 || isPuzzleComplete(tiles)) return null
+
+  let nodes = 0
+
+  let aborted = false
+
+  let firstMove: number | null = null
+
+  const search = (
+    cost: number,
+    bound: number,
+    empty: number,
+    previous: number,
+  ): number => {
+    const estimate = cost + manhattanDistance(tiles)
+
+    if (estimate > bound) return estimate
+
+    if (manhattanDistance(tiles) === 0) return -1
+
+    nodes += 1
+
+    if (nodes > SEARCH_NODE_LIMIT) {
+      aborted = true
+
+      return Infinity
+    }
+
+    let minimum = Infinity
+
+    for (const next of neighborsOf(empty)) {
+      if (next === previous) continue
+
+      tiles[empty] = tiles[next]
+      tiles[next] = EMPTY_TILE
+
+      const result = search(cost + 1, bound, next, empty)
+
+      tiles[next] = tiles[empty]
+      tiles[empty] = EMPTY_TILE
+
+      if (result === -1) {
+        if (cost === 0) firstMove = next
+
+        return -1
+      }
+
+      if (aborted) return Infinity
+
+      minimum = Math.min(minimum, result)
+    }
+
+    return minimum
+  }
+
+  let bound = manhattanDistance(tiles)
+
+  while (!aborted) {
+    const result = search(0, bound, startEmpty, -1)
+
+    if (result === -1) return firstMove
+
+    if (result === Infinity) break
+
+    bound = result
+  }
+
+  let best: number | null = null
+
+  let bestDistance = Infinity
+
+  for (const next of neighborsOf(startEmpty)) {
+    const trial = [...board]
+
+    trial[startEmpty] = trial[next]
+    trial[next] = EMPTY_TILE
+
+    const distance = manhattanDistance(trial)
+
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = next
+    }
+  }
+
+  return best
 }
 
 function isAdjacent(first: number, second: number) {
@@ -168,6 +285,10 @@ export default function PicturePuzzle({
 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
+  const [hintActive, setHintActive] = useState(false)
+
+  const [hintCount, setHintCount] = useState(0)
+
   const startedAt = useRef<number | null>(null)
 
   const draggedIndex = useRef<number | null>(null)
@@ -208,6 +329,22 @@ export default function PicturePuzzle({
 
   const solvedCount = rankedScores.length
 
+  const penaltySeconds = isPractice ? 0 : hintCount * HINT_PENALTY_SECONDS
+
+  const hintMoveIndex =
+    hintActive && canPlay && isValidBoard(board) ? findHintMove(board) : null
+
+  const toggleHint = () => {
+    if (hintActive) {
+      setHintActive(false)
+
+      return
+    }
+
+    setHintCount((count) => count + 1)
+    setHintActive(true)
+  }
+
   const restartPractice = () => {
     const nextRound = createPracticeRound()
     setPracticeRound(nextRound)
@@ -215,6 +352,8 @@ export default function PicturePuzzle({
     setElapsedSeconds(0)
     setSolvedSeconds(null)
     setSelectedIndex(null)
+    setHintActive(false)
+    setHintCount(0)
     startedAt.current = null
     draggedIndex.current = null
   }
@@ -254,15 +393,17 @@ export default function PicturePuzzle({
     setSelectedIndex(null)
 
     if (isPuzzleComplete(nextBoard)) {
-      const seconds = Math.max(
-        1,
+      const seconds =
+        Math.max(
+          1,
 
-        Math.floor((Date.now() - startedAt.current) / 1000),
-      )
+          Math.floor((Date.now() - startedAt.current) / 1000),
+        ) + penaltySeconds
 
       setSolvedSeconds(seconds)
+      setHintActive(false)
 
-      if (!isPractice) onSubmit?.(seconds)
+      if (!isPractice) onSubmit?.(seconds, hintCount)
     }
 
     return true
@@ -345,8 +486,11 @@ export default function PicturePuzzle({
       {rankedScores.map((entry, index) => (
         <div key={entry.name}>
           <strong>{index + 1}位</strong>
-          <span>{entry.name}さん</span>
-          <b>{formatTime(entry.seconds)}</b>
+          <span>
+            {entry.name}さん
+            {(game.hints?.[entry.name] ?? 0) > 0 &&
+              `（ヒント${game.hints?.[entry.name]}回）`}
+          </span>
         </div>
       ))}
       {waitingNames.map((name) => (
@@ -405,7 +549,7 @@ export default function PicturePuzzle({
               ? formatTime(submittedSeconds)
               : complete
                 ? formatTime(solvedSeconds ?? 0)
-                : formatTime(elapsedSeconds)}
+                : formatTime(elapsedSeconds + penaltySeconds)}
           </strong>
         </div>
         <div>
@@ -454,6 +598,8 @@ export default function PicturePuzzle({
               aria-pressed={selectedIndex === index}
               className={`picture-puzzle-tile ${empty ? "is-empty" : ""} ${
                 selectedIndex === index ? "is-selected" : ""
+              } ${hintMoveIndex === index ? "is-hint" : ""} ${
+                empty && hintMoveIndex !== null ? "is-hint-target" : ""
               }`}
               data-tile-index={index}
               data-tile-value={tile}
@@ -492,6 +638,29 @@ export default function PicturePuzzle({
           )
         })}
       </div>
+      <div className="picture-puzzle-hint-controls">
+        <button
+          aria-pressed={hintActive}
+          className={`picture-puzzle-hint-button ${hintActive ? "is-active" : ""}`}
+          disabled={!canPlay}
+          onClick={toggleHint}
+          type="button"
+        >
+          {hintActive
+            ? "ヒントの中止"
+            : isPractice
+              ? "ヒント"
+              : `ヒント（+${HINT_PENALTY_SECONDS}秒）`}
+        </button>
+        {hintActive && (
+          <p aria-live="polite">
+            光っているピースを空きマスへ動かしましょう。
+          </p>
+        )}
+        {!isPractice && hintCount > 0 && (
+          <p>ヒントを{hintCount}回使用（+{penaltySeconds}秒）</p>
+        )}
+      </div>
       <p className="picture-puzzle-hint">
         ピースを空きマスへドラッグ。タップして選び、空きマスをタップしても動かせます。
       </p>
@@ -500,7 +669,7 @@ export default function PicturePuzzle({
         <button
           className="group-play-start"
           disabled={isSubmitting}
-          onClick={() => onSubmit(solvedSeconds)}
+          onClick={() => onSubmit?.(solvedSeconds, hintCount)}
           type="button"
         >
           {isSubmitting ? "タイムを記録しています…" : "タイムをもう一度送る"}

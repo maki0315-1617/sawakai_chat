@@ -1948,7 +1948,7 @@ function GroupActivities({
     }
   }
 
-  const submitPicturePuzzleTime = async (seconds: number) => {
+  const submitPicturePuzzleTime = async (seconds: number, hints = 0) => {
     if (!activity || activity.kind !== "picture-puzzle") return
     setIsBusy(true)
     setError("")
@@ -1958,7 +1958,7 @@ function GroupActivities({
         {
           method: "POST",
           headers: apiHeaders(token, activeGroupId),
-          body: JSON.stringify({ seconds }),
+          body: JSON.stringify({ seconds, hints }),
         },
       )
       const result = await response.json()
@@ -2358,7 +2358,9 @@ function GroupActivities({
         onBack={onBack}
         onFinish={() => void activityAction("finish")}
         onNext={() => setActivity(null)}
-        onSubmit={(seconds) => void submitPicturePuzzleTime(seconds)}
+        onSubmit={(seconds, hints) =>
+          void submitPicturePuzzleTime(seconds, hints)
+        }
       />
     )
   }
