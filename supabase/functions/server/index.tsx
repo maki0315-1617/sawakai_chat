@@ -714,7 +714,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "廃藩置県は明治時代に行われました。",
     },
     {
-      id: "normal-history-himiko",
+      id: "added-history-himiko",
       category: "歴史",
       prompt: "魏志倭人伝に登場する倭の女王は誰ですか？",
       choices: ["卑弥呼", "紫式部", "北条政子"],
@@ -722,7 +722,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "魏志倭人伝には、倭の女王として卑弥呼が記されています。",
     },
     {
-      id: "normal-history-nara",
+      id: "added-history-nara",
       category: "歴史",
       prompt: "奈良時代の都として知られる場所はどこですか？",
       choices: ["平城京", "平安京", "江戸"],
@@ -730,7 +730,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "奈良時代の都は平城京でした。",
     },
     {
-      id: "normal-history-osaka-castle",
+      id: "added-history-osaka-castle",
       category: "歴史",
       prompt: "大阪城を築いたことで知られる戦国武将は誰ですか？",
       choices: ["豊臣秀吉", "源頼朝", "西郷隆盛"],
@@ -738,7 +738,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "豊臣秀吉は大坂城を築いたことで知られています。",
     },
     {
-      id: "normal-history-takauji",
+      id: "added-history-takauji",
       category: "歴史",
       prompt: "室町幕府を開いた人物は誰ですか？",
       choices: ["足利尊氏", "徳川家康", "平清盛"],
@@ -746,7 +746,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "足利尊氏が室町幕府を開きました。",
     },
     {
-      id: "normal-history-yoshimune",
+      id: "added-history-yoshimune",
       category: "歴史",
       prompt: "享保の改革を行った江戸幕府の将軍は誰ですか？",
       choices: ["徳川吉宗", "徳川慶喜", "徳川家光"],
@@ -861,7 +861,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "享保、寛政、天保の改革の順です。",
     },
     {
-      id: "challenge-history-taika",
+      id: "added-history-taika",
       category: "歴史",
       prompt: "645年に始まった政治改革として知られるものはどれですか？",
       choices: ["大化の改新", "享保の改革", "明治維新"],
@@ -869,7 +869,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "645年に始まった政治改革は大化の改新と呼ばれます。",
     },
     {
-      id: "challenge-history-sekigahara",
+      id: "added-history-sekigahara",
       category: "歴史",
       prompt: "関ヶ原の戦いが起きた年はどれですか？",
       choices: ["1600年", "1467年", "1868年"],
@@ -877,7 +877,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "関ヶ原の戦いは1600年に起きました。",
     },
     {
-      id: "challenge-history-dannoura",
+      id: "added-history-dannoura",
       category: "歴史",
       prompt: "源平合戦の終盤、平氏が敗れた海戦はどれですか？",
       choices: ["壇ノ浦の戦い", "川中島の戦い", "桶狭間の戦い"],
@@ -885,7 +885,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "壇ノ浦の戦いで平氏が敗れ、源平合戦は終わりました。",
     },
     {
-      id: "challenge-history-constitution",
+      id: "added-history-constitution",
       category: "歴史",
       prompt: "大日本帝国憲法が発布された年はどれですか？",
       choices: ["1889年", "1603年", "1947年"],
@@ -893,7 +893,7 @@ const brainQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
       explanation: "大日本帝国憲法は1889年に発布されました。",
     },
     {
-      id: "challenge-history-tokyo",
+      id: "added-history-tokyo",
       category: "歴史",
       prompt: "江戸が東京と呼ばれるようになったのは、どの時代ですか？",
       choices: ["明治時代", "平安時代", "鎌倉時代"],
@@ -971,6 +971,108 @@ const safetyBrainQuestionBank: BrainQuestion[] = [
   { id: "festival-nagasaki-kunchi", category: "一般常識", prompt: "長崎くんちが行われる県はどこですか？", choices: ["長崎県", "山梨県", "香川県"], correctIndex: 0, explanation: "長崎くんちは長崎市の諏訪神社の祭礼です。" },
   { id: "festival-sapporo-snow", category: "一般常識", prompt: "さっぽろ雪まつりが行われる都道府県はどこですか？", choices: ["北海道", "愛知県", "和歌山県"], correctIndex: 0, explanation: "さっぽろ雪まつりは北海道札幌市で開催されます。" },
 ]
+
+const addedSafetyQuestionIds = {
+  防犯: new Set([
+    "fraud-otp",
+    "fraud-investment",
+    "fraud-support",
+    "fraud-bank-card",
+    "fraud-billing",
+    "fraud-delivery",
+    "fraud-prize",
+    "fraud-contract",
+    "fraud-family-code",
+    "fraud-consult",
+  ]),
+  健康: new Set([
+    "health-chest-pain",
+    "health-antibiotics",
+    "health-fever",
+    "health-blood-pressure",
+    "health-diabetes",
+    "health-cancer-screening",
+    "health-medicine-leftover",
+    "health-infection",
+    "health-stroke-signs",
+    "health-checkup",
+  ]),
+  一般常識: new Set([
+    "festival-gion",
+    "festival-awa",
+    "festival-nebuta",
+    "festival-tenjin",
+    "festival-kanda",
+    "festival-hakata",
+    "festival-takayama",
+    "festival-sendai-tanabata",
+    "festival-nagasaki-kunchi",
+    "festival-sapporo-snow",
+  ]),
+} as const
+
+function includeAddedBrainQuestion(
+  questions: BrainQuestion[],
+  difficulty: BrainDifficulty,
+  roundIndex: number,
+  usedPrompts: Set<string> = new Set(),
+): BrainQuestion[] {
+  const categories = ["防犯", "健康", "一般常識", "歴史"] as const
+  const category = categories[roundIndex % categories.length]
+  const pool =
+    category === "歴史"
+      ? brainQuestionBank[difficulty === "easy" ? "normal" : difficulty].filter(
+          (question) => question.id.startsWith("added-history-"),
+        )
+      : safetyBrainQuestionBank.filter((question) =>
+          addedSafetyQuestionIds[category].has(question.id),
+        )
+  if (pool.length === 0) return questions
+
+  const start = Math.floor(roundIndex / categories.length) % pool.length
+  const selected =
+    Array.from(
+      { length: pool.length },
+      (_, offset) => pool[(start + offset) % pool.length],
+    ).find(
+      (question) =>
+        !usedPrompts.has(question.prompt) &&
+        !questions.some((item) => item.prompt === question.prompt),
+    ) ?? pool[start]
+  let replacementIndex = questions.findIndex(
+    (question) => question.category === category,
+  )
+  if (replacementIndex < 0 && category === "歴史") {
+    replacementIndex = questions.findIndex(
+      (question) => question.category === "間違い探し",
+    )
+  }
+  if (replacementIndex < 0 && (category === "防犯" || category === "健康")) {
+    replacementIndex = questions.findIndex((question) =>
+      ["防犯", "健康", "防災", "交通", "一般常識"].includes(
+        question.category,
+      ),
+    )
+  }
+  if (replacementIndex < 0) {
+    replacementIndex = questions.findIndex(
+      (question) =>
+        question.category !== "図形" &&
+        !["防犯", "健康", "防災", "交通"].includes(question.category),
+    )
+  }
+  if (replacementIndex < 0) {
+    replacementIndex = questions.findIndex(
+      (question) => question.category !== "図形",
+    )
+  }
+  if (replacementIndex < 0) return questions
+  return questions.map((question, index) =>
+    index === replacementIndex
+      ? { ...selected, id: crypto.randomUUID() }
+      : question,
+  )
+}
 
 const shapeQuestionBank: Record<BrainDifficulty, BrainQuestion[]> = {
   easy: [
@@ -1954,7 +2056,12 @@ async function generateBrainQuestions(
   const useAi = Deno.env.get("BRAIN_USE_AI") === "true"
   if (!apiKey || !useAi) {
     return {
-      questions: fallbackBrainQuestions(usedPrompts, difficulty, roundIndex),
+      questions: includeAddedBrainQuestion(
+        fallbackBrainQuestions(usedPrompts, difficulty, roundIndex),
+        difficulty,
+        roundIndex,
+        usedPrompts,
+      ),
       source: "fallback",
     }
   }
@@ -2112,14 +2219,27 @@ async function generateBrainQuestions(
                   b.category === "歴史" || b.category === "間違い探し"
                 return Number(bAdvanced) - Number(aAdvanced)
               })
-        return { questions: orderedQuestions, source: "gemini" }
+        return {
+          questions: includeAddedBrainQuestion(
+            orderedQuestions,
+            difficulty,
+            roundIndex,
+            usedPrompts,
+          ),
+          source: "gemini",
+        }
       }
     }
   } catch {
     console.warn("Gemini unavailable; using fallback brain questions")
   }
   return {
-    questions: fallbackBrainQuestions(usedPrompts, difficulty, roundIndex),
+    questions: includeAddedBrainQuestion(
+      fallbackBrainQuestions(usedPrompts, difficulty, roundIndex),
+      difficulty,
+      roundIndex,
+      usedPrompts,
+    ),
     source: "fallback",
   }
 }
