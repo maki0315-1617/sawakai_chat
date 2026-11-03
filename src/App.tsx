@@ -1719,6 +1719,7 @@ function GroupActivities({
   const [isBusy, setIsBusy] = useState(true)
   const [memoryCountdown, setMemoryCountdown] = useState(0)
   const advancingMemoryTurn = useRef(false)
+  const selectionTouched = useRef(false)
 
   const loadActivity = async (quiet = false) => {
     if (!quiet) setIsBusy(true)
@@ -1777,11 +1778,17 @@ function GroupActivities({
   }
 
   useEffect(() => {
+    selectionTouched.current = false
     setSelectedNames(members.map((member) => member.name))
     void loadActivity()
     const interval = window.setInterval(() => void loadActivity(true), 4000)
     return () => window.clearInterval(interval)
   }, [activeGroupId])
+
+  useEffect(() => {
+    if (selectionTouched.current) return
+    setSelectedNames(members.map((member) => member.name))
+  }, [members])
 
   useEffect(() => {
     if (
@@ -1942,6 +1949,31 @@ function GroupActivities({
         reason instanceof Error
           ? reason.message
           : "操作を完了できませんでした。",
+      )
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const joinPicturePuzzle = async () => {
+    if (!activity || activity.kind !== "picture-puzzle") return
+    setIsBusy(true)
+    setError("")
+    try {
+      const response = await fetch(
+        `${apiRoot}/picture-puzzles/${activity.id}/join`,
+        {
+          method: "POST",
+          headers: apiHeaders(token, activeGroupId),
+          body: "{}",
+        },
+      )
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      setActivity(result.activity)
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "参加できませんでした。",
       )
     } finally {
       setIsBusy(false)
@@ -2358,6 +2390,7 @@ function GroupActivities({
         key={activity.id}
         onBack={onBack}
         onFinish={() => void activityAction("finish")}
+        onJoin={() => void joinPicturePuzzle()}
         onNext={() => setActivity(null)}
         onSubmit={(seconds, hints) =>
           void submitPicturePuzzleTime(seconds, hints)
@@ -2449,6 +2482,7 @@ function GroupActivities({
                 className={selected ? "is-selected" : ""}
                 key={member.name}
                 onClick={() => {
+                  selectionTouched.current = true
                   setInviteNotice("")
                   setSelectedNames((current) =>
                     selected

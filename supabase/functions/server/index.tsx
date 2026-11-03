@@ -4471,6 +4471,37 @@ app.post(`${root}/picture-puzzles/invite`, async (c) => {
   return c.json({ notifiedCount, selectedCount: recipientNames.size });
 });
 
+app.post(`${root}/picture-puzzles/:puzzleId/join`, async (c) => {
+  const context = await puzzleRequestContext(c);
+  if ("error" in context) return c.json({ error: context.error }, context.status);
+  const activities = await getPicturePuzzleSessions(context.groupId);
+  const index = activities.findIndex(
+    (activity) => activity.id === c.req.param("puzzleId"),
+  );
+  if (index < 0) return c.json({ error: "このゲームが見つかりません。" }, 404);
+  const activity = activities[index];
+  if (activity.participants.includes(context.session.name)) {
+    return c.json({ activity });
+  }
+  if (activity.status !== "active") {
+    return c.json({ error: "このゲームは終了しています。" }, 409);
+  }
+  const members =
+    ((await kv.get(memberDataKey(context.groupId))) as
+      | Array<{ name: string }>
+      | undefined) ?? [];
+  if (!members.some((member) => member.name === context.session.name)) {
+    return c.json({ error: "このグループのメンバーではありません。" }, 403);
+  }
+  const updated: PicturePuzzleSession = {
+    ...activity,
+    participants: [...activity.participants, context.session.name],
+  };
+  activities[index] = updated;
+  await kv.set(picturePuzzleDataKey(context.groupId), activities);
+  return c.json({ activity: updated });
+});
+
 app.post(`${root}/picture-puzzles/:puzzleId/complete`, async (c) => {
   const context = await puzzleRequestContext(c);
   if ("error" in context) return c.json({ error: context.error }, context.status);

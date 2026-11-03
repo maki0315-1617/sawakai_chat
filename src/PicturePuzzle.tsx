@@ -52,6 +52,7 @@ type PicturePuzzleProps = {
 
   onFinish?: () => void
 
+  onJoin?: () => void
   onNext?: () => void
 
   onSubmit?: (seconds: number, hintCount: number) => void
@@ -307,6 +308,7 @@ export default function PicturePuzzle({
 
   onFinish,
 
+  onJoin,
   onNext,
 
   onSubmit,
@@ -661,6 +663,16 @@ export default function PicturePuzzle({
                   : `${photo.name}の写真を見本に、空いている場所へピースを動かしましょう。`}
           </p>
           <div className="picture-puzzle-guide-actions">
+            {!isParticipant && game.status === "active" && onJoin && (
+              <button
+                className="picture-puzzle-join"
+                disabled={isSubmitting}
+                onClick={onJoin}
+                type="button"
+              >
+                {isSubmitting ? "参加しています…" : "この対戦に参加する"}
+              </button>
+            )}
             {guideVisible && (
               <button
                 onClick={() => setGuideLarge((value) => !value)}

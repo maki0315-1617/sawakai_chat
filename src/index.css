@@ -5527,6 +5527,12 @@ input:focus-visible {
   cursor: pointer;
 }
 
+.picture-puzzle-guide-actions button.picture-puzzle-join {
+  color: #ffffff;
+  background: #2f6f62;
+  border-color: #2f6f62;
+}
+
 .picture-puzzle-guide.is-large {
   flex-direction: column;
   align-items: stretch;
