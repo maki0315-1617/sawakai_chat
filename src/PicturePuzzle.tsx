@@ -16,8 +16,7 @@ const photos = [
   { name: "イラスト", src: "icon.jpg" },
 ].map((photo) => ({
   ...photo,
-
-  src: `${import.meta.env.BASE_URL}assets/picture-puzzle/${photo.src}`,
+  src: `${import.meta.env.BASE_URL}assets/picture-puzzle/${photo.src}?v=2`,
 }))
 
 type PicturePuzzleActivity = {
