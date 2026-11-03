@@ -91,8 +91,6 @@ function createPracticeRound() {
 
 const HINT_PENALTY_SECONDS = 10
 
-const SEARCH_NODE_LIMIT = 120000
-
 function manhattanDistance(board: number[]) {
   let total = 0
 
@@ -107,101 +105,151 @@ function manhattanDistance(board: number[]) {
   return total
 }
 
-// 最短手の1手目（動かすピースの位置）を返す。探索が長引く場合は距離が最も縮む手にする。
-function findHintMove(board: number[]) {
-  const tiles = [...board]
+type HintPlan = { keys: string[]; moves: number[] }
 
-  const startEmpty = tiles.indexOf(EMPTY_TILE)
+// 重み付きA*で完成までの手順を最後まで求める。毎回探し直すと角で往復するため、
+// 手順を保存して、その通りに進んでいる間は同じ手順を使う。
+function solveBoard(board: number[]): HintPlan | null {
+  const goalKey = boardKey(createSolvedBoard())
 
-  const neighborsOf = (empty: number) =>
-    tiles.map((_, index) => index).filter((index) => isAdjacent(index, empty))
+  const startKey = boardKey(board)
 
-  if (startEmpty < 0 || isPuzzleComplete(tiles)) return null
+  if (startKey === goalKey) return { keys: [startKey], moves: [] }
 
-  let nodes = 0
+  for (const [weight, limit] of [
+    [3, 150000],
+    [10, 300000],
+  ]) {
+    const nodes = new Map<
+      string,
+      { board: number[]; g: number; parent: string | null; move: number }
+    >()
 
-  let aborted = false
+    const open: { key: string; f: number }[] = []
 
-  let firstMove: number | null = null
+    const push = (key: string, f: number) => {
+      open.push({ key, f })
 
-  const search = (
-    cost: number,
-    bound: number,
-    empty: number,
-    previous: number,
-  ): number => {
-    const estimate = cost + manhattanDistance(tiles)
+      let child = open.length - 1
 
-    if (estimate > bound) return estimate
+      while (child > 0) {
+        const parent = (child - 1) >> 1
 
-    if (manhattanDistance(tiles) === 0) return -1
+        if (open[parent].f <= open[child].f) break
+        ;[open[parent], open[child]] = [open[child], open[parent]]
 
-    nodes += 1
-
-    if (nodes > SEARCH_NODE_LIMIT) {
-      aborted = true
-
-      return Infinity
+        child = parent
+      }
     }
 
-    let minimum = Infinity
+    const pop = () => {
+      const top = open[0]
 
-    for (const next of neighborsOf(empty)) {
-      if (next === previous) continue
+      const last = open.pop()
 
-      tiles[empty] = tiles[next]
-      tiles[next] = EMPTY_TILE
+      if (open.length > 0 && last) {
+        open[0] = last
 
-      const result = search(cost + 1, bound, next, empty)
+        let parent = 0
 
-      tiles[next] = tiles[empty]
-      tiles[empty] = EMPTY_TILE
+        for (;;) {
+          const left = parent * 2 + 1
 
-      if (result === -1) {
-        if (cost === 0) firstMove = next
+          const right = left + 1
 
-        return -1
+          let smallest = parent
+
+          if (left < open.length && open[left].f < open[smallest].f) {
+            smallest = left
+          }
+
+          if (right < open.length && open[right].f < open[smallest].f) {
+            smallest = right
+          }
+
+          if (smallest === parent) break
+          ;[open[parent], open[smallest]] = [open[smallest], open[parent]]
+
+          parent = smallest
+        }
       }
 
-      if (aborted) return Infinity
-
-      minimum = Math.min(minimum, result)
+      return top
     }
 
-    return minimum
-  }
+    nodes.set(startKey, { board, g: 0, parent: null, move: -1 })
+    push(startKey, weight * manhattanDistance(board))
 
-  let bound = manhattanDistance(tiles)
+    const closed = new Set<string>()
 
-  while (!aborted) {
-    const result = search(0, bound, startEmpty, -1)
+    let expanded = 0
 
-    if (result === -1) return firstMove
+    while (open.length > 0 && expanded < limit) {
+      const { key } = pop()
 
-    if (result === Infinity) break
+      if (closed.has(key)) continue
 
-    bound = result
-  }
+      closed.add(key)
 
-  let best: number | null = null
+      expanded += 1
 
-  let bestDistance = Infinity
+      const node = nodes.get(key)
 
-  for (const next of neighborsOf(startEmpty)) {
-    const trial = [...board]
+      if (!node) continue
 
-    trial[startEmpty] = trial[next]
-    trial[next] = EMPTY_TILE
+      if (key === goalKey) {
+        const keys: string[] = []
 
-    const distance = manhattanDistance(trial)
+        const moves: number[] = []
 
-    if (distance < bestDistance) {
-      bestDistance = distance
-      best = next
+        for (
+          let current: string | null = key;
+          current !== null;
+          current = nodes.get(current)?.parent ?? null
+        ) {
+          keys.unshift(current)
+
+          const move = nodes.get(current)?.move ?? -1
+
+          if (move >= 0) moves.unshift(move)
+        }
+
+        return { keys, moves }
+      }
+
+      const empty = node.board.indexOf(EMPTY_TILE)
+
+      for (let next = 0; next < node.board.length; next += 1) {
+        if (!isAdjacent(next, empty)) continue
+
+        const nextBoard = [...node.board]
+
+        nextBoard[empty] = nextBoard[next]
+        nextBoard[next] = EMPTY_TILE
+
+        const nextKey = boardKey(nextBoard)
+
+        const g = node.g + 1
+
+        const known = nodes.get(nextKey)
+
+        if (known && known.g <= g) continue
+
+        nodes.set(nextKey, { board: nextBoard, g, parent: key, move: next })
+        push(nextKey, g + weight * manhattanDistance(nextBoard))
+      }
     }
   }
 
-  return best
+  return null
+}
+
+function boardKey(board: number[]) {
+  return board.join(",")
+}
+
+function createSolvedBoard() {
+  return [...Array.from({ length: 15 }, (_, index) => index), EMPTY_TILE]
 }
 
 function isAdjacent(first: number, second: number) {
@@ -331,8 +379,28 @@ export default function PicturePuzzle({
 
   const penaltySeconds = isPractice ? 0 : hintCount * HINT_PENALTY_SECONDS
 
+  const hintPlan = useRef<HintPlan | null>(null)
+
+  const getHintMove = (current: number[]) => {
+    const key = boardKey(current)
+
+    let plan = hintPlan.current
+
+    let step = plan ? plan.keys.indexOf(key) : -1
+
+    if (!plan || step < 0 || step >= plan.moves.length) {
+      plan = solveBoard(current)
+
+      hintPlan.current = plan
+
+      step = 0
+    }
+
+    return plan?.moves[step] ?? null
+  }
+
   const hintMoveIndex =
-    hintActive && canPlay && isValidBoard(board) ? findHintMove(board) : null
+    hintActive && canPlay && isValidBoard(board) ? getHintMove(board) : null
 
   const toggleHint = () => {
     if (hintActive) {
