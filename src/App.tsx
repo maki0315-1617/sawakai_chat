@@ -14,6 +14,9 @@ import DocumentsViewer from "./DocumentsViewer";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
+const MAX_MEDIA_VIDEO_SIZE = 50 * 1024 * 1024;
+const MAX_MEDIA_VIDEO_DURATION_SECONDS = 60;
+
 type ChatMessage = {
   id: string;
   sender: string;
@@ -4894,13 +4897,41 @@ export default function App() {
               lastModified: file.lastModified,
             })
           : file;
-      const limit = isImage ? 2 * 1024 * 1024 : 9 * 1024 * 1024;
+      const limit = isImage ? 2 * 1024 * 1024 : MAX_MEDIA_VIDEO_SIZE;
       if (prepared.size > limit) {
         throw new Error(
           isImage
             ? "画像を2MB以下に縮小できませんでした。"
-            : "動画は9MB以下を選んでください。",
+            : "動画は50MB以下を選んでください。",
         );
+      }
+      if (!isImage) {
+        const previewUrl = URL.createObjectURL(prepared);
+        const duration = await new Promise<number>((resolve, reject) => {
+          const video = document.createElement("video");
+          video.preload = "metadata";
+          video.onloadedmetadata = () => {
+            URL.revokeObjectURL(previewUrl);
+            resolve(video.duration);
+          };
+          video.onerror = () => {
+            URL.revokeObjectURL(previewUrl);
+            reject(
+              new Error(
+                "動画の長さを確認できません。MP4またはWebMを選んでください。",
+              ),
+            );
+          };
+          video.src = previewUrl;
+        });
+        if (!Number.isFinite(duration)) {
+          throw new Error(
+            "動画の長さを確認できません。MP4またはWebMを選んでください。",
+          );
+        }
+        if (duration > MAX_MEDIA_VIDEO_DURATION_SECONDS) {
+          throw new Error("動画は60秒以下を選んでください。");
+        }
       }
       clearSelectedMedia();
       setSelectedMedia({
@@ -4920,7 +4951,7 @@ export default function App() {
     setIsSendingMedia(true);
     setMediaError("");
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 60000);
+    const timeout = window.setTimeout(() => controller.abort(), 120000);
     try {
       const formData = new FormData();
       formData.append("file", selectedMedia.file, selectedMedia.file.name);
@@ -4941,7 +4972,7 @@ export default function App() {
         const message =
           result.error ??
           (response.status === 413
-            ? "動画の容量が大きすぎます。9MB以下のMP4を選んでください。"
+            ? "動画の容量が大きすぎます。50MB以下のMP4またはWebMを選んでください。"
             : response.status === 415
               ? "この動画形式は送信できません。MP4またはWebMを選んでください。"
               : response.status === 401
@@ -5741,7 +5772,7 @@ export default function App() {
             <p className="media-size-note">
               {selectedMedia.kind === "image"
                 ? "画像は通信量を抑えるため縮小されています"
-                : "動画は自動再生されません。9MBまで送信できます"}{" "}
+                : "動画は自動再生されません。60秒・50MBまで送信できます"}{" "}
               · {(selectedMedia.file.size / 1024 / 1024).toFixed(1)}MB
             </p>
             {mediaError && (

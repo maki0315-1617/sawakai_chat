@@ -10,6 +10,14 @@ const defaultInviteCode = Deno.env.get("SAWAKAI_INVITE_CODE") || "ochakai";
 const defaultGroupId = "weekend-meal";
 const groupsKey = "sawakai:groups";
 const mediaBucket = "sawakai-media";
+const maxMediaVideoSize = 50 * 1024 * 1024;
+const mediaAllowedMimeTypes = [
+  "image/webp",
+  "image/jpeg",
+  "image/png",
+  "video/mp4",
+  "video/webm",
+];
 const dayMs = 24 * 60 * 60 * 1000;
 const messageRetentionMs = 90 * dayMs;
 const shortRetentionMs = 30 * dayMs;
@@ -975,14 +983,28 @@ async function ensureMediaBucket() {
   if (mediaBucketReady) return;
   const client = supabase();
   const { data } = await client.storage.getBucket(mediaBucket);
-  if (!data) {
+  if (data) {
+    const { error } = await client.storage.updateBucket(mediaBucket, {
+      fileSizeLimit: maxMediaVideoSize,
+      allowedMimeTypes: mediaAllowedMimeTypes,
+    });
+    if (error) throw error;
+  } else {
     const { error } = await client.storage.createBucket(mediaBucket, {
       public: false,
-      fileSizeLimit: 10 * 1024 * 1024,
-      allowedMimeTypes: ["image/webp", "image/jpeg", "image/png", "video/mp4", "video/webm"],
+      fileSizeLimit: maxMediaVideoSize,
+      allowedMimeTypes: mediaAllowedMimeTypes,
     });
-    if (error && !error.message.toLowerCase().includes("already exists")) {
-      throw error;
+    if (error) {
+      if (!error.message.toLowerCase().includes("already exists")) throw error;
+      const { error: updateError } = await client.storage.updateBucket(
+        mediaBucket,
+        {
+          fileSizeLimit: maxMediaVideoSize,
+          allowedMimeTypes: mediaAllowedMimeTypes,
+        },
+      );
+      if (updateError) throw updateError;
     }
   }
   mediaBucketReady = true;
@@ -3190,13 +3212,13 @@ app.post(`${root}/messages/media`, async (c) => {
   if (!isImage && !isVideo) {
     return c.json({ error: "送信できるのは画像、MP4、WebMです。" }, 400);
   }
-  const limit = isImage ? 2 * 1024 * 1024 : 9 * 1024 * 1024;
+  const limit = isImage ? 2 * 1024 * 1024 : maxMediaVideoSize;
   if (file.size > limit) {
     return c.json(
       {
         error: isImage
           ? "画像は2MB以下にしてください。"
-          : "動画は9MB以下にしてください。",
+          : "動画は50MB以下にしてください。",
       },
       400,
     );
