@@ -38,6 +38,7 @@ type ChatMessage = {
 
 function MessageVideo({ src, fileName }: { src: string; fileName: string }) {
   const [aspectRatio, setAspectRatio] = useState("16 / 9");
+  const [failed, setFailed] = useState<string | null>(null);
 
   return (
     <div className="message-video-frame" style={{ aspectRatio }}>
@@ -45,7 +46,7 @@ function MessageVideo({ src, fileName }: { src: string; fileName: string }) {
         className="message-media"
         controls
         playsInline
-        preload="metadata"
+        preload="auto"
         src={src}
         onLoadedMetadata={(event) => {
           const { videoWidth, videoHeight } = event.currentTarget;
@@ -53,8 +54,28 @@ function MessageVideo({ src, fileName }: { src: string; fileName: string }) {
             setAspectRatio(`${videoWidth} / ${videoHeight}`);
           }
         }}
+        onError={(event) => {
+          const code = event.currentTarget.error?.code;
+          setFailed(
+            code === 2
+              ? "通信が途切れました"
+              : code === 3
+                ? "動画を変換できませんでした"
+                : "この形式は再生できません",
+          );
+        }}
         aria-label={fileName}
       />
+      {failed && (
+        <a
+          className="message-video-fallback"
+          href={src}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {failed}。タップして別画面で開く
+        </a>
+      )}
     </div>
   );
 }
