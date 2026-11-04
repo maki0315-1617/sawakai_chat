@@ -498,6 +498,8 @@ const appBadgeStorageKey = "sawakai-app-badge";
 const textSizeStorageKey = "sawakai-text-size";
 const analyticsStorageKey = "sawakai-analytics";
 const themeStorageKey = "sawakai-theme";
+const replyModeStorageKey = "sawakai-reply-mode";
+type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
 const fallbackSuggestions = ["土曜でいいね", "何時ごろにしますか？"];
 
@@ -4037,8 +4039,12 @@ export default function App() {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [isWriting, setIsWriting] = useState(false);
+  const [replyMode, setReplyModeState] = useState<ReplyMode>(() => {
+    const saved = localStorage.getItem(replyModeStorageKey);
+    return saved === "voice" || saved === "write" ? saved : "ai";
+  });
   const [isReplyPanelOpen, setIsReplyPanelOpen] = useState(false);
+  const [isSpeakingDraft, setIsSpeakingDraft] = useState(false);
   const [draft, setDraft] = useState("");
   const [pendingMessage, setPendingMessage] = useState("");
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -4642,8 +4648,22 @@ export default function App() {
   }, [token, activeGroupId]);
 
   useEffect(() => {
-    if (isWriting) inputRef.current?.focus();
-  }, [isWriting]);
+    if (isReplyPanelOpen && replyMode === "write") inputRef.current?.focus();
+  }, [isReplyPanelOpen, replyMode]);
+
+  useEffect(() => {
+    if (!isReplyPanelOpen && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      setIsSpeakingDraft(false);
+    }
+  }, [isReplyPanelOpen]);
+
+  useEffect(
+    () => () => {
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    },
+    [],
+  );
 
   useEffect(
     () => () => {
@@ -5405,6 +5425,47 @@ export default function App() {
     trackEvent("read_aloud");
   };
 
+  const speakDraft = (text: string) => {
+    if (!text.trim() || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "ja-JP";
+    utterance.rate = 0.88;
+    utterance.onend = () => setIsSpeakingDraft(false);
+    utterance.onerror = () => setIsSpeakingDraft(false);
+    setIsSpeakingDraft(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeakingDraft = () => {
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    setIsSpeakingDraft(false);
+  };
+
+  const readDraftAloud = () => {
+    if (isSpeakingDraft) {
+      stopSpeakingDraft();
+      return;
+    }
+    if (!("speechSynthesis" in window)) {
+      setLoadError("このブラウザは読み上げに対応していません。");
+      return;
+    }
+    trackEvent("draft_read_aloud");
+    speakDraft(draft);
+  };
+
+  const selectReplyMode = (mode: ReplyMode) => {
+    if (isReplyPanelOpen && replyMode === mode) {
+      setIsReplyPanelOpen(false);
+      return;
+    }
+    setReplyModeState(mode);
+    localStorage.setItem(replyModeStorageKey, mode);
+    trackEvent(`reply_mode_${mode}`);
+    setIsReplyPanelOpen(true);
+  };
+
   const persistMessage = async (message: ChatMessage) => {
     try {
       const response = await fetch(`${apiRoot}/messages`, {
@@ -5445,7 +5506,7 @@ export default function App() {
     setPendingSend(optimisticMessage);
     setPendingMessage("");
     setDraft("");
-    setIsWriting(false);
+    stopSpeakingDraft();
     setIsReplyPanelOpen(false);
     setShowConfirmation(false);
     setIsSending(false);
@@ -5822,17 +5883,43 @@ export default function App() {
             ref={mediaInputRef}
             type="file"
           />
-          {isWriting ? (
+          <div
+            aria-label="返事のしかた"
+            className="reply-tabs"
+            role="tablist"
+          >
+            {(
+              [
+                ["ai", "🤖", "おまかせ"],
+                ["voice", "🎤", "話す"],
+                ["write", "⌨", "書く"],
+              ] as [ReplyMode, string, string][]
+            ).map(([mode, icon, label]) => (
+              <button
+                aria-selected={isReplyPanelOpen && replyMode === mode}
+                className={`reply-tab ${
+                  isReplyPanelOpen && replyMode === mode ? "is-active" : ""
+                }`}
+                key={mode}
+                onClick={() => selectReplyMode(mode)}
+                role="tab"
+                type="button"
+              >
+                <span aria-hidden="true" className="reply-tab__icon">
+                  {icon}
+                </span>
+                {label}
+              </button>
+            ))}
+          </div>
+          {isReplyPanelOpen && replyMode === "write" ? (
             <div className="writing-panel">
               <div className="writing-panel__heading">
-                <label htmlFor="free-message">ほかの言葉で返事する</label>
+                <label htmlFor="free-message">キーボードで書いて返事する</label>
                 <button
                   aria-label="自由入力を閉じる"
                   className="close-button"
-                  onClick={() => {
-                    setIsWriting(false);
-                    setIsReplyPanelOpen(false);
-                  }}
+                  onClick={() => setIsReplyPanelOpen(false)}
                 >
                   <CloseIcon />
                 </button>
@@ -5846,17 +5933,14 @@ export default function App() {
                 rows={2}
                 value={draft}
               />
-              <VoiceInput
-                apiRoot={apiRoot}
-                disabled={showVoice || dmInCall}
-                disabledReason="通話中は、話して入力を使えません。"
-                headers={apiHeaders(token, activeGroupId)}
-                onText={(text) =>
-                  setDraft((current) =>
-                    `${current ? `${current}\n` : ""}${text}`.slice(0, 500),
-                  )
-                }
-              />
+              <button
+                className="read-aloud-button"
+                disabled={!draft.trim()}
+                onClick={readDraftAloud}
+                type="button"
+              >
+                {isSpeakingDraft ? "⏹ 読み上げを止める" : "🔊 読み上げて確認"}
+              </button>
               <button
                 className="reply-button reply-button--primary"
                 disabled={!draft.trim()}
@@ -5870,6 +5954,68 @@ export default function App() {
               >
                 写真・動画を送る
               </button>
+            </div>
+          ) : isReplyPanelOpen && replyMode === "voice" ? (
+            <div className="writing-panel voice-panel">
+              <div className="writing-panel__heading">
+                <label htmlFor="voice-message">話して返事する</label>
+                <button
+                  aria-label="話す画面を閉じる"
+                  className="close-button"
+                  onClick={() => setIsReplyPanelOpen(false)}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <VoiceInput
+                apiRoot={apiRoot}
+                disabled={showVoice || dmInCall}
+                disabledReason="通話中は、話して入力を使えません。"
+                headers={apiHeaders(token, activeGroupId)}
+                onText={(text) => {
+                  const next = `${draft ? `${draft}\n` : ""}${text}`.slice(
+                    0,
+                    500,
+                  );
+                  setDraft(next);
+                  speakDraft(next);
+                }}
+              />
+              <textarea
+                id="voice-message"
+                maxLength={500}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder="話した内容がここに表示されます。直すこともできます。"
+                rows={3}
+                value={draft}
+              />
+              <button
+                className="read-aloud-button"
+                disabled={!draft.trim()}
+                onClick={readDraftAloud}
+                type="button"
+              >
+                {isSpeakingDraft ? "⏹ 読み上げを止める" : "🔊 もう一度読み上げる"}
+              </button>
+              <button
+                className="reply-button reply-button--primary"
+                disabled={!draft.trim()}
+                onClick={() => prepareMessage(draft)}
+              >
+                内容を確認する
+              </button>
+              {draft && (
+                <button
+                  className="media-select-button"
+                  onClick={() => {
+                    stopSpeakingDraft();
+                    setDraft("");
+                  }}
+                  type="button"
+                >
+                  消して話し直す
+                </button>
+              )}
             </div>
           ) : isReplyPanelOpen ? (
             <div className="expanded-replies">
@@ -5920,7 +6066,7 @@ export default function App() {
                   className="write-own-button"
                   onClick={() => {
                     trackEvent("free_input_opened");
-                    setIsWriting(true);
+                    selectReplyMode("write");
                   }}
                 >
                   ほかの言葉で返事する
@@ -5935,21 +6081,29 @@ export default function App() {
             </div>
           ) : (
             <div className="compact-reply">
-              <button
-                className="compact-suggestion"
-                onClick={() =>
-                  selectSuggestion(suggestions[0] ?? fallbackSuggestions[0])
-                }
-              >
-                <span>{suggestions[0] ?? fallbackSuggestions[0]}</span>
-                <small>この言葉で返す</small>
-              </button>
-              <button
-                className="open-replies-button"
-                onClick={() => setIsReplyPanelOpen(true)}
-              >
-                返信を選ぶ
-              </button>
+              {replyMode === "ai" ? (
+                <button
+                  className="compact-suggestion"
+                  onClick={() =>
+                    selectSuggestion(suggestions[0] ?? fallbackSuggestions[0])
+                  }
+                >
+                  <span>{suggestions[0] ?? fallbackSuggestions[0]}</span>
+                  <small>この言葉で返す</small>
+                </button>
+              ) : (
+                <button
+                  className="compact-suggestion"
+                  onClick={() => selectReplyMode(replyMode)}
+                >
+                  <span>
+                    {replyMode === "voice"
+                      ? "🎤 話して返事する"
+                      : "⌨ 書いて返事する"}
+                  </span>
+                  <small>押すと始まります</small>
+                </button>
+              )}
               {isLoadingSuggestions && (
                 <span className="compact-loading" aria-label="返信案を更新中" />
               )}

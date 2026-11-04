@@ -833,8 +833,61 @@ input:focus-visible {
 .compact-reply {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+}
+
+.reply-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.reply-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 52px;
+  padding: 6px 8px;
+  color: #263b38;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  background: #f1f1ec;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.reply-tab__icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.reply-tab.is-active {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.read-aloud-button {
+  min-height: 56px;
+  padding: 10px 14px;
+  color: #263b38;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  border-radius: 15px;
+  cursor: pointer;
+}
+
+.read-aloud-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .compact-suggestion {
