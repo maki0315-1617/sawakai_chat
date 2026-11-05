@@ -3947,7 +3947,12 @@ function JoinScreen({
       });
       const result = await readJson(response);
       if (!response.ok) {
-        throw new Error(result.error ?? "グループを作れませんでした。");
+        throw new Error(
+          result.error ??
+            (response.status === 404
+              ? "グループ作成の機能がサーバーに反映されていません。Edge Functionを再デプロイしてください。"
+              : `グループを作れませんでした（エラー ${response.status}）。`),
+        );
       }
       if (!result.token || !result.group) {
         throw new Error("作成結果を確認できませんでした。もう一度お試しください。");

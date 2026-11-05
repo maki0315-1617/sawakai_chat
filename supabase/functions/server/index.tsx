@@ -1320,6 +1320,10 @@ const initialMessages: Message[] = [
 ];
 
 app.use("*", logger(console.log));
+app.onError((error, c) => {
+  console.error("Unhandled server error", error);
+  return c.json({ error: "サーバーでエラーが起きました。時間をおいてもう一度お試しください。" }, 500);
+});
 app.use(
   "/*",
   cors({
