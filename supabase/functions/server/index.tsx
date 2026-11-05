@@ -37,7 +37,7 @@ type Group = {
   createdAt: string;
   adminNames?: string[];
   createdBy?: string;
-  image?: {
+  createdViaCreateFlow?: boolean;
     path: string;
     signedUrl?: string;
     signedUntil?: string;
@@ -2891,18 +2891,21 @@ async function createGroupFor(name: string, creator: string): Promise<Group> {
     createdAt: new Date().toISOString(),
     adminNames: [creator],
     createdBy: creator,
+    createdViaCreateFlow: true,
   };
-  await kv.set(groupsKey, [...(await getGroups()), group]);
   await touchMember(group.id, creator);
   return group;
 }
 
+// 古いグループは最初に開いた人が作成者になるため、作成機能で作ったものだけを数える。
 async function createdGroupCount(creator: string): Promise<number> {
-  return (await getGroups()).filter((group) => group.createdBy === creator)
-    .length;
+  return (await getGroups()).filter(
+    (group) => group.createdViaCreateFlow && group.createdBy === creator,
+  ).length;
 }
 
-const createLimitMessage = `作れるグループは${maxCreatedGroups}つまでです。`;
+const createLimitMessage = (count: number) =>
+  `この名前で作ったグループがすでに${count}つあります。作れるのは${maxCreatedGroups}つまでです。使っていないグループは、グループの画面から削除すると、新しく作れます。`;
 
 app.post(`${root}/groups`, async (c) => {
   const token = c.req.header("X-Session-Token");
@@ -2919,8 +2922,9 @@ app.post(`${root}/groups`, async (c) => {
   if (!permission.ok) {
     return c.json({ error: permission.error }, permission.status);
   }
-  if ((await createdGroupCount(session.name)) >= maxCreatedGroups) {
-    return c.json({ error: createLimitMessage }, 403);
+  const existing = await createdGroupCount(session.name);
+  if (existing >= maxCreatedGroups) {
+    return c.json({ error: createLimitMessage(existing) }, 403);
   }
 
   const group = await createGroupFor(name, session.name);
@@ -2947,8 +2951,9 @@ app.post(`${root}/groups/create-first`, async (c) => {
   if (!permission.ok) {
     return c.json({ error: permission.error }, permission.status);
   }
-  if ((await createdGroupCount(userName)) >= maxCreatedGroups) {
-    return c.json({ error: createLimitMessage }, 403);
+  const existing = await createdGroupCount(userName);
+  if (existing >= maxCreatedGroups) {
+    return c.json({ error: createLimitMessage(existing) }, 403);
   }
 
   const group = await createGroupFor(groupName, userName);
