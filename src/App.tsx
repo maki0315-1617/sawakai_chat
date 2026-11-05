@@ -10,6 +10,14 @@ import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput from "./VoiceInput";
+import {
+  failureMessage,
+  isVoiceSupported,
+  listenOnce,
+  normalizeInviteCode,
+  normalizeName,
+  type VoiceSession,
+} from "./voiceJoin";
 import DocumentsViewer from "./DocumentsViewer";
 import PicturePuzzle from "./PicturePuzzle";
 
@@ -3834,13 +3842,63 @@ function JoinScreen({
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [listening, setListening] = useState<"" | "name" | "code">("");
+  const [listenPhase, setListenPhase] = useState<"guide" | "listen">("guide");
+  const [voiceMessage, setVoiceMessage] = useState("");
+  const voiceSession = useRef<VoiceSession | null>(null);
+  const voiceAvailable = isVoiceSupported();
   const [profileImage, setProfileImage] = useState<{
     file: File;
     previewUrl: string;
   } | null>(null);
 
+  useEffect(() => () => voiceSession.current?.cancel(), []);
+
+  const stopVoice = () => {
+    voiceSession.current?.cancel();
+    voiceSession.current = null;
+    setListening("");
+  };
+
+  const startVoice = (target: "name" | "code") => {
+    stopVoice();
+    setVoiceMessage("");
+    setError("");
+    setListenPhase("guide");
+    setListening(target);
+    voiceSession.current = listenOnce(
+      target === "name"
+        ? "お名前を言ってください。ピッと鳴ったら、「ゆきです」のようにお話しください。"
+        : "招待コードを言ってください。ピッと鳴ったら、英語と数字をゆっくりお話しください。",
+      {
+        onListening: () => setListenPhase("listen"),
+        onResult: (text) => {
+          setListening("");
+          if (target === "name") {
+            const spoken = normalizeName(text);
+            if (spoken) setName(spoken);
+            setVoiceMessage(
+              "聞き取った名前を入れました。違っていたら直してください。",
+            );
+          } else {
+            setInviteCode(normalizeInviteCode(text));
+            setVoiceMessage(
+              "聞き取った招待コードを入れました。間違いがないか確認してください。",
+            );
+          }
+        },
+        onError: (reason) => {
+          setListening("");
+          setVoiceMessage(failureMessage(reason));
+        },
+      },
+    );
+  };
+
   const join = async (event: FormEvent) => {
     event.preventDefault();
+    stopVoice();
     setError("");
     setIsJoining(true);
 
@@ -3929,11 +3987,26 @@ function JoinScreen({
         </div>
         <p className="join-eyebrow">招待された方専用</p>
         <h1 id="join-title">{appName}</h1>
-        <p className="join-description">
-          お名前と招待コードを入力して、会話に参加してください。
-        </p>
+        {!started ? (
+          <div className="join-steps">
+            <p className="join-description">
+              はじめての方は、下のボタンを押してください。
+            </p>
+            <button
+              className="join-button"
+              onClick={() => setStarted(true)}
+              type="button"
+            >
+              初めて参加する
+            </button>
+          </div>
+        ) : (
         <form onSubmit={join}>
-          <label htmlFor="display-name">お名前</label>
+          <p className="join-description">
+            ①お名前 → ②招待コード → ③参加する の順に進みます。
+            声でも、キーボードでも入力できます。
+          </p>
+          <label htmlFor="display-name">① お名前</label>
           <input
             autoComplete="name"
             id="display-name"
@@ -3943,17 +4016,60 @@ function JoinScreen({
             required
             value={name}
           />
-          <label htmlFor="invite-code">招待コード</label>
+          {voiceAvailable && (
+            <button
+              className="voice-fill-button"
+              onClick={() =>
+                listening === "name" ? stopVoice() : startVoice("name")
+              }
+              type="button"
+            >
+              {listening === "name"
+                ? "やめる"
+                : "🎤 声でお名前を入れる"}
+            </button>
+          )}
+          <label htmlFor="invite-code">② 招待コード（6文字）</label>
           <input
-            autoCapitalize="none"
+            autoCapitalize="characters"
             autoComplete="off"
+            className="invite-code-input"
             id="invite-code"
-            onChange={(event) => setInviteCode(event.target.value)}
-            placeholder="招待コードを入力"
+            onChange={(event) =>
+              setInviteCode(event.target.value.toUpperCase().replace(/\s/g, ""))
+            }
+            placeholder="例：AB23CD"
             required
-            type="password"
             value={inviteCode}
           />
+          {voiceAvailable && (
+            <button
+              className="voice-fill-button"
+              onClick={() =>
+                listening === "code" ? stopVoice() : startVoice("code")
+              }
+              type="button"
+            >
+              {listening === "code" ? "やめる" : "🎤 声で招待コードを入れる"}
+            </button>
+          )}
+          {listening && (
+            <p className="voice-status" role="status">
+              {listenPhase === "guide"
+                ? "案内を読み上げています…"
+                : "🎤 聞いています。お話しください"}
+            </p>
+          )}
+          {voiceMessage && !listening && (
+            <p className="voice-status" role="status">
+              {voiceMessage}
+            </p>
+          )}
+          {!voiceAvailable && (
+            <p className="voice-status">
+              この端末では声の入力は使えません。キーボードで入力してください。
+            </p>
+          )}
           <label htmlFor="profile-image">参加者画像（任意・1枚）</label>
           <input
             accept="image/jpeg,image/png,image/webp"
@@ -3989,14 +4105,20 @@ function JoinScreen({
               {error}
             </p>
           )}
+          {name.trim() && inviteCode.trim() && (
+            <p className="join-confirm">
+              お名前「{name.trim()}」、招待コード「{inviteCode.trim()}」で参加します。
+            </p>
+          )}
           <button
             className="join-button"
             disabled={isJoining || !name.trim() || !inviteCode.trim()}
             type="submit"
           >
-            {isJoining ? "確認しています…" : "会話に参加する"}
+            {isJoining ? "確認しています…" : "③ この内容で参加する"}
           </button>
         </form>
+        )}
         <p className="join-note">
           この端末には表示名と参加情報だけが保存されます。使いやすさの改善のため、
           会話内容やお名前を含まない操作回数を記録します。

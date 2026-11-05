@@ -249,6 +249,39 @@ input:focus-visible {
   cursor: not-allowed;
 }
 
+.voice-fill-button {
+  min-height: 56px;
+  padding: 10px 16px;
+  color: var(--accent);
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.voice-status,
+.join-confirm {
+  margin: 0;
+  padding: 12px 14px;
+  color: #33423b;
+  background: #eef4f1;
+  border-radius: 12px;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.invite-code-input {
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.join-steps {
+  display: grid;
+  gap: 14px;
+}
+
 .join-note {
   margin: 18px 0 0;
   color: #78817b;
