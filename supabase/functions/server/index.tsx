@@ -1574,10 +1574,25 @@ async function requestedGroupId(
   session: Session,
 ): Promise<string | null> {
   const groupId = header || sessionGroupIds(session)[0];
-  if (!sessionGroupIds(session).includes(groupId)) return null;
-  if (!(await getGroups()).some((group) => group.id === groupId)) return null;
+  if (!sessionGroupIds(session).includes(groupId)) {
+    console.warn("requestedGroupId: group not in session", groupId, session.name);
+    return null;
+  }
+  if (!(await getGroups()).some((group) => group.id === groupId)) {
+    console.warn("requestedGroupId: group not found", groupId);
+    return null;
+  }
   const members = await getMembers(groupId);
-  return members.some((member) => member.name === session.name) ? groupId : null;
+  if (!members.some((member) => member.name === session.name)) {
+    console.warn(
+      "requestedGroupId: not a member",
+      groupId,
+      JSON.stringify(session.name),
+      JSON.stringify(members.map((member) => member.name)),
+    );
+    return null;
+  }
+  return groupId;
 }
 
 async function groupWithAdmin(groupId: string, name: string): Promise<Group | null> {
