@@ -2316,28 +2316,22 @@ app.post(`${root}/join`, async (c) => {
   if (!name || name.length > 12) {
     return c.json({ error: "表示名は1〜12文字で入力してください。" }, 400);
   }
-  // 管理者の名前をかたって入れないよう、管理者として戻るときは許可コードを求める。
-  if (group.adminNames?.includes(name)) {
-    if (typeof body.permissionCode !== "string" || !body.permissionCode.trim()) {
-      return c.json(
-        {
-          error:
-            "このお名前は管理者として登録されています。管理者の方は許可コードを入力してください。管理者ではない方は、別のお名前で参加してください。",
-          needsPermissionCode: true,
-        },
-        403,
-      );
-    }
-    const permission = checkCreatePermission(clientKey(c), body.permissionCode);
-    if (!permission.ok) {
-      return c.json(
-        { error: permission.error, needsPermissionCode: true },
-        permission.status,
-      );
-    }
+  // 管理者のお名前で一般参加の入口から入れないようにする（再入室コードで戻る）。
+  if (
+    group.adminNames?.includes(name) &&
+    (await kv.get(returnCodeKey(group.id)))
+  ) {
+    return c.json(
+      {
+        error:
+          "このお名前は管理者が使っています。管理者の方は「管理者として戻る」から入ってください。管理者ではない方は、別のお名前で参加してください。",
+      },
+      403,
+    );
   }
 
-  const token = crypto.randomUUID();  await kv.set(`sawakai:session:${token}`, {
+  const token = crypto.randomUUID();
+  await kv.set(`sawakai:session:${token}`, {
     name,
     expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
     groupIds: [group.id],
@@ -2475,6 +2469,9 @@ app.get(`${root}/group`, async (c) => {
     name: group.name,
     imageUrl: group.image?.signedUrl,
     inviteCode: group.inviteCode,
+    adminReturnCode: isGroupAdmin(group, session.name)
+      ? displayReturnCode(await ensureReturnCode(groupId))
+      : undefined,
     isAdmin: isGroupAdmin(group, session.name),
     canDelete: isGroupAdmin(group, session.name),
     members: members.map((member) => ({
@@ -2756,6 +2753,7 @@ app.post(`${root}/group/delete`, async (c) => {
     kv.del(dataKey(groupId, "analytics")),
     kv.del(dataKey(groupId, "brain-rounds")),
     kv.del(dataKey(groupId, "push-devices")),
+    kv.del(returnCodeKey(groupId)),
   ]);
   try {
     await ensureMediaBucket();
@@ -2855,7 +2853,9 @@ app.post(`${root}/groups/read`, async (c) => {
 const maxCreatedGroups = 3;
 const createCodeMaxFailures = 5;
 const createCodeWindowMs = 10 * 60 * 1000;
-const createCodeFailures = new Map<string, { count: number; resetAt: number }>();
+const codeFailures = new Map<string, { count: number; resetAt: number }>();
+const usedCreateCodesKey = "sawakai:used-create-codes";
+const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function normalizeCreateCode(value: string): string {
   return value.normalize("NFKC").replace(/\s/g, "").toUpperCase();
@@ -2868,6 +2868,16 @@ function getCreateCodes(): string[] {
     .filter(Boolean);
 }
 
+async function hashCode(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 function clientKey(c: { req: { header: (name: string) => string | undefined } }) {
   return (
     c.req.header("cf-connecting-ip") ??
@@ -2876,11 +2886,36 @@ function clientKey(c: { req: { header: (name: string) => string | undefined } })
   );
 }
 
-// 許可コードを確認する。問題があれば表示用のエラーを返す。
-function checkCreatePermission(
+function isLockedOut(key: string): boolean {
+  const record = codeFailures.get(key);
+  return Boolean(
+    record && record.resetAt > Date.now() && record.count >= createCodeMaxFailures,
+  );
+}
+
+function recordFailure(key: string) {
+  const now = Date.now();
+  const record = codeFailures.get(key);
+  codeFailures.set(
+    key,
+    record && record.resetAt > now
+      ? { count: record.count + 1, resetAt: record.resetAt }
+      : { count: 1, resetAt: now + createCodeWindowMs },
+  );
+}
+
+const lockedOutMessage =
+  "入力の間違いが続いたため、しばらくお待ちください（10分ほど）。";
+
+type PermissionResult =
+  | { ok: true; codeHash: string }
+  | { ok: false; status: 400 | 403 | 429 | 503; error: string };
+
+// 許可コードを確認する（使用済みの印は、グループを作れたあとに付ける）。
+async function checkCreatePermission(
   key: string,
   rawCode: unknown,
-): { ok: true } | { ok: false; status: 400 | 403 | 429 | 503; error: string } {
+): Promise<PermissionResult> {
   const codes = getCreateCodes();
   if (codes.length === 0) {
     return {
@@ -2889,39 +2924,82 @@ function checkCreatePermission(
       error: "グループ作成の準備ができていません。運用者にお知らせください。",
     };
   }
-  const now = Date.now();
-  const record = createCodeFailures.get(key);
-  if (record && record.resetAt > now && record.count >= createCodeMaxFailures) {
-    return {
-      ok: false,
-      status: 429,
-      error: "入力の間違いが続いたため、しばらくお待ちください（10分ほど）。",
-    };
+  const failureKey = `create:${key}`;
+  if (isLockedOut(failureKey)) {
+    return { ok: false, status: 429, error: lockedOutMessage };
   }
   const code = typeof rawCode === "string" ? normalizeCreateCode(rawCode) : "";
-  if (code && codes.includes(code)) {
-    createCodeFailures.delete(key);
-    return { ok: true };
+  if (!code || !codes.includes(code)) {
+    recordFailure(failureKey);
+    return {
+      ok: false,
+      status: 403,
+      error: code
+        ? "許可コードが違います。運用者から聞いたコードをご確認ください。"
+        : "許可コードを入力してください。",
+    };
   }
-  const next =
-    record && record.resetAt > now
-      ? { count: record.count + 1, resetAt: record.resetAt }
-      : { count: 1, resetAt: now + createCodeWindowMs };
-  createCodeFailures.set(key, next);
-  return {
-    ok: false,
-    status: 403,
-    error: code
-      ? "許可コードが違います。運用者から聞いたコードをご確認ください。"
-      : "許可コードを入力してください。",
-  };
+  const codeHash = await hashCode(code);
+  const used =
+    ((await kv.get(usedCreateCodesKey)) as Record<string, unknown> | undefined) ??
+    {};
+  if (used[codeHash]) {
+    return {
+      ok: false,
+      status: 403,
+      error:
+        "この許可コードは、すでに使われています。運用者に新しいコードをもらってください。",
+    };
+  }
+  codeFailures.delete(failureKey);
+  return { ok: true, codeHash };
+}
+
+async function markCreateCodeUsed(codeHash: string, groupId: string) {
+  const used =
+    ((await kv.get(usedCreateCodesKey)) as Record<string, unknown> | undefined) ??
+    {};
+  await kv.set(usedCreateCodesKey, {
+    ...used,
+    [codeHash]: { usedAt: new Date().toISOString(), groupId },
+  });
+}
+
+function returnCodeKey(groupId: string): string {
+  return `sawakai:group:${groupId}:admin-return`;
+}
+
+function normalizeReturnCode(value: string): string {
+  return value.normalize("NFKC").replace(/[\s-]/g, "").toUpperCase();
+}
+
+async function ensureReturnCode(groupId: string): Promise<string> {
+  const existing = (await kv.get(returnCodeKey(groupId))) as string | undefined;
+  if (existing) return existing;
+  const taken = new Set<string>();
+  for (const group of await getGroups()) {
+    const value = (await kv.get(returnCodeKey(group.id))) as string | undefined;
+    if (value) taken.add(value);
+  }
+  let code = "";
+  do {
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    code = Array.from(bytes)
+      .map((value) => codeAlphabet[value % codeAlphabet.length])
+      .join("");
+  } while (taken.has(code));
+  await kv.set(returnCodeKey(groupId), code);
+  return code;
+}
+
+function displayReturnCode(code: string): string {
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
 }
 
 async function createGroupFor(name: string, creator: string): Promise<Group> {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const bytes = crypto.getRandomValues(new Uint8Array(6));
   const inviteCode = Array.from(bytes)
-    .map((value) => alphabet[value % alphabet.length])
+    .map((value) => codeAlphabet[value % codeAlphabet.length])
     .join("");
   const group: Group = {
     id: crypto.randomUUID(),
@@ -2958,7 +3036,10 @@ app.post(`${root}/groups`, async (c) => {
   if (!name || name.length > 20) {
     return c.json({ error: "グループ名は1〜20文字で入力してください。" }, 400);
   }
-  const permission = checkCreatePermission(clientKey(c), body.permissionCode);
+  const permission = await checkCreatePermission(
+    clientKey(c),
+    body.permissionCode,
+  );
   if (!permission.ok) {
     return c.json({ error: permission.error }, permission.status);
   }
@@ -2968,11 +3049,13 @@ app.post(`${root}/groups`, async (c) => {
   }
 
   const group = await createGroupFor(name, session.name);
+  await markCreateCodeUsed(permission.codeHash, group.id);
+  const adminReturnCode = await ensureReturnCode(group.id);
   await kv.set(`sawakai:session:${token}`, {
     ...session,
     groupIds: [...new Set([...sessionGroupIds(session), group.id])],
   });
-  return c.json({ group });
+  return c.json({ group, adminReturnCode: displayReturnCode(adminReturnCode) });
 });
 
 // 参加前の人が、お名前とグループ名だけで最初のグループを作る。
@@ -2987,7 +3070,10 @@ app.post(`${root}/groups/create-first`, async (c) => {
   if (!groupName || groupName.length > 20) {
     return c.json({ error: "グループ名は1〜20文字で入力してください。" }, 400);
   }
-  const permission = checkCreatePermission(clientKey(c), body.permissionCode);
+  const permission = await checkCreatePermission(
+    clientKey(c),
+    body.permissionCode,
+  );
   if (!permission.ok) {
     return c.json({ error: permission.error }, permission.status);
   }
@@ -2997,6 +3083,8 @@ app.post(`${root}/groups/create-first`, async (c) => {
   }
 
   const group = await createGroupFor(groupName, userName);
+  await markCreateCodeUsed(permission.codeHash, group.id);
+  const adminReturnCode = await ensureReturnCode(group.id);
   const token = crypto.randomUUID();
   await kv.set(`sawakai:session:${token}`, {
     name: userName,
@@ -3008,7 +3096,48 @@ app.post(`${root}/groups/create-first`, async (c) => {
     user: { name: userName },
     activeGroupId: group.id,
     group,
+    adminReturnCode: displayReturnCode(adminReturnCode),
   });
+});
+
+// 管理者が、再入室コードで戻る。
+app.post(`${root}/groups/admin-return`, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const code =
+    typeof body.returnCode === "string" ? normalizeReturnCode(body.returnCode) : "";
+  if (!name || !code) {
+    return c.json({ error: "お名前と再入室コードを入力してください。" }, 400);
+  }
+  const failureKey = `return:${clientKey(c)}`;
+  if (isLockedOut(failureKey)) {
+    return c.json({ error: lockedOutMessage }, 429);
+  }
+  let found: Group | undefined;
+  for (const group of await getGroups()) {
+    const stored = (await kv.get(returnCodeKey(group.id))) as string | undefined;
+    if (stored && stored === code) {
+      found = group;
+      break;
+    }
+  }
+  if (!found || !found.adminNames?.includes(name)) {
+    recordFailure(failureKey);
+    return c.json(
+      { error: "お名前か再入室コードが違います。もう一度ご確認ください。" },
+      403,
+    );
+  }
+  codeFailures.delete(failureKey);
+
+  const token = crypto.randomUUID();
+  await kv.set(`sawakai:session:${token}`, {
+    name,
+    expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
+    groupIds: [found.id],
+  });
+  await touchMember(found.id, name);
+  return c.json({ token, user: { name }, activeGroupId: found.id });
 });
 
 app.post(`${root}/groups/join`, async (c) => {
