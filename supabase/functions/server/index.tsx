@@ -38,6 +38,7 @@ type Group = {
   adminNames?: string[];
   createdBy?: string;
   createdViaCreateFlow?: boolean;
+  image?: {
     path: string;
     signedUrl?: string;
     signedUntil?: string;
