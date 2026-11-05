@@ -2913,6 +2913,7 @@ async function createGroupFor(name: string, creator: string): Promise<Group> {
     createdBy: creator,
     createdViaCreateFlow: true,
   };
+  await kv.set(groupsKey, [...(await getGroups()), group]);
   await touchMember(group.id, creator);
   return group;
 }
