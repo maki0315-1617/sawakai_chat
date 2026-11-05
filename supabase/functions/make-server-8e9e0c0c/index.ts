@@ -2316,9 +2316,28 @@ app.post(`${root}/join`, async (c) => {
   if (!name || name.length > 12) {
     return c.json({ error: "表示名は1〜12文字で入力してください。" }, 400);
   }
+  // 管理者の名前をかたって入れないよう、管理者として戻るときは許可コードを求める。
+  if (group.adminNames?.includes(name)) {
+    if (typeof body.permissionCode !== "string" || !body.permissionCode.trim()) {
+      return c.json(
+        {
+          error:
+            "このお名前は管理者として登録されています。管理者の方は許可コードを入力してください。管理者ではない方は、別のお名前で参加してください。",
+          needsPermissionCode: true,
+        },
+        403,
+      );
+    }
+    const permission = checkCreatePermission(clientKey(c), body.permissionCode);
+    if (!permission.ok) {
+      return c.json(
+        { error: permission.error, needsPermissionCode: true },
+        permission.status,
+      );
+    }
+  }
 
-  const token = crypto.randomUUID();
-  await kv.set(`sawakai:session:${token}`, {
+  const token = crypto.randomUUID();  await kv.set(`sawakai:session:${token}`, {
     name,
     expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
     groupIds: [group.id],

@@ -3842,18 +3842,19 @@ function JoinScreen({
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [isJoining, setIsJoining] = useState(false);
-  const [mode, setMode] = useState<"choose" | "join" | "create" | "created">(
-    "choose",
-  );
+  const [mode, setMode] = useState<
+    "choose" | "join" | "create" | "created" | "return"
+  >("choose");
   const [groupName, setGroupName] = useState("");
   const [permissionCode, setPermissionCode] = useState("");
-  const [needsPermission, setNeedsPermission] = useState(false);
+  const [returnCode, setReturnCode] = useState("");
   const [created, setCreated] = useState<{
     token: string;
     user: Profile;
     activeGroupId: string;
     groupName: string;
     inviteCode: string;
+    adminReturnCode: string;
   } | null>(null);
   const [shareNote, setShareNote] = useState("");
   const [listening, setListening] = useState<"" | "name" | "code" | "group">("");
@@ -3964,6 +3965,7 @@ function JoinScreen({
         activeGroupId: result.activeGroupId,
         groupName: result.group.name,
         inviteCode: result.group.inviteCode,
+        adminReturnCode: result.adminReturnCode ?? "",
       });
       setMode("created");
     } catch (reason) {
@@ -3974,6 +3976,47 @@ function JoinScreen({
       );
     } finally {
       setIsJoining(false);
+    }
+  };
+
+  const returnAsAdmin = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setIsJoining(true);
+    try {
+      const response = await fetch(`${apiRoot}/groups/admin-return`, {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({ name: name.trim(), returnCode }),
+      });
+      const result = await readJson(response);
+      if (!response.ok) {
+        throw new Error(
+          result.error ??
+            (response.status === 404
+              ? "サーバーが新しい機能に対応していません。Edge Functionを再デプロイしてください。"
+              : `入室できませんでした（エラー ${response.status}）。`),
+        );
+      }
+      onJoined(result.token, result.user ?? { name: name.trim() }, result.activeGroupId);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "通信を確認して、もう一度お試しください。",
+      );
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
+  const copyReturnCode = async () => {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.adminReturnCode);
+      setShareNote("再入室コードをコピーしました。人に見せない場所に保管してください。");
+    } catch {
+      setShareNote("コピーできませんでした。写真やメモで控えてください。");
     }
   };
 
@@ -4008,16 +4051,11 @@ function JoinScreen({
       const response = await fetch(`${apiRoot}/join`, {
         method: "POST",
         headers: apiHeaders(),
-        body: JSON.stringify({
-          name,
-          inviteCode,
-          ...(needsPermission ? { permissionCode } : {}),
-        }),
+        body: JSON.stringify({ name, inviteCode }),
       });
       const responseText = await response.text();
       let result: {
         error?: string;
-        needsPermissionCode?: boolean;
         token?: string;
         user?: Profile;
         activeGroupId?: string;
@@ -4038,7 +4076,6 @@ function JoinScreen({
         );
       }
       if (!response.ok) {
-        if (result.needsPermissionCode) setNeedsPermission(true);
         throw new Error(result.error ?? "参加できませんでした。");
       }
       if (!result.token || !result.user || !result.activeGroupId) {        throw new Error("参加情報を確認できませんでした。もう一度お試しください。");
@@ -4118,6 +4155,16 @@ function JoinScreen({
             </button>
             <p className="join-hint">
               茶話会を開く方（運用者から許可コードを聞いた方）
+            </p>
+            <button
+              className="join-button join-button--secondary"
+              onClick={() => setMode("return")}
+              type="button"
+            >
+              管理者として戻る
+            </button>
+            <p className="join-hint">
+              グループを作った方が、再入室コードで入り直すとき
             </p>
           </div>
         )}
@@ -4241,6 +4288,23 @@ function JoinScreen({
               {created.inviteCode}
             </p>
             <pre className="share-preview">{shareText}</pre>
+            {created.adminReturnCode && (
+              <>
+                <p className="join-description">
+                  【管理者の方へ】あなたが次回入り直すための「再入室コード」です。人に教えず、写真やメモで必ず保管してください。
+                </p>
+                <p className="invite-code-display" aria-label="再入室コード">
+                  {created.adminReturnCode}
+                </p>
+                <button
+                  className="join-button join-button--secondary"
+                  onClick={copyReturnCode}
+                  type="button"
+                >
+                  再入室コードをコピーする
+                </button>
+              </>
+            )}
             <button
               className="join-button"
               onClick={copyShareText}
@@ -4279,6 +4343,56 @@ function JoinScreen({
               会話を始める
             </button>
           </div>
+        )}
+        {mode === "return" && (
+          <form onSubmit={returnAsAdmin}>
+            <button
+              className="join-back"
+              onClick={() => {
+                setMode("choose");
+                setError("");
+              }}
+              type="button"
+            >
+              ← もどる
+            </button>
+            <p className="join-description">
+              ①お名前 → ②再入室コード の順に入力してください。
+            </p>
+            <label htmlFor="return-name">① お名前</label>
+            <input
+              autoComplete="name"
+              id="return-name"
+              maxLength={12}
+              onChange={(event) => setName(event.target.value)}
+              value={name}
+            />
+            <label htmlFor="return-code">② 再入室コード</label>
+            <input
+              autoCapitalize="characters"
+              autoComplete="off"
+              className="invite-code-input"
+              id="return-code"
+              onChange={(event) => setReturnCode(event.target.value)}
+              placeholder="例：ABCD-1234"
+              value={returnCode}
+            />
+            <p className="join-hint">
+              再入室コードは声に出さず、キーボードで入力してください。
+            </p>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <button
+              className="join-button"
+              disabled={isJoining || !name.trim() || !returnCode.trim()}
+              type="submit"
+            >
+              {isJoining ? "確認しています…" : "③ 管理者として入る"}
+            </button>
+          </form>
         )}
         {mode === "join" && (
         <form onSubmit={join}>
@@ -4344,22 +4458,6 @@ function JoinScreen({
             >
               {listening === "code" ? "やめる" : "🎤 声で招待コードを入れる"}
             </button>
-          )}
-          {needsPermission && (
-            <>
-              <label htmlFor="join-permission">管理者の方：許可コード</label>
-              <input
-                autoCapitalize="characters"
-                autoComplete="off"
-                id="join-permission"
-                onChange={(event) => setPermissionCode(event.target.value)}
-                placeholder="運用者から聞いたコード"
-                value={permissionCode}
-              />
-              <p className="join-hint">
-                許可コードは声に出さず、キーボードで入力してください。
-              </p>
-            </>
           )}
           {listening && (
             <p className="voice-status" role="status">
@@ -4488,6 +4586,7 @@ export default function App() {
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [inviteCode, setInviteCode] = useState("");
+  const [adminReturnCode, setAdminReturnCode] = useState("");
   const [groupName, setGroupName] = useState(appName);
   const [groupNameDraft, setGroupNameDraft] = useState(appName);
   const [groupImageUrl, setGroupImageUrl] = useState("");
@@ -4766,6 +4865,7 @@ export default function App() {
       if (!response.ok) throw new Error(result.error);
       setMembers(result.members);
       setInviteCode(result.inviteCode);
+      setAdminReturnCode(result.adminReturnCode ?? "");
       setGroupName(result.name);
       setGroupNameDraft(result.name);
       setGroupImageUrl(result.imageUrl ?? "");
@@ -7069,6 +7169,22 @@ export default function App() {
                 コードをコピー
               </button>
             </div>
+            {isAdmin && adminReturnCode && (
+              <div className="invite-card">
+                <span>管理者の再入室コード（人に教えない）</span>
+                <strong>{adminReturnCode}</strong>
+                <button
+                  className="copy-code-button"
+                  onClick={() =>
+                    void navigator.clipboard
+                      ?.writeText(adminReturnCode)
+                      .then(() => setGroupError(""))
+                  }
+                >
+                  コードをコピー
+                </button>
+              </div>
+            )}
             {isAdmin && (
               <button
                 className="rotate-code-button"
