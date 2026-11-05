@@ -3847,6 +3847,7 @@ function JoinScreen({
   );
   const [groupName, setGroupName] = useState("");
   const [permissionCode, setPermissionCode] = useState("");
+  const [needsPermission, setNeedsPermission] = useState(false);
   const [created, setCreated] = useState<{
     token: string;
     user: Profile;
@@ -4007,11 +4008,16 @@ function JoinScreen({
       const response = await fetch(`${apiRoot}/join`, {
         method: "POST",
         headers: apiHeaders(),
-        body: JSON.stringify({ name, inviteCode }),
+        body: JSON.stringify({
+          name,
+          inviteCode,
+          ...(needsPermission ? { permissionCode } : {}),
+        }),
       });
       const responseText = await response.text();
       let result: {
         error?: string;
+        needsPermissionCode?: boolean;
         token?: string;
         user?: Profile;
         activeGroupId?: string;
@@ -4031,9 +4037,11 @@ function JoinScreen({
           "参加サーバーから正しい応答を受け取れませんでした。Supabase Edge Functionを再デプロイしてください。",
         );
       }
-      if (!response.ok) throw new Error(result.error ?? "参加できませんでした。");
-      if (!result.token || !result.user || !result.activeGroupId) {
-        throw new Error("参加情報を確認できませんでした。もう一度お試しください。");
+      if (!response.ok) {
+        if (result.needsPermissionCode) setNeedsPermission(true);
+        throw new Error(result.error ?? "参加できませんでした。");
+      }
+      if (!result.token || !result.user || !result.activeGroupId) {        throw new Error("参加情報を確認できませんでした。もう一度お試しください。");
       }
       let user = result.user;
       if (profileImage) {
@@ -4100,7 +4108,7 @@ function JoinScreen({
             >
               初めて参加する
             </button>
-            <p className="join-hint">招待コードを教えてもらった方</p>
+            <p className="join-hint">招待コードを教えてもらった方、または、以前参加して戻ってきた方</p>
             <button
               className="join-button join-button--secondary"
               onClick={() => setMode("create")}
@@ -4336,6 +4344,22 @@ function JoinScreen({
             >
               {listening === "code" ? "やめる" : "🎤 声で招待コードを入れる"}
             </button>
+          )}
+          {needsPermission && (
+            <>
+              <label htmlFor="join-permission">管理者の方：許可コード</label>
+              <input
+                autoCapitalize="characters"
+                autoComplete="off"
+                id="join-permission"
+                onChange={(event) => setPermissionCode(event.target.value)}
+                placeholder="運用者から聞いたコード"
+                value={permissionCode}
+              />
+              <p className="join-hint">
+                許可コードは声に出さず、キーボードで入力してください。
+              </p>
+            </>
           )}
           {listening && (
             <p className="voice-status" role="status">
