@@ -282,6 +282,55 @@ input:focus-visible {
   gap: 14px;
 }
 
+.join-button--secondary {
+  color: var(--accent);
+  background: #ffffff;
+}
+
+.join-hint {
+  margin: -6px 0 6px;
+  color: #5f6a63;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.join-back {
+  justify-self: start;
+  min-height: 48px;
+  padding: 8px 14px;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.invite-code-display {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  color: var(--accent);
+  background: #eef4f1;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+}
+
+.share-preview {
+  margin: 0;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  color: #33423b;
+  background: #f7f8f6;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
 .join-note {
   margin: 18px 0 0;
   color: #78817b;

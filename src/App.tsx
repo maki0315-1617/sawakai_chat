@@ -3842,8 +3842,20 @@ function JoinScreen({
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [isJoining, setIsJoining] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [listening, setListening] = useState<"" | "name" | "code">("");
+  const [mode, setMode] = useState<"choose" | "join" | "create" | "created">(
+    "choose",
+  );
+  const [groupName, setGroupName] = useState("");
+  const [permissionCode, setPermissionCode] = useState("");
+  const [created, setCreated] = useState<{
+    token: string;
+    user: Profile;
+    activeGroupId: string;
+    groupName: string;
+    inviteCode: string;
+  } | null>(null);
+  const [shareNote, setShareNote] = useState("");
+  const [listening, setListening] = useState<"" | "name" | "code" | "group">("");
   const [listenPhase, setListenPhase] = useState<"guide" | "listen">("guide");
   const [voiceMessage, setVoiceMessage] = useState("");
   const voiceSession = useRef<VoiceSession | null>(null);
@@ -3861,7 +3873,7 @@ function JoinScreen({
     setListening("");
   };
 
-  const startVoice = (target: "name" | "code") => {
+  const startVoice = (target: "name" | "code" | "group") => {
     stopVoice();
     setVoiceMessage("");
     setError("");
@@ -3870,7 +3882,9 @@ function JoinScreen({
     voiceSession.current = listenOnce(
       target === "name"
         ? "お名前を言ってください。ピッと鳴ったら、「ゆきです」のようにお話しください。"
-        : "招待コードを言ってください。ピッと鳴ったら、英語と数字をゆっくりお話しください。",
+        : target === "group"
+          ? "グループの名前を言ってください。ピッと鳴ったら、「木曜茶話会」のようにお話しください。"
+          : "招待コードを言ってください。ピッと鳴ったら、英語と数字をゆっくりお話しください。",
       {
         onListening: () => setListenPhase("listen"),
         onResult: (text) => {
@@ -3880,6 +3894,17 @@ function JoinScreen({
             if (spoken) setName(spoken);
             setVoiceMessage(
               "聞き取った名前を入れました。違っていたら直してください。",
+            );
+          } else if (target === "group") {
+            const spoken = text
+              .normalize("NFKC")
+              .replace(/(です|と言います|といいます)[。.]?$/, "")
+              .replace(/[。、.,\s]+$/g, "")
+              .trim()
+              .slice(0, 20);
+            if (spoken) setGroupName(spoken);
+            setVoiceMessage(
+              "聞き取ったグループ名を入れました。違っていたら直してください。",
             );
           } else {
             setInviteCode(normalizeInviteCode(text));
@@ -3894,6 +3919,77 @@ function JoinScreen({
         },
       },
     );
+  };
+
+  const readJson = async (response: Response) => {
+    const text = await response.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const createFirstGroup = async (event: FormEvent) => {
+    event.preventDefault();
+    stopVoice();
+    setError("");
+    setIsJoining(true);
+    try {
+      const response = await fetch(`${apiRoot}/groups/create-first`, {
+        method: "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({
+          name: name.trim(),
+          groupName: groupName.trim(),
+          permissionCode,
+        }),
+      });
+      const result = await readJson(response);
+      if (!response.ok) {
+        throw new Error(result.error ?? "グループを作れませんでした。");
+      }
+      if (!result.token || !result.group) {
+        throw new Error("作成結果を確認できませんでした。もう一度お試しください。");
+      }
+      setCreated({
+        token: result.token,
+        user: result.user ?? { name: name.trim() },
+        activeGroupId: result.activeGroupId,
+        groupName: result.group.name,
+        inviteCode: result.group.inviteCode,
+      });
+      setMode("created");
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "通信を確認して、もう一度お試しください。",
+      );
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
+  const shareText = created
+    ? `【${created.groupName}】へのお誘いです。\nアプリ「${appName}」を開き、「初めて参加する」を押して、招待コード ${created.inviteCode} を入力してください。`
+    : "";
+
+  const copyShareText = async () => {
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setShareNote("案内文をコピーしました。メッセージに貼り付けて送れます。");
+    } catch {
+      setShareNote("コピーできませんでした。案内文を長押しして選んでください。");
+    }
+  };
+
+  const shareInvite = async () => {
+    try {
+      await navigator.share({ text: shareText });
+    } catch {
+      // キャンセルや非対応のときは何もしない
+    }
   };
 
   const join = async (event: FormEvent) => {
@@ -3987,21 +4083,204 @@ function JoinScreen({
         </div>
         <p className="join-eyebrow">招待された方専用</p>
         <h1 id="join-title">{appName}</h1>
-        {!started ? (
+        {mode === "choose" && (
           <div className="join-steps">
             <p className="join-description">
-              はじめての方は、下のボタンを押してください。
+              あてはまるほうを押してください。
             </p>
             <button
               className="join-button"
-              onClick={() => setStarted(true)}
+              onClick={() => setMode("join")}
               type="button"
             >
               初めて参加する
             </button>
+            <p className="join-hint">招待コードを教えてもらった方</p>
+            <button
+              className="join-button join-button--secondary"
+              onClick={() => setMode("create")}
+              type="button"
+            >
+              新しくグループを作る
+            </button>
+            <p className="join-hint">
+              茶話会を開く方（運用者から許可コードを聞いた方）
+            </p>
           </div>
-        ) : (
+        )}
+        {mode === "create" && (
+          <form onSubmit={createFirstGroup}>
+            <button
+              className="join-back"
+              onClick={() => {
+                stopVoice();
+                setMode("choose");
+                setError("");
+                setVoiceMessage("");
+              }}
+              type="button"
+            >
+              ← もどる
+            </button>
+            <p className="join-description">
+              ①お名前 → ②グループ名 → ③許可コード → ④作る の順に進みます。
+              声でも、キーボードでも入力できます。
+            </p>
+            <label htmlFor="create-name">① あなたのお名前</label>
+            <input
+              autoComplete="name"
+              id="create-name"
+              maxLength={12}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例：ゆき"
+              required
+              value={name}
+            />
+            {voiceAvailable && (
+              <button
+                className="voice-fill-button"
+                onClick={() =>
+                  listening === "name" ? stopVoice() : startVoice("name")
+                }
+                type="button"
+              >
+                {listening === "name" ? "やめる" : "🎤 声でお名前を入れる"}
+              </button>
+            )}
+            <label htmlFor="create-group-name">② グループの名前</label>
+            <input
+              id="create-group-name"
+              maxLength={20}
+              onChange={(event) => setGroupName(event.target.value)}
+              placeholder="例：木曜茶話会"
+              required
+              value={groupName}
+            />
+            {voiceAvailable && (
+              <button
+                className="voice-fill-button"
+                onClick={() =>
+                  listening === "group" ? stopVoice() : startVoice("group")
+                }
+                type="button"
+              >
+                {listening === "group"
+                  ? "やめる"
+                  : "🎤 声でグループ名を入れる"}
+              </button>
+            )}
+            <label htmlFor="create-permission">③ 許可コード</label>
+            <input
+              autoCapitalize="characters"
+              autoComplete="off"
+              id="create-permission"
+              onChange={(event) => setPermissionCode(event.target.value)}
+              placeholder="運用者から聞いたコード"
+              required
+              value={permissionCode}
+            />
+            <p className="join-hint">
+              許可コードは声に出さず、キーボードで入力してください。
+            </p>
+            {listening && (
+              <p className="voice-status" role="status">
+                {listenPhase === "guide"
+                  ? "案内を読み上げています…"
+                  : "🎤 聞いています。お話しください"}
+              </p>
+            )}
+            {voiceMessage && !listening && (
+              <p className="voice-status" role="status">
+                {voiceMessage}
+              </p>
+            )}
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            {name.trim() && groupName.trim() && (
+              <p className="join-confirm">
+                お名前「{name.trim()}」で、グループ「{groupName.trim()}」を作ります。
+                （作れるのは3つまでです）
+              </p>
+            )}
+            <button
+              className="join-button"
+              disabled={
+                isJoining ||
+                !name.trim() ||
+                !groupName.trim() ||
+                !permissionCode.trim()
+              }
+              type="submit"
+            >
+              {isJoining ? "作っています…" : "④ この内容でグループを作る"}
+            </button>
+          </form>
+        )}
+        {mode === "created" && created && (
+          <div className="join-steps">
+            <p className="join-description">
+              「{created.groupName}」ができました。次の招待コードを、参加してほしい方へ伝えてください。
+            </p>
+            <p className="invite-code-display" aria-label="招待コード">
+              {created.inviteCode}
+            </p>
+            <pre className="share-preview">{shareText}</pre>
+            <button
+              className="join-button"
+              onClick={copyShareText}
+              type="button"
+            >
+              案内文をコピーする
+            </button>
+            {typeof navigator.share === "function" && (
+              <button
+                className="join-button join-button--secondary"
+                onClick={shareInvite}
+                type="button"
+              >
+                LINEやメールで送る
+              </button>
+            )}
+            {shareNote && (
+              <p className="voice-status" role="status">
+                {shareNote}
+              </p>
+            )}
+            <p className="join-hint">
+              招待コードは、あとで「グループ」の画面からも見られます。
+            </p>
+            <button
+              className="join-button"
+              onClick={() =>
+                onJoined(
+                  created.token,
+                  created.user,
+                  created.activeGroupId,
+                )
+              }
+              type="button"
+            >
+              会話を始める
+            </button>
+          </div>
+        )}
+        {mode === "join" && (
         <form onSubmit={join}>
+          <button
+            className="join-back"
+            onClick={() => {
+              stopVoice();
+              setMode("choose");
+              setError("");
+              setVoiceMessage("");
+            }}
+            type="button"
+          >
+            ← もどる
+          </button>
           <p className="join-description">
             ①お名前 → ②招待コード → ③参加する の順に進みます。
             声でも、キーボードでも入力できます。
@@ -4139,6 +4418,7 @@ export default function App() {
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [showGroups, setShowGroups] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupPermission, setNewGroupPermission] = useState("");
   const [newGroupImage, setNewGroupImage] = useState<{
     file: File;
     previewUrl: string;
@@ -5679,7 +5959,10 @@ export default function App() {
       const response = await fetch(`${apiRoot}/groups`, {
         method: "POST",
         headers: apiHeaders(token, activeGroupId),
-        body: JSON.stringify({ name: newGroupName.trim() }),
+        body: JSON.stringify({
+          name: newGroupName.trim(),
+          permissionCode: newGroupPermission,
+        }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
@@ -6538,12 +6821,22 @@ export default function App() {
                   value={newGroupName}
                 />
                 <button
-                  disabled={isChangingGroups || !newGroupName.trim()}
+                  disabled={
+                    isChangingGroups ||
+                    !newGroupName.trim() ||
+                    !newGroupPermission.trim()
+                  }
                   onClick={createGroup}
                 >
                   作る
                 </button>
               </div>
+              <input
+                autoComplete="off"
+                onChange={(event) => setNewGroupPermission(event.target.value)}
+                placeholder="許可コード（運用者から聞いたコード）"
+                value={newGroupPermission}
+              />
               <label
                 className="image-picker-label"
                 htmlFor="new-group-image"

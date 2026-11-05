@@ -2813,6 +2813,97 @@ app.post(`${root}/groups/read`, async (c) => {
   return c.json({ read: true });
 });
 
+const maxCreatedGroups = 3;
+const createCodeMaxFailures = 5;
+const createCodeWindowMs = 10 * 60 * 1000;
+const createCodeFailures = new Map<string, { count: number; resetAt: number }>();
+
+function normalizeCreateCode(value: string): string {
+  return value.normalize("NFKC").replace(/\s/g, "").toUpperCase();
+}
+
+function getCreateCodes(): string[] {
+  return (Deno.env.get("GROUP_CREATE_CODES") ?? "")
+    .split(",")
+    .map(normalizeCreateCode)
+    .filter(Boolean);
+}
+
+function clientKey(c: { req: { header: (name: string) => string | undefined } }) {
+  return (
+    c.req.header("cf-connecting-ip") ??
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown"
+  );
+}
+
+// 許可コードを確認する。問題があれば表示用のエラーを返す。
+function checkCreatePermission(
+  key: string,
+  rawCode: unknown,
+): { ok: true } | { ok: false; status: 400 | 403 | 429 | 503; error: string } {
+  const codes = getCreateCodes();
+  if (codes.length === 0) {
+    return {
+      ok: false,
+      status: 503,
+      error: "グループ作成の準備ができていません。運用者にお知らせください。",
+    };
+  }
+  const now = Date.now();
+  const record = createCodeFailures.get(key);
+  if (record && record.resetAt > now && record.count >= createCodeMaxFailures) {
+    return {
+      ok: false,
+      status: 429,
+      error: "入力の間違いが続いたため、しばらくお待ちください（10分ほど）。",
+    };
+  }
+  const code = typeof rawCode === "string" ? normalizeCreateCode(rawCode) : "";
+  if (code && codes.includes(code)) {
+    createCodeFailures.delete(key);
+    return { ok: true };
+  }
+  const next =
+    record && record.resetAt > now
+      ? { count: record.count + 1, resetAt: record.resetAt }
+      : { count: 1, resetAt: now + createCodeWindowMs };
+  createCodeFailures.set(key, next);
+  return {
+    ok: false,
+    status: 403,
+    error: code
+      ? "許可コードが違います。運用者から聞いたコードをご確認ください。"
+      : "許可コードを入力してください。",
+  };
+}
+
+async function createGroupFor(name: string, creator: string): Promise<Group> {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  const inviteCode = Array.from(bytes)
+    .map((value) => alphabet[value % alphabet.length])
+    .join("");
+  const group: Group = {
+    id: crypto.randomUUID(),
+    name,
+    inviteCode,
+    createdAt: new Date().toISOString(),
+    adminNames: [creator],
+    createdBy: creator,
+  };
+  await kv.set(groupsKey, [...(await getGroups()), group]);
+  await touchMember(group.id, creator);
+  return group;
+}
+
+async function createdGroupCount(creator: string): Promise<number> {
+  return (await getGroups()).filter((group) => group.createdBy === creator)
+    .length;
+}
+
+const createLimitMessage = `作れるグループは${maxCreatedGroups}つまでです。`;
+
 app.post(`${root}/groups`, async (c) => {
   const token = c.req.header("X-Session-Token");
   const session = await getSession(token);
@@ -2824,28 +2915,55 @@ app.post(`${root}/groups`, async (c) => {
   if (!name || name.length > 20) {
     return c.json({ error: "グループ名は1〜20文字で入力してください。" }, 400);
   }
+  const permission = checkCreatePermission(clientKey(c), body.permissionCode);
+  if (!permission.ok) {
+    return c.json({ error: permission.error }, permission.status);
+  }
+  if ((await createdGroupCount(session.name)) >= maxCreatedGroups) {
+    return c.json({ error: createLimitMessage }, 403);
+  }
 
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = crypto.getRandomValues(new Uint8Array(6));
-  const inviteCode = Array.from(bytes)
-    .map((value) => alphabet[value % alphabet.length])
-    .join("");
-  const group: Group = {
-    id: crypto.randomUUID(),
-    name,
-    inviteCode,
-    createdAt: new Date().toISOString(),
-    adminNames: [session.name],
-    createdBy: session.name,
-  };
-  await kv.set(groupsKey, [...(await getGroups()), group]);
-  const nextSession = {
+  const group = await createGroupFor(name, session.name);
+  await kv.set(`sawakai:session:${token}`, {
     ...session,
     groupIds: [...new Set([...sessionGroupIds(session), group.id])],
-  };
-  await kv.set(`sawakai:session:${token}`, nextSession);
-  await touchMember(group.id, session.name);
+  });
   return c.json({ group });
+});
+
+// 参加前の人が、お名前とグループ名だけで最初のグループを作る。
+app.post(`${root}/groups/create-first`, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const userName = typeof body.name === "string" ? body.name.trim() : "";
+  const groupName =
+    typeof body.groupName === "string" ? body.groupName.trim() : "";
+  if (!userName || userName.length > 12) {
+    return c.json({ error: "お名前は1〜12文字で入力してください。" }, 400);
+  }
+  if (!groupName || groupName.length > 20) {
+    return c.json({ error: "グループ名は1〜20文字で入力してください。" }, 400);
+  }
+  const permission = checkCreatePermission(clientKey(c), body.permissionCode);
+  if (!permission.ok) {
+    return c.json({ error: permission.error }, permission.status);
+  }
+  if ((await createdGroupCount(userName)) >= maxCreatedGroups) {
+    return c.json({ error: createLimitMessage }, 403);
+  }
+
+  const group = await createGroupFor(groupName, userName);
+  const token = crypto.randomUUID();
+  await kv.set(`sawakai:session:${token}`, {
+    name: userName,
+    expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
+    groupIds: [group.id],
+  });
+  return c.json({
+    token,
+    user: { name: userName },
+    activeGroupId: group.id,
+    group,
+  });
 });
 
 app.post(`${root}/groups/join`, async (c) => {
