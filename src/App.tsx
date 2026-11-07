@@ -20,6 +20,7 @@ import {
 } from "./voiceJoin";
 import DocumentsViewer from "./DocumentsViewer";
 import PicturePuzzle from "./PicturePuzzle";
+import WalkingApp from "./WalkingApp";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -3835,8 +3836,10 @@ function BrainPanel({
 
 function JoinScreen({
   onJoined,
+  onOpenWalk,
 }: {
   onJoined: (token: string, profile: Profile, activeGroupId: string) => void;
+  onOpenWalk: () => void;
 }) {
   const [name, setName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -4129,7 +4132,12 @@ function JoinScreen({
     <main className="join-screen">
       <section className="join-card" aria-labelledby="join-title">
         <div className="join-icon">
-          <img alt="" height="25" src="/assets/9cbab.svg" width="25" />
+          <img
+            alt=""
+            height="38"
+            src={`${import.meta.env.BASE_URL}assets/9cbab.svg`}
+            width="38"
+          />
         </div>
         <p className="join-eyebrow">招待された方専用</p>
         <h1 id="join-title">{appName}</h1>
@@ -4166,6 +4174,14 @@ function JoinScreen({
             <p className="join-hint">
               グループを作った方が、再入室コードで入り直すとき
             </p>
+            <button
+              className="join-button join-button--secondary"
+              onClick={onOpenWalk}
+              type="button"
+            >
+              🌿 おさんぽ日和をひらく
+            </button>
+            <p className="join-hint">体調に合わせて、散歩や充電日の記録を楽しめます。</p>
           </div>
         )}
         {mode === "create" && (
@@ -4535,6 +4551,7 @@ function JoinScreen({
 }
 
 export default function App() {
+  const [showWalking, setShowWalking] = useState(false);
   const [token, setToken] = useState(
     () => localStorage.getItem(sessionStorageKey) ?? "",
   );
@@ -6148,8 +6165,17 @@ export default function App() {
     }
   };
 
+  if (showWalking) {
+    return <WalkingApp onBack={() => setShowWalking(false)} />;
+  }
+
   if (!token || !profile) {
-    return <JoinScreen onJoined={handleJoined} />;
+    return (
+      <JoinScreen
+        onJoined={handleJoined}
+        onOpenWalk={() => setShowWalking(true)}
+      />
+    );
   }
 
   return (
@@ -6206,6 +6232,14 @@ export default function App() {
           </span>
         </div>
         <nav aria-label="メニュー" className="header-actions">
+          <button
+            aria-label="おさんぽ日和を開く"
+            className="header-action"
+            onClick={() => setShowWalking(true)}
+          >
+            <span aria-hidden="true" className="header-action__icon">🌿</span>
+            <span>おさんぽ</span>
+          </button>
           <button
             aria-label="グループで音声通話をする"
             className="header-action"
