@@ -21,6 +21,7 @@ import {
 import DocumentsViewer from "./DocumentsViewer";
 import PicturePuzzle from "./PicturePuzzle";
 import WalkingApp from "./WalkingApp";
+import LocationSharingPanel, { useLocationSharing } from "./LocationSharing";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -4608,6 +4609,9 @@ export default function App() {
   const [groupNameDraft, setGroupNameDraft] = useState(appName);
   const [groupImageUrl, setGroupImageUrl] = useState("");
   const [showGroup, setShowGroup] = useState(false);
+  const locationSharing = useLocationSharing(token, activeGroupId, showGroup);
+  const [leavingError, setLeavingError] = useState("");
+  const [isLeaving, setIsLeaving] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
   const [showDirectCall, setShowDirectCall] = useState(false);
@@ -6781,22 +6785,35 @@ export default function App() {
             <p className="dialog-note">
               退出すると、この端末では茶話会の電話（着信）に気づけなくなります。よろしいですか？
               この端末の参加状態を解除します。これまでの会話内容は削除されません。
+              この端末から共有した位置は削除されます。
             </p>
+            {leavingError && <p className="form-error" role="alert">{leavingError}</p>}
             <div className="dialog-actions">
               <button
                 className="dialog-button dialog-button--back"
+                disabled={isLeaving}
                 onClick={() => setShowLeaveConfirmation(false)}
               >
                 戻る
               </button>
               <button
                 className="dialog-button delete-confirm-button"
-                onClick={() => {
-                  setShowLeaveConfirmation(false);
-                  leaveSession();
+                disabled={isLeaving}
+                onClick={async () => {
+                  setIsLeaving(true);
+                  setLeavingError("");
+                  try {
+                    await locationSharing.stopAll();
+                    setShowLeaveConfirmation(false);
+                    leaveSession();
+                  } catch {
+                    setLeavingError("位置共有を停止できないため退出できません。通信を確認してもう一度お試しください。");
+                  } finally {
+                    setIsLeaving(false);
+                  }
                 }}
               >
-                退出する
+                {isLeaving ? "位置共有を停止しています…" : "退出する"}
               </button>
             </div>
           </section>
@@ -7084,6 +7101,7 @@ export default function App() {
             </button>
             <p className="dialog-eyebrow">招待された方だけのグループ</p>
             <h2 id="group-panel-title">参加者と招待</h2>
+            <LocationSharingPanel sharing={locationSharing} />
 
             <div className="image-setting">
               <div className={`avatar avatar--${members.find((member) => member.name === profile.name)?.avatar ?? "mint"}`}>
