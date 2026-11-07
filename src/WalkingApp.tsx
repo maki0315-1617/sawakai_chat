@@ -48,7 +48,14 @@ type WalkRecord = {
   route: Position[]
   distanceMeters?: number | null
   distanceStatus?: "approximate" | "partial" | "unavailable"
+  durationSeconds?: number
+  plannedRoute?: Position[]
+  destination?: { latitude: number; longitude: number }
+  plannedDistanceMeters?: number
+  plannedDurationSeconds?: number
 }
+
+type Coordinate = Pick<Position, "latitude" | "longitude">
 
 type Recognition = {
   lang: string
@@ -121,11 +128,40 @@ function cleanExpiredRoutes(records: WalkRecord[], now = Date.now()) {
       record.kind === "walk" && record.distanceStatus === undefined
         ? { ...record, ...summarizeRoute(record.route, true) }
         : record
-    return withDistance.route.length > 0 &&
+    const routesExpired =
       now - new Date(withDistance.createdAt).getTime() >= routeRetentionMs
-      ? { ...withDistance, route: [] }
+    return routesExpired &&
+      (withDistance.route.length > 0 ||
+        (withDistance.plannedRoute?.length ?? 0) > 0 ||
+        withDistance.destination)
+      ? { ...withDistance, route: [], plannedRoute: [], destination: undefined }
       : withDistance
   })
+}
+
+function isStoredPosition(point: unknown): point is Position {
+  return (
+    typeof point === "object" &&
+    point !== null &&
+    "latitude" in point &&
+    typeof point.latitude === "number" &&
+    "longitude" in point &&
+    typeof point.longitude === "number" &&
+    "recordedAt" in point &&
+    typeof point.recordedAt === "string" &&
+    (!("breakBefore" in point) || typeof point.breakBefore === "boolean")
+  )
+}
+
+function isCoordinate(value: unknown): value is Coordinate {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "latitude" in value &&
+    typeof value.latitude === "number" &&
+    "longitude" in value &&
+    typeof value.longitude === "number"
+  )
 }
 
 function loadRecords(): WalkRecord[] {
@@ -149,6 +185,10 @@ function loadRecords(): WalkRecord[] {
         (record.kind === "walk" || record.kind === "charge") &&
         "durationMinutes" in record &&
         typeof record.durationMinutes === "number" &&
+        (!("durationSeconds" in record) ||
+          (typeof record.durationSeconds === "number" &&
+            Number.isFinite(record.durationSeconds) &&
+            record.durationSeconds >= 0)) &&
         "createdAt" in record &&
         typeof record.createdAt === "string" &&
         "review" in record &&
@@ -164,19 +204,24 @@ function loadRecords(): WalkRecord[] {
           record.distanceStatus === "approximate" ||
           record.distanceStatus === "partial" ||
           record.distanceStatus === "unavailable") &&
-        record.route.every(
-          (point: unknown) =>
-            typeof point === "object" &&
-            point !== null &&
-            "latitude" in point &&
-            typeof point.latitude === "number" &&
-            "longitude" in point &&
-            typeof point.longitude === "number" &&
-            "recordedAt" in point &&
-            typeof point.recordedAt === "string" &&
-            (!("breakBefore" in point) ||
-              typeof point.breakBefore === "boolean"),
-        ),
+        (!("durationSeconds" in record) ||
+          (typeof record.durationSeconds === "number" &&
+            Number.isFinite(record.durationSeconds) &&
+            record.durationSeconds >= 0)) &&
+        (!("plannedRoute" in record) ||
+          (Array.isArray(record.plannedRoute) &&
+            record.plannedRoute.every(isStoredPosition))) &&
+        (!("destination" in record) ||
+          record.destination === undefined || isCoordinate(record.destination)) &&
+        (!("plannedDistanceMeters" in record) ||
+          (typeof record.plannedDistanceMeters === "number" &&
+            Number.isFinite(record.plannedDistanceMeters) &&
+            record.plannedDistanceMeters >= 0)) &&
+        (!("plannedDurationSeconds" in record) ||
+          (typeof record.plannedDurationSeconds === "number" &&
+            Number.isFinite(record.plannedDurationSeconds) &&
+            record.plannedDurationSeconds >= 0)) &&
+        record.route.every(isStoredPosition),
     )
   ) {
     throw new Error("散歩の記録を読み取れませんでした。")
@@ -260,6 +305,14 @@ function distanceText(
       ? `約${Math.round(record.distanceMeters / 10) * 10} m`
       : `約${(record.distanceMeters / 1000).toFixed(1)} km`
   return `距離：${distance}${record.distanceStatus === "partial" ? "（一部のみ記録）" : "（目安）"}`
+}
+
+function formatDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(safeSeconds / 3600)
+  const minutes = Math.floor((safeSeconds % 3600) / 60)
+  const remainingSeconds = safeSeconds % 60
+  return `${hours > 0 ? `${hours}時間` : ""}${minutes > 0 ? `${minutes}分` : ""}${remainingSeconds > 0 || safeSeconds === 0 ? `${remainingSeconds}秒` : ""}`
 }
 
 function roadPriority(tags: Record<string, string>) {
@@ -550,6 +603,68 @@ function buildSuggestedRoute(
   })
 }
 
+async function fetchPedestrianRoute(
+    start: Coordinate,
+    destination: Coordinate,
+  ): Promise<{ route: Position[]; distanceMeters: number; durationSeconds: number }> {
+    const coordinates = `${start.longitude},${start.latitude};${destination.longitude},${destination.latitude}`
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 20000)
+    try {
+      const response = await fetch(
+        `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`,
+        { signal: controller.signal },
+      )
+      if (!response.ok) throw new Error("徒歩経路を取得できませんでした。")
+      const result = (await response.json()) as {
+        code?: string
+        routes?: Array<{
+          distance?: number
+          duration?: number
+          geometry?: { coordinates?: number[][] }
+        }>
+      }
+      const selected = result.routes?.[0]
+      const points = selected?.geometry?.coordinates
+      if (
+        result.code !== "Ok" ||
+        !selected ||
+        !Number.isFinite(selected.distance) ||
+        !Number.isFinite(selected.duration) ||
+        !points ||
+        points.length < 2 ||
+        points.some(
+          (point) =>
+            point.length < 2 ||
+            !Number.isFinite(point[0]) ||
+            !Number.isFinite(point[1]),
+        )
+      ) {
+        throw new Error("徒歩経路が見つかりませんでした。地図上の別の地点を選んでください。")
+      }
+      const recordedAt = new Date().toISOString()
+      return {
+        route: points.map(([longitude, latitude]) => ({
+          latitude,
+          longitude,
+          recordedAt,
+        })),
+        distanceMeters: selected.distance!,
+        durationSeconds: selected.duration!,
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("徒歩経路の検索に時間がかかっています。もう一度お試しください。")
+      }
+      if (error instanceof TypeError) {
+        throw new Error("徒歩経路サービスに接続できません。通信状況をご確認ください。")
+      }
+      throw error
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
 function getSafetyMessage(
   condition: Condition,
   weather: Weather,
@@ -620,12 +735,12 @@ function MapPreview({
   position,
 
   route,
-  suggestedRoute = [],
+  plannedRoute = [],
 }: {
   position: Position | null
 
   route: Position[]
-  suggestedRoute?: Position[]
+  plannedRoute?: Position[]
 }) {
   if (!position) {
     return (
@@ -667,7 +782,7 @@ function MapPreview({
     }
   })
 
-  const suggestedLine = suggestedRoute
+  const plannedLine = plannedRoute
     .map((point) => {
       const projected = projectToWorld(point.latitude, point.longitude)
       return `${projected.x - startX * tileSize},${projected.y - startY * tileSize}`
@@ -719,9 +834,9 @@ function MapPreview({
             />
           ),
         )}
-        {suggestedRoute.length > 1 && (
+        {plannedRoute.length > 1 && (
           <polyline
-            points={suggestedLine}
+            points={plannedLine}
             fill="none"
             stroke="#bd7734"
             strokeWidth="7"
@@ -748,11 +863,191 @@ function MapPreview({
   )
 }
 
-function SavedRouteMap({ route }: { route: Position[] }) {
+function DestinationMap({
+    position,
+    destination,
+    route,
+    onSelect,
+  }: {
+    position: Coordinate
+    destination: Coordinate | null
+    route: Position[]
+    onSelect: (coordinate: Coordinate) => void
+  }) {
+    const [zoom, setZoom] = useState(15)
+    const [pan, setPan] = useState({ x: 0, y: 0 })
+    const dragRef = useRef<{
+      pointerId: number
+      clientX: number
+      clientY: number
+      panX: number
+      panY: number
+    } | null>(null)
+    const didDragRef = useRef(false)
+    const mapWidth = 768
+    const mapHeight = 427
+    const center = projectToWorld(position.latitude, position.longitude, zoom)
+    const left = center.x - mapWidth / 2 - pan.x
+    const top = center.y - mapHeight / 2 - pan.y
+    const tileCount = 2 ** zoom
+    const tiles = []
+    for (
+      let x = Math.floor(left / tileSize);
+      x <= Math.floor((left + mapWidth) / tileSize);
+      x += 1
+    ) {
+      for (
+        let y = Math.floor(top / tileSize);
+        y <= Math.floor((top + mapHeight) / tileSize);
+        y += 1
+      ) {
+        if (y < 0 || y >= tileCount) continue
+        tiles.push(
+          <image
+            key={`${x}-${y}`}
+            href={`https://tile.openstreetmap.org/${zoom}/${((x % tileCount) + tileCount) % tileCount}/${y}.png`}
+            x={x * tileSize - left}
+            y={y * tileSize - top}
+            width={tileSize}
+            height={tileSize}
+          />,
+        )
+      }
+    }
+    const toMapPoint = (coordinate: Coordinate) => {
+      const point = projectToWorld(coordinate.latitude, coordinate.longitude, zoom)
+      return { x: point.x - left, y: point.y - top }
+    }
+    const originPoint = toMapPoint(position)
+    const routePoints = route.map(toMapPoint)
+    const destinationPoint = destination ? toMapPoint(destination) : null
+
+    return (
+      <div className="walk-destination-map">
+        <div className="walk-map">
+          <svg
+            className="walk-map__tiles walk-destination-map__tiles"
+            viewBox={`0 0 ${mapWidth} ${mapHeight}`}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="地図。ドラッグして移動し、タップして目的地を選択"
+            onPointerDown={(event) => {
+              dragRef.current = {
+                pointerId: event.pointerId,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                panX: pan.x,
+                panY: pan.y,
+              }
+              didDragRef.current = false
+              event.currentTarget.setPointerCapture(event.pointerId)
+            }}
+            onPointerMove={(event) => {
+              const drag = dragRef.current
+              if (!drag || drag.pointerId !== event.pointerId) return
+              const deltaX = event.clientX - drag.clientX
+              const deltaY = event.clientY - drag.clientY
+              if (Math.abs(deltaX) + Math.abs(deltaY) > 6) {
+                didDragRef.current = true
+                setPan({ x: drag.panX + deltaX, y: drag.panY + deltaY })
+              }
+            }}
+            onPointerUp={() => {
+              dragRef.current = null
+            }}
+            onPointerCancel={() => {
+              dragRef.current = null
+            }}
+            onClick={(event) => {
+              if (didDragRef.current) {
+                didDragRef.current = false
+                return
+              }
+              const bounds = event.currentTarget.getBoundingClientRect()
+              const worldX = left + ((event.clientX - bounds.left) / bounds.width) * mapWidth
+              const worldY = top + ((event.clientY - bounds.top) / bounds.height) * mapHeight
+              const scale = tileSize * 2 ** zoom
+              const rawLongitude = (worldX / scale) * 360 - 180
+              const latitude =
+                (Math.atan(Math.sinh(Math.PI - (2 * Math.PI * worldY) / scale)) *
+                  180) /
+                Math.PI
+              onSelect({
+                latitude: Math.max(-85.0511, Math.min(85.0511, latitude)),
+                longitude: ((rawLongitude + 180) % 360 + 360) % 360 - 180,
+              })
+            }}
+          >
+            {tiles}
+            {routePoints.length > 1 && (
+              <polyline
+                points={routePoints.map((point) => `${point.x},${point.y}`).join(" ")}
+                fill="none"
+                stroke="#c15b38"
+                strokeWidth="7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+            <circle
+              cx={originPoint.x}
+              cy={originPoint.y}
+              r="14"
+              fill="#fff"
+              stroke="#246b59"
+              strokeWidth="5"
+            />
+            <circle cx={originPoint.x} cy={originPoint.y} r="5" fill="#246b59" />
+            <text
+              x={originPoint.x}
+              y={originPoint.y - 20}
+              fill="#245f4c"
+              stroke="#fff"
+              strokeWidth="4"
+              paintOrder="stroke"
+              textAnchor="middle"
+              fontSize="16"
+              fontWeight="700"
+            >
+              現在地
+            </text>
+            {destinationPoint && (
+              <g pointerEvents="none">
+                <circle
+                  cx={destinationPoint.x}
+                  cy={destinationPoint.y}
+                  r="15"
+                  fill="#c15b38"
+                  stroke="#fff"
+                  strokeWidth="4"
+                />
+                <circle cx={destinationPoint.x} cy={destinationPoint.y} r="4" fill="#fff" />
+              </g>
+            )}
+          </svg>
+          <span className="walk-map__attribution">© OpenStreetMap contributors</span>
+        </div>
+        <div className="walk-map-controls" role="group" aria-label="目的地選択地図の拡大縮小">
+          <button type="button" aria-label="地図を拡大" disabled={zoom >= 18} onClick={() => { setZoom((value) => Math.min(18, value + 1)); setPan({ x: 0, y: 0 }) }}>＋</button>
+          <button type="button" aria-label="地図を縮小" disabled={zoom <= 12} onClick={() => { setZoom((value) => Math.max(12, value - 1)); setPan({ x: 0, y: 0 }) }}>−</button>
+        </div>
+        <p className="walk-map-pick-hint">地図をドラッグして移動し、タップして目的地を選択します</p>
+      </div>
+    )
+  }
+
+function SavedRouteMap({
+    route,
+    plannedRoute = [],
+  }: {
+    route: Position[]
+    plannedRoute?: Position[]
+  }) {
   const [zoomOffset, setZoomOffset] = useState(0)
   const [tileError, setTileError] = useState(false)
   const [tileAttempt, setTileAttempt] = useState(0)
-  const atBaseZoom = route.map((point) =>
+  const allPoints = [...route, ...plannedRoute]
+  const atBaseZoom = allPoints.map((point) =>
     projectToWorld(point.latitude, point.longitude, 16),
   )
   const minX = Math.min(...atBaseZoom.map((point) => point.x))
@@ -795,6 +1090,10 @@ function SavedRouteMap({ route }: { route: Position[] }) {
     const projected = projectToWorld(point.latitude, point.longitude, zoom)
     return { x: projected.x - left, y: projected.y - top }
   })
+  const plannedPoints = plannedRoute.map((point) => {
+    const projected = projectToWorld(point.latitude, point.longitude, zoom)
+    return { x: projected.x - left, y: projected.y - top }
+  })
 
   return (
     <div className="walk-saved-route">
@@ -819,6 +1118,19 @@ function SavedRouteMap({ route }: { route: Position[] }) {
                 strokeLinecap="round"
               />
             ),
+          )}
+          {plannedPoints.length > 1 && (
+            <polyline
+              points={plannedPoints
+                .map((point) => `${point.x},${point.y}`)
+                .join(" ")}
+              fill="none"
+              stroke="#c15b38"
+              strokeWidth="6"
+              strokeDasharray="12 8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           )}
           {points.map((point, index) => (
             <circle key={index} cx={point.x} cy={point.y} r="4" fill="#2f7d67" />
@@ -849,21 +1161,6 @@ function SavedRouteMap({ route }: { route: Position[] }) {
         </div>
       )}
       <p>線が途切れた場所は、位置を続けて記録できなかった区間です。地図画像の取得時に経路周辺の位置が地図サービスに送信されます。</p>
-    </div>
-  )
-}
-
-function ExternalMapLinks({ position }: { position: Position | null }) {
-  return (
-    <div className="walk-external-maps">
-      <h3>地図アプリで道を選ぶ</h3>
-      <p>地図を開き、目的地を選んで徒歩ルートをご確認ください。選んだ経路はこのアプリには取り込まれません。</p>
-      <a className="walk-external-map-button" href="https://www.google.com/maps/@?api=1&map_action=map" target="_blank" rel="noreferrer">Google マップを開く</a>
-      <a className="walk-external-map-button" href="https://maps.apple.com/" target="_blank" rel="noreferrer">Apple マップを開く</a>
-      {position && (
-        <a className="walk-route-map-link" href={`https://www.openstreetmap.org/?mlat=${position.latitude}&mlon=${position.longitude}#map=16/${position.latitude}/${position.longitude}`} target="_blank" rel="noreferrer">OpenStreetMapで現在地を開く</a>
-      )}
-      <p>地図アプリ側で位置情報を使う場合は、そのサービスに現在地が送られます。切り替え中は散歩の位置記録が途切れることがあります。</p>
     </div>
   )
 }
@@ -899,8 +1196,6 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
   const [weather, setWeather] = useState<Weather>("sunny")
 
-  const [walkMinutes, setWalkMinutes] = useState(15)
-
   const [returnToStart, setReturnToStart] = useState(true)
 
   const [isWalking, setIsWalking] = useState(false)
@@ -916,9 +1211,13 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const [currentPosition, setCurrentPosition] = useState<Position | null>(null)
 
   const [route, setRoute] = useState<Position[]>([])
-  const [suggestedRoute, setSuggestedRoute] = useState<Position[]>([])
-  const [routeSuggestionError, setRouteSuggestionError] = useState("")
   const [isFindingRoute, setIsFindingRoute] = useState(false)
+  const [destinationMapOpen, setDestinationMapOpen] = useState(false)
+  const [selectedDestination, setSelectedDestination] = useState<Coordinate | null>(null)
+  const [destinationRoute, setDestinationRoute] = useState<Position[]>([])
+  const [destinationDistanceMeters, setDestinationDistanceMeters] = useState<number | null>(null)
+  const [destinationDurationSeconds, setDestinationDurationSeconds] = useState<number | null>(null)
+  const [destinationError, setDestinationError] = useState("")
 
   const [review, setReview] = useState("")
 
@@ -930,11 +1229,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const [isStoppingVoice, setIsStoppingVoice] = useState(false)
 
   const [voiceError, setVoiceError] = useState("")
+  const [voiceStatus, setVoiceStatus] = useState("")
 
   const [showLocationNotice, setShowLocationNotice] = useState(false)
-  const [locationNoticeAction, setLocationNoticeAction] =
-    useState<"start" | "route-search">("start")
-
   const [showReturnPrompt, setShowReturnPrompt] = useState(false)
 
   const watchId = useRef<number | null>(null)
@@ -954,6 +1251,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
   const stopVoiceReview = () => {
     voiceActiveRef.current = false
+    setVoiceStatus("音声入力を終了しています…")
     if (voiceRestartTimer.current !== null) {
       window.clearTimeout(voiceRestartTimer.current)
       voiceRestartTimer.current = null
@@ -964,6 +1262,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     } else {
       setIsListening(false)
       setIsStoppingVoice(false)
+      setVoiceStatus("音声入力を終了しました。")
     }
   }
 
@@ -1010,10 +1309,6 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     return () => window.clearInterval(interval)
   }, [isWalking])
 
-  useEffect(() => {
-    setSuggestedRoute([])
-  }, [returnToStart, walkMinutes])
-
   useEffect(
     () => () => {
       if (watchId.current !== null && "geolocation" in navigator) {
@@ -1053,20 +1348,32 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
   const totalDays = new Set(monthRecords.map((record) => record.date)).size
 
-  const totalMinutes = monthRecords
+  const totalSeconds = monthRecords
 
     .filter((record) => record.kind === "walk")
 
-    .reduce((sum, record) => sum + record.durationMinutes, 0)
-
-  const suggestion = getSafetyMessage(condition, weather, new Date().getHours())
-  const suggestedDistanceMeters = suggestedRoute
-    .slice(1)
     .reduce(
-      (sum, point, index) => sum + distanceMeters(point, suggestedRoute[index]),
+      (sum, record) =>
+        sum + (record.durationSeconds ?? record.durationMinutes * 60),
       0,
     )
-  const suggestedMinutes = Math.max(1, Math.round(suggestedDistanceMeters / 45))
+
+  const suggestion = getSafetyMessage(condition, weather, new Date().getHours())
+  const plannedRoute =
+    returnToStart && destinationRoute.length > 1
+      ? [...destinationRoute, ...destinationRoute.slice(0, -1).reverse()]
+      : destinationRoute
+  const plannedDistanceMeters =
+    destinationDistanceMeters === null
+      ? null
+      : destinationDistanceMeters * (returnToStart ? 2 : 1)
+  const plannedDurationSeconds =
+    destinationDurationSeconds === null
+      ? null
+      : destinationDurationSeconds * (returnToStart ? 2 : 1)
+  const todayWalkCount = records.filter(
+    (record) => record.date === localDateKey() && record.kind === "walk",
+  ).length
 
   const todayHasWalk = records.some(
     (record) => record.date === localDateKey() && record.kind === "walk",
@@ -1075,9 +1382,6 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const todayHasCharge = records.some(
     (record) => record.date === localDateKey() && record.kind === "charge",
   )
-
-  const distanceLabel =
-    walkMinutes <= 10 ? "約0.5 km" : walkMinutes <= 15 ? "約0.8 km" : "約1.5 km"
 
   const dateLabel = new Intl.DateTimeFormat("ja-JP", {
     month: "long",
@@ -1123,147 +1427,83 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     setRoute(routeRef.current)
   }
 
-  const findSuggestedRoute = async () => {
+  const openDestinationMap = async () => {
+    if (destinationMapOpen) {
+      setDestinationMapOpen(false)
+      return
+    }
     if (!navigator.geolocation) {
-      setRouteSuggestionError(
-        "この端末では現在地を確認できません。位置情報を使わずに散歩できます。",
-      )
+      setDestinationError("この端末では現在地を確認できません。位置情報に対応した端末でお試しください。")
       return
     }
     setIsFindingRoute(true)
-    setRouteSuggestionError("")
-    setSuggestedRoute([])
+    setDestinationError("")
     try {
-      const start = await new Promise<GeolocationPosition>(
-        (resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            maximumAge: 5000,
-            timeout: 15000,
-          })
-        },
-      )
-      const origin: Position = {
-        latitude: start.coords.latitude,
-        longitude: start.coords.longitude,
+      const location = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          maximumAge: 5000,
+          timeout: 15000,
+        })
+      })
+      setCurrentPosition({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
         recordedAt: new Date().toISOString(),
-      }
-      setCurrentPosition(origin)
-      const searchRadius = Math.min(1800, Math.max(900, walkMinutes * 60))
-      const highwayValues = [
-        "footway",
-        "pedestrian",
-        "path",
-        "living_street",
-        "residential",
-        "tertiary",
-      ]
-      const wayQueries = highwayValues
-        .map(
-          (highway) =>
-            `way(around:${searchRadius},${origin.latitude},${origin.longitude})["highway"="${highway}"];`,
-        )
-        .join("")
-      const query = `[out:json][timeout:10];(${wayQueries});out body geom;`
-      const ways = await fetchOSMWays(query)
-      const outbound = buildSuggestedRoute(ways, origin, walkMinutes * 45)
-      const completeRoute = returnToStart
-        ? [...outbound, ...outbound.slice(0, -1).reverse()]
-        : outbound
-      setSuggestedRoute(completeRoute)
-      setRouteSuggestionError("")
+      })
+      setLocationEnabled(true)
+      setSaveRoute(true)
+      setSelectedDestination(null)
+      setDestinationRoute([])
+      setDestinationDistanceMeters(null)
+      setDestinationDurationSeconds(null)
+      setDestinationMapOpen(true)
     } catch (error) {
-      console.error("散歩コース候補を作成できませんでした", error)
-      setSuggestedRoute([])
-      setRouteSuggestionError(
-        error instanceof GeolocationPositionError
-          ? error.code === error.PERMISSION_DENIED
-            ? "位置情報が許可されませんでした。設定を見直すか、時間のみの散歩をお選びください。"
-            : "現在地を取得できませんでした。電波のよい場所でお試しください。"
-          : error instanceof DOMException && error.name === "AbortError"
-            ? "地図データの取得に時間がかかっています。少し待ってからもう一度お試しください。"
-            : error instanceof TypeError
-              ? "地図データのサーバーに接続できませんでした。時間をおいてもう一度お試しください。"
-              : error instanceof Error
-                ? error.message
-                : "散歩コースを作成できませんでした。時間をおいてお試しください。",
+      setDestinationError(
+        typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === 1
+          ? "目的地を選ぶには位置情報の許可が必要です。Safariの設定をご確認ください。"
+          : "現在地を取得できませんでした。位置情報と通信状況をご確認ください。",
       )
     } finally {
       setIsFindingRoute(false)
     }
   }
 
-  const startTimer = (withLocation: boolean) => {
-    setLocationError("")
-    setIsReturning(false)
-
-    routeRef.current = []
-
-    setRoute([])
-
-    setCurrentPosition(null)
-
-    lastRecordedAt.current = 0
-    trackingStartedAt.current = Date.now()
-    routePartial.current = false
-    breakNextPoint.current = false
-
-    startedAt.current = Date.now()
-
-    setElapsedSeconds(0)
-    setLocationEnabled(withLocation)
-    setIsWalking(true)
-
-    if (!withLocation || !navigator.geolocation) {
-      setLocationEnabled(false)
-      setSaveRoute(false)
-
-      setLocationError(
-        withLocation
-          ? "この端末では現在地を確認できません。時間のみ記録します。"
-          : "",
+  const selectDestination = async (coordinate: Coordinate) => {
+    if (!currentPosition) return
+    setSelectedDestination(coordinate)
+    setDestinationRoute([])
+    setDestinationDistanceMeters(null)
+    setDestinationDurationSeconds(null)
+    setDestinationError("")
+    setIsFindingRoute(true)
+    try {
+      const result = await fetchPedestrianRoute(currentPosition, coordinate)
+      setDestinationRoute(result.route)
+      setDestinationDistanceMeters(result.distanceMeters)
+      setDestinationDurationSeconds(result.durationSeconds)
+    } catch (error) {
+      setDestinationError(
+        error instanceof Error
+          ? error.message
+          : "徒歩経路を取得できませんでした。別の地点を選んでください。",
       )
-
-      return
+    } finally {
+      setIsFindingRoute(false)
     }
-
-    watchId.current = navigator.geolocation.watchPosition(
-      ({ coords }) => addPosition(coords.latitude, coords.longitude, coords.accuracy),
-      (error) => {
-        routePartial.current = true
-        breakNextPoint.current = true
-        setLocationError(
-          error.code === error.PERMISSION_DENIED
-            ? "位置情報が許可されませんでした。時間は引き続き記録します。"
-            : "現在地を確認できません。位置情報の取得を続けます。",
-        )
-
-        if (error.code === error.PERMISSION_DENIED && watchId.current !== null) {
-          navigator.geolocation.clearWatch(watchId.current)
-
-          watchId.current = null
-        }
-      },
-
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
-    )
   }
 
   const askToStart = () => {
     if (locationEnabled) {
-      setLocationNoticeAction("start")
       setShowLocationNotice(true)
 
       return
     }
 
     startTimer(false)
-  }
-
-  const askToFindRoute = () => {
-    setRouteSuggestionError("")
-    setLocationNoticeAction("route-search")
-    setShowLocationNotice(true)
   }
 
   const finishWalk = () => {
@@ -1291,7 +1531,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
     setScreen("review")
 
-    setElapsedSeconds(durationMinutes * 60)
+    setElapsedSeconds(seconds)
   }
 
   const pauseAndAskAboutReturn = () => {
@@ -1333,6 +1573,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
       kind: pendingKind,
 
       durationMinutes,
+      durationSeconds: pendingKind === "walk" ? elapsedSeconds : undefined,
 
       review: review.trim(),
 
@@ -1342,6 +1583,14 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         pendingKind === "walk" && routeRef.current.length > 0
           ? [...routeRef.current]
           : [],
+      ...(pendingKind === "walk" && plannedRoute.length > 0
+        ? {
+            plannedRoute: [...plannedRoute],
+            destination: selectedDestination ?? undefined,
+            plannedDistanceMeters: plannedDistanceMeters ?? undefined,
+            plannedDurationSeconds: plannedDurationSeconds ?? undefined,
+          }
+        : {}),
       ...(pendingKind === "walk"
         ? summarizeRoute(routeRef.current, routePartial.current)
         : {}),
@@ -1354,6 +1603,12 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     setCurrentPosition(null)
 
     setRoute([])
+
+    setSelectedDestination(null)
+    setDestinationRoute([])
+    setDestinationDistanceMeters(null)
+    setDestinationDurationSeconds(null)
+    setDestinationMapOpen(false)
 
     routeRef.current = []
 
@@ -1381,17 +1636,19 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
     if (!RecognitionClass) {
       setVoiceError(
-        "この端末では音声入力を利用できません。文字で入力してください。",
+        "このSafariでは音声認識を利用できません。入力欄をタップし、キーボードのマイクから音声入力してください。",
       )
 
       return
     }
 
     setVoiceError("")
+    setVoiceStatus("お話しください。入力が終わったら「音声入力を止める」を押してください。")
 
     if (voiceActiveRef.current) return
     voiceActiveRef.current = true
     let silentEnds = 0
+    let transientErrors = 0
 
     const begin = () => {
       if (!voiceActiveRef.current) return
@@ -1413,20 +1670,31 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         if (text) {
           heardSpeech = true
           silentEnds = 0
+          transientErrors = 0
+          setVoiceStatus("音声を入力しています。終わったらボタンを押して停止してください。")
           setReview((current) => [current.trim(), text].filter(Boolean).join(" "))
         }
       }
 
       recognition.onerror = (event) => {
         if (!voiceActiveRef.current) return
-        if (event.error === "no-speech") return
+        if (event.error === "no-speech" || event.error === "aborted") return
+        if (event.error === "network" && transientErrors < 3) {
+          transientErrors += 1
+          setVoiceStatus("音声認識を再接続しています…")
+          return
+        }
         fatalError = true
         voiceActiveRef.current = false
         setIsListening(false)
         setVoiceError(
           event.error === "not-allowed" || event.error === "service-not-allowed"
-            ? "マイクの使用が許可されませんでした。設定を確認するか、文字で入力してください。"
-            : "音声入力が止まりました。もう一度お試しください。",
+            ? "マイクの使用が許可されていません。iPhoneの「設定」>「Safari」>「マイク」を確認してください。入力欄からキーボードのマイクも使えます。"
+            : event.error === "audio-capture"
+              ? "マイクを使用できません。ほかのアプリで使用中でないか確認してください。キーボードのマイクからも入力できます。"
+              : event.error === "network"
+                ? "音声認識サービスに接続できません。通信を確認するか、キーボードのマイクから入力してください。"
+                : "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
         )
       }
 
@@ -1435,19 +1703,17 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         if (!voiceActiveRef.current || fatalError) {
           setIsListening(false)
           setIsStoppingVoice(false)
+          if (!fatalError) setVoiceStatus("音声入力を終了しました。")
           return
         }
         if (!heardSpeech) silentEnds += 1
-        if (silentEnds >= 3) {
-          voiceActiveRef.current = false
-          setIsListening(false)
-          setVoiceError("声を聞き取れませんでした。もう一度ボタンを押してお話しください。")
-          return
+        if (silentEnds > 0) {
+          setVoiceStatus("音声入力は続いています。話し始めると入力されます。")
         }
         voiceRestartTimer.current = window.setTimeout(() => {
           voiceRestartTimer.current = null
           begin()
-        }, 500)
+        }, Math.min(350 + silentEnds * 250, 1500))
       }
 
       try {
@@ -1458,21 +1724,15 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         voiceActiveRef.current = false
         recognitionRef.current = null
         setIsListening(false)
-        setVoiceError("音声入力を開始できませんでした。もう一度お試しください。")
+        setVoiceError(
+          error instanceof DOMException && error.name === "NotAllowedError"
+            ? "マイクの使用が許可されていません。Safariのマイク設定を確認してください。入力欄からキーボードのマイクも使えます。"
+            : "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
+        )
       }
     }
 
     begin()
-  }
-
-  const confirmDelete = () => {
-    if (!deleteTarget) return
-
-    setRecords((current) =>
-      current.filter((record) => record.id !== deleteTarget.id),
-    )
-
-    setDeleteTarget(null)
   }
 
   return (
@@ -1523,7 +1783,6 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             {storageError}
           </p>
         )}
-
         {screen === "home" && !isWalking && (
           <>
             <section className="walk-welcome">
@@ -1602,55 +1861,18 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                 <span className="walk-step">2</span>
                 <div>
                   <h2 id="walk-plan-title">今日のプラン</h2>
-                  <p>気分に合わせて、あとから変更できます。</p>
+                  <p>
+                    {todayWalkCount > 0
+                      ? `今日は${todayWalkCount}回歩きました。続けて記録できます。`
+                      : "気分に合わせて、あとから変更できます。"}
+                  </p>
                 </div>
-              </div>
-              <div className="walk-plan-controls">
-                <label htmlFor="walk-duration">歩く時間の目安</label>
-                <div
-                  className="walk-segment"
-                  role="group"
-                  aria-label="歩く時間"
-                >
-                  {[10, 15, 30].map((minutes) => (
-                    <button
-                      aria-pressed={walkMinutes === minutes}
-                      className={walkMinutes === minutes ? "is-selected" : ""}
-                      disabled={isFindingRoute}
-                      key={minutes}
-                      onClick={() => setWalkMinutes(minutes)}
-                      type="button"
-                    >
-                      {minutes}分
-                    </button>
-                  ))}
-                </div>
-                <div className="walk-plan-summary">
-                  <span>🚶 {distanceLabel}の目安</span>
-                  <span>
-                    {returnToStart ? "↩ 出発地点へ戻る" : "● 別の場所で終了"}
-                  </span>
-                </div>
-                <label className="walk-return-toggle">
-                  <input
-                    checked={returnToStart}
-                    disabled={isFindingRoute}
-                    onChange={(event) => setReturnToStart(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>
-                    <strong>出発地点に戻るコース</strong>
-                    <small>
-                      戻る場合は、往復の時間と距離が目安の約2倍です。
-                    </small>
-                  </span>
-                </label>
               </div>
               <div className="walk-location-setting">
                 <div>
                   <strong>地図と経路の記録</strong>
                   <span>
-                    地図は散歩開始後に表示します。位置情報を使わない選択もできます。
+                    地図で目的地と徒歩ルートを選べます。位置情報を使わない散歩も選べます。
                   </span>
                 </div>
               </div>
@@ -1699,51 +1921,92 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                   <span>1週間保存</span>
                 </button>
               </div>
+              <section className="walk-destination-planner" aria-labelledby="walk-destination-title">
+                <div>
+                  <h3 id="walk-destination-title">目的地を選ぶ</h3>
+                  <p>地図をタップすると、徒歩経路と距離・時間を表示します。</p>
+                </div>
+                <button
+                  className="walk-destination-button"
+                  disabled={isFindingRoute}
+                  onClick={() => void openDestinationMap()}
+                  type="button"
+                >
+                  {isFindingRoute && !destinationMapOpen
+                    ? "現在地を確認しています…"
+                    : destinationMapOpen
+                      ? "地図を閉じる"
+                      : "地図で目的地を選ぶ"}
+                </button>
+                {destinationMapOpen && currentPosition && (
+                  <DestinationMap
+                    position={currentPosition}
+                    destination={selectedDestination}
+                    route={destinationRoute}
+                    onSelect={(coordinate) => void selectDestination(coordinate)}
+                  />
+                )}
+                {isFindingRoute && destinationMapOpen && (
+                  <p className="walk-destination-status" role="status">
+                    徒歩経路を調べています…
+                  </p>
+                )}
+                {destinationError && (
+                  <p className="walk-inline-error" role="status">
+                    {destinationError}
+                  </p>
+                )}
+                <label className="walk-return-toggle">
+                  <input
+                    checked={returnToStart}
+                    disabled={isFindingRoute}
+                    onChange={(event) => setReturnToStart(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>
+                    <strong>出発地点に戻るコース</strong>
+                    <small>有効にすると往復の距離と所要時間を表示します。</small>
+                  </span>
+                </label>
+                {plannedDistanceMeters !== null && plannedDurationSeconds !== null && (
+                  <div className="walk-destination-summary" role="status">
+                    <strong>徒歩ルートを設定しました</strong>
+                    <span>
+                      距離 {plannedDistanceMeters < 1000
+                        ? `${Math.round(plannedDistanceMeters / 10) * 10} m`
+                        : `${(plannedDistanceMeters / 1000).toFixed(1)} km`}
+                    </span>
+                    <span>所要時間 約{Math.max(1, Math.round(plannedDurationSeconds / 60))}分</span>
+                    {selectedDestination && (
+                      <span>
+                        目的地 {selectedDestination.latitude.toFixed(5)}, {selectedDestination.longitude.toFixed(5)}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedDestination(null)
+                        setDestinationRoute([])
+                        setDestinationDistanceMeters(null)
+                        setDestinationDurationSeconds(null)
+                      }}
+                    >
+                      目的地を選び直す
+                    </button>
+                  </div>
+                )}
+                <p className="walk-destination-privacy">
+                  現在地と選択地点は徒歩経路の検索に送信されます。経路・距離・所要時間は散歩記録に保存し、地図上の位置情報は7日後に削除します。
+                </p>
+              </section>
               {locationEnabled && (
                 <p className="walk-privacy-note">
-                  地図表示とコース検索では、現在地をOpenStreetMapの地図データサーバーへ送信します（コース検索では複数のサーバーへ同時に問い合わせます）。
+                  地図タイルの取得と徒歩経路検索では、現在地や選択地点が地図サービスへ送信されます。
                   {saveRoute
                     ? "歩いた経路はこの端末内に保存し、7日経過後にアプリを開いたときなどに削除します。時間とおおよその距離は記録を削除するまで残ります。"
                     : "歩いた経路は保存しません。"}
                 </p>
               )}
-              {locationEnabled && (
-                <div className="walk-route-suggestion">
-                  <button
-                    className="walk-route-button"
-                    disabled={isFindingRoute}
-                    onClick={askToFindRoute}
-                    type="button"
-                  >
-                    {isFindingRoute
-                      ? "近くの道を調べています…"
-                      : suggestedRoute.length > 0
-                        ? "別のコースを提案する"
-                        : "近くの道からコースを提案"}
-                  </button>
-                  {suggestedRoute.length > 0 && (
-                    <p className="walk-route-result" role="status">
-                      歩道が登録された比較的大きな道や歩行者道を優先して、ランダムに候補を選びました。
-                      <br />
-                      このコースは約{suggestedMinutes}分・約
-                      {(suggestedDistanceMeters / 1000).toFixed(1)}
-                      kmの目安です。
-                      {returnToStart
-                        ? "同じ道を戻るコースです。"
-                        : "終了地点からの帰り道は別途ご確認ください。"}
-                    </p>
-                  )}
-                  {routeSuggestionError && (
-                    <p className="walk-inline-error" role="status">
-                      {routeSuggestionError}
-                    </p>
-                  )}
-                  <p className="walk-route-disclaimer">
-                    ランダムな候補です。歩道や通行可否などの地図情報は不完全なことがあり、交差点ごとの音声案内もありません。案内に従う必要はありません。出発前に、ご自身で道の安全と現在地から道までの経路をご確認ください。
-                  </p>
-                </div>
-              )}
-              <ExternalMapLinks position={currentPosition} />
               {locationError && (
                 <p className="walk-inline-error" role="status">
                   {locationError}
@@ -1758,7 +2021,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                 <span aria-hidden="true">▶</span> ゆっくり散歩を始める
               </button>
               <p className="walk-map-disclaimer">
-                コース提案は任意です。選んだ時間に近い道を地図情報から探しますが、時間・距離と安全を保証するものではありません。出発前に天候や道の様子をご確認ください。
+                経路と所要時間は目安です。出発前に道の安全を確認し、歩行中は画面を見続けず周囲に気をつけてください。
               </p>
             </section>
 
@@ -1781,8 +2044,8 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                   <h2>現在地</h2>
                   <p>
                     {currentPosition
-                      ? "現在地とコース候補を表示しています"
-                      : "コース検索または散歩開始後に地図を表示します"}
+                      ? "現在地と選択した徒歩ルートを表示しています"
+                      : "目的地を選ぶか、散歩を開始すると地図を表示します"}
                   </p>
                 </div>
                 <span aria-hidden="true">📍</span>
@@ -1790,7 +2053,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
               <MapPreview
                 position={currentPosition}
                 route={route}
-                suggestedRoute={suggestedRoute}
+                plannedRoute={plannedRoute}
               />
               {currentPosition && (
                 <p className="walk-coordinates">
@@ -1813,8 +2076,16 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             <MapPreview
               position={currentPosition}
               route={route}
-              suggestedRoute={suggestedRoute}
+              plannedRoute={plannedRoute}
             />
+            {plannedDistanceMeters !== null && plannedDurationSeconds !== null && (
+              <p className="walk-active-plan">
+                目的地まで約{plannedDistanceMeters < 1000
+                  ? `${Math.round(plannedDistanceMeters / 10) * 10}m`
+                  : `${(plannedDistanceMeters / 1000).toFixed(1)}km`}・
+                約{Math.max(1, Math.round(plannedDurationSeconds / 60))}分
+              </p>
+            )}
             <p className="walk-location-status" role="status">
               {locationError || (locationEnabled && currentPosition
                 ? "地図に現在地と歩いた経路を表示しています"
@@ -1830,7 +2101,6 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             >
               お散歩を終える
             </button>
-            <ExternalMapLinks position={currentPosition} />
           </section>
         )}
 
@@ -1847,11 +2117,19 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             </h1>
             <p className="walk-review-time">
               {pendingKind === "walk"
-                ? `今日のお散歩：${Math.max(1, Math.round(elapsedSeconds / 60))}分`
+                ? `今日のお散歩：${formatDuration(elapsedSeconds)}`
                 : "休むことも、健やかに続けるための大切な選択です。"}
             </p>
             {pendingKind === "walk" && (
               <p>{distanceText(summarizeRoute(routeRef.current, routePartial.current))}</p>
+            )}
+            {pendingKind === "walk" && plannedDistanceMeters !== null && plannedDurationSeconds !== null && (
+              <p>
+                予定ルート：{plannedDistanceMeters < 1000
+                  ? `${Math.round(plannedDistanceMeters / 10) * 10}m`
+                  : `${(plannedDistanceMeters / 1000).toFixed(1)}km`}・
+                約{Math.max(1, Math.round(plannedDurationSeconds / 60))}分
+              </p>
             )}
             <label htmlFor="walk-review-input">
               今日の気分を残しませんか？（任意）
@@ -1880,8 +2158,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                       ? "音声入力を止める"
                       : "声でふりかえる"}
                 </button>
-                <p>
-                  お話し終わったら「音声入力を止める」を押してください。音声はブラウザーの音声機能で処理され、内容を確認・修正してから保存できます。
+                <p aria-live="polite">
+                  {voiceStatus ||
+                    "お話し終わったら「音声入力を止める」を押してください。音声はブラウザーで処理され、内容を確認・修正してから保存できます。"}
                 </p>
                 {voiceError && (
                   <p className="walk-inline-error" role="status">
@@ -1953,13 +2232,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             </div>
             <div className="walk-month-total">
               <span>この月のお散歩時間</span>
-              <strong>
-                {totalMinutes >= 60
-                  ? `${Math.floor(totalMinutes / 60)}時間${
-                      totalMinutes % 60 ? ` ${totalMinutes % 60}分` : ""
-                    }`
-                  : `${totalMinutes}分`}
-              </strong>
+              <strong>{formatDuration(totalSeconds)}</strong>
               <p>ひと歩きずつ、心地よい時間を重ねています。</p>
             </div>
             <section
@@ -1989,14 +2262,35 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                         {record.review && <p>{record.review}</p>}
                         {record.kind === "walk" && (
                           <>
+                            <p>実際の時間：{formatDuration(record.durationSeconds ?? record.durationMinutes * 60)}</p>
                             <p>{distanceText(record)}</p>
-                            <small>{record.route.length > 0 ? "経路を保存中（7日間）" : "経路なし（未記録または保存期間終了）"}</small>
-                            {record.route.length > 0 && (
+                            {record.plannedDistanceMeters !== undefined && (
+                              <p>
+                                予定：{record.plannedDistanceMeters < 1000
+                                  ? `${Math.round(record.plannedDistanceMeters / 10) * 10}m`
+                                  : `${(record.plannedDistanceMeters / 1000).toFixed(1)}km`}・
+                                {formatDuration(record.plannedDurationSeconds ?? 0)}
+                              </p>
+                            )}
+                            <small>
+                              {record.route.length > 0 || (record.plannedRoute?.length ?? 0) > 0
+                                ? "経路は7日間保存"
+                                : "経路なし（未記録または保存期間終了）"}
+                            </small>
+                            {(record.route.length > 0 || (record.plannedRoute?.length ?? 0) > 0) && (
                               <>
                                 <button className="walk-view-route-button" type="button" aria-expanded={expandedRouteId === record.id} onClick={() => setExpandedRouteId(expandedRouteId === record.id ? null : record.id)}>
-                                  {expandedRouteId === record.id ? "経路を閉じる" : "歩いた経路を見る"}
+                                  {expandedRouteId === record.id ? "経路を閉じる" : "経路を見る"}
                                 </button>
-                                {expandedRouteId === record.id && <SavedRouteMap route={record.route} />}
+                                {expandedRouteId === record.id && (
+                                  <>
+                                    <div className="walk-route-legend">
+                                      {record.plannedRoute && <span>点線：予定経路</span>}
+                                      {record.route.length > 0 && <span>緑線：歩いた経路</span>}
+                                    </div>
+                                    <SavedRouteMap route={record.route} plannedRoute={record.plannedRoute} />
+                                  </>
+                                )}
                               </>
                             )}
                           </>
@@ -2029,64 +2323,34 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             role="dialog"
           >
             <span aria-hidden="true">📍</span>
-            <h2 id="walk-location-title">
-              {locationNoticeAction === "route-search"
-                ? "現在地から近くの道を探します"
-                : "現在地を地図に表示します"}
-            </h2>
+            <h2 id="walk-location-title">現在地を地図に表示します</h2>
             <p>
-              {locationNoticeAction === "route-search"
-                ? "現在地をOpenStreetMapの地図データに照会して、歩行者道や歩道が登録された道を優先する候補を作ります。候補の検索に現在地が送信されます。"
-                : `地図画像の取得時に、現在地がOpenStreetMapへ送信されます。${
-                    saveRoute
-                      ? "歩いた経路はこの端末に保存され、7日経過後にアプリを開いたときなどに削除されます。時間とおおよその距離は記録を削除するまで残ります。"
-                      : "選択した設定では、歩いた経路は保存しません。"
-                  }`}
+              地図タイルの取得時に、現在地が地図サービスへ送信されます。
+              {saveRoute
+                ? "歩いた経路はこの端末に保存され、7日経過後にアプリを開いたときなどに削除されます。時間とおおよその距離は記録を削除するまで残ります。"
+                : "選択した設定では、歩いた経路は保存しません。"}
             </p>
-            {locationNoticeAction === "route-search" ? (
-              <p>
-                道の情報は不完全な場合があります。提案を使わず、地図を見ながら歩くこともできます。
-              </p>
-            ) : (
-              <p>位置情報を許可しない場合も、時間のみ記録して散歩できます。</p>
-            )}
+            <p>位置情報を許可しない場合も、時間のみ記録して散歩できます。</p>
             <div className="walk-dialog-actions">
-              {locationNoticeAction === "route-search" ? (
-                <button
-                  className="walk-secondary-button"
-                  onClick={() => setShowLocationNotice(false)}
-                  type="button"
-                >
-                  やめる
-                </button>
-              ) : (
-                <button
-                  className="walk-secondary-button"
-                  onClick={() => {
-                    setShowLocationNotice(false)
-
-                    startTimer(false)
-                  }}
-                  type="button"
-                >
-                  時間のみ記録
-                </button>
-              )}
+              <button
+                className="walk-secondary-button"
+                onClick={() => {
+                  setShowLocationNotice(false)
+                  startTimer(false)
+                }}
+                type="button"
+              >
+                時間のみ記録
+              </button>
               <button
                 className="walk-start-button"
                 onClick={() => {
                   setShowLocationNotice(false)
-                  if (locationNoticeAction === "route-search") {
-                    void findSuggestedRoute()
-                  } else {
-                    startTimer(true)
-                  }
+                  startTimer(true)
                 }}
                 type="button"
               >
-                {locationNoticeAction === "route-search"
-                  ? "同意してコースを探す"
-                  : "位置情報を使う"}
+                位置情報を使う
               </button>
             </div>
           </section>

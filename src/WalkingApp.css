@@ -10,12 +10,20 @@
     radial-gradient(ellipse at 10% 0%, #edf5e9 0, transparent 35rem),
     #f7f8f3;
   font-family: "Noto Sans JP:Regular", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
 }
 
 .walk-app button,
 .walk-app select,
 .walk-app textarea {
   font: inherit;
+  line-height: 1.5;
+}
+
+.walk-app button {
+  min-height: 48px;
+  touch-action: manipulation;
 }
 
 .walk-app button:focus-visible,
@@ -221,8 +229,7 @@
   gap: 10px;
 }
 
-.walk-weather label,
-.walk-plan-controls > label {
+.walk-weather label {
   font-size: 16px;
   font-weight: 700;
 }
@@ -272,44 +279,6 @@
   color: #526e5f;
   font-size: 16px;
   line-height: 1.65;
-}
-
-.walk-plan-controls {
-  margin: 22px 0 18px 49px;
-}
-
-.walk-segment {
-  display: grid;
-  margin-top: 9px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.walk-segment button {
-  min-height: 52px;
-  color: #526a5c;
-  background: #f9fbf8;
-  border: 2px solid #e0e9df;
-  border-radius: 13px;
-  cursor: pointer;
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.walk-segment button.is-selected {
-  color: #fff;
-  background: var(--walk-green);
-  border-color: var(--walk-green);
-}
-
-.walk-plan-summary {
-  display: flex;
-  margin: 14px 0;
-  flex-wrap: wrap;
-  color: #456457;
-  font-size: 16px;
-  font-weight: 700;
-  gap: 10px 24px;
 }
 
 .walk-return-toggle {
@@ -418,8 +387,8 @@
 
 .walk-location-options button span {
   color: var(--walk-muted);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .walk-location-options button.is-selected {
@@ -429,91 +398,129 @@
 }
 
 .walk-location-options button:disabled,
-.walk-segment button:disabled,
 .walk-return-toggle input:disabled {
   cursor: wait;
   opacity: 0.65;
 }
 
-.walk-route-suggestion {
-  margin-bottom: 14px;
-  padding: 14px;
-  background: #f7f9f4;
-  border: 1px solid #e1e9dd;
-  border-radius: 14px;
+  .walk-destination-planner {
+    display: grid;
+    margin: 18px 0;
+    padding: 18px 0;
+    gap: 12px;
+    border-top: 1px solid #e7eee6;
+    border-bottom: 1px solid #e7eee6;
+  }
+
+  .walk-destination-planner h3 {
+    margin: 0;
+    color: var(--walk-ink);
+    font-size: 17px;
+  }
+
+  .walk-destination-planner > div:first-child p,
+  .walk-destination-privacy,
+.walk-destination-planner > div:first-child p,
+.walk-destination-privacy,
+.walk-map-pick-hint {
+  margin: 4px 0 0;
+  color: var(--walk-muted);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
-.walk-route-button {
-  width: 100%;
-  min-height: 54px;
+.walk-destination-button {
+  min-height: 60px;
+  padding: 0 16px;
   color: #fff;
-  background: #3b7158;
+  background: #355f74;
   border: 0;
-  border-radius: 13px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.walk-destination-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.walk-destination-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: #315746;
+  font-size: 15px;
+}
+
+.walk-destination-summary strong {
+  width: 100%;
+  font-size: 16px;
+}
+
+.walk-destination-summary button {
+  min-height: 52px;
+  padding: 0 16px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #9db8a2;
+  border-radius: 9px;
   cursor: pointer;
   font-size: 16px;
   font-weight: 700;
 }
 
-.walk-route-button:disabled {
-  cursor: wait;
-  opacity: 0.7;
+.walk-destination-map .walk-map {
+  height: auto;
+  aspect-ratio: 768 / 427;
+  cursor: grab;
+  touch-action: none;
 }
 
-.walk-route-map-links {
-  display: grid;
-  justify-items: start;
-  margin-top: 8px;
+.walk-destination-map__tiles {
+  cursor: grab;
+  touch-action: none;
 }
 
-.walk-route-map-links p {
+.walk-map-pick-hint {
+  margin-top: 7px;
+}
+
+.walk-destination-status {
   margin: 0;
+  color: #315746;
+  font-weight: 700;
+}
+
+.walk-destination-privacy {
+  margin-top: 0;
+  font-size: 14px;
+}
+
+.walk-active-plan {
+  margin: 12px 0;
+  color: #315746;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.walk-route-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #526c5d;
+  font-size: 15px;
+}
+
+.walk-saved-route > p {
   color: #526c5d;
   font-size: 15px;
   line-height: 1.6;
 }
 
-.walk-route-map-link {
-  display: inline-flex;
-  min-height: 48px;
-  align-items: center;
-  color: #245c46;
-  font-size: 16px;
-  font-weight: 700;
-  text-underline-offset: 3px;
-}
-
-.walk-route-map-link--subtle {
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.walk-external-maps {
-  display: grid;
-  gap: 9px;
-  margin: 16px 0;
-  padding: 16px;
-  text-align: left;
-  background: #f7f9f4;
-  border: 1px solid #dce8da;
-  border-radius: 14px;
-}
-
-.walk-external-maps h3,
-.walk-external-maps p {
-  margin: 0;
-}
-
-.walk-external-maps p,
-.walk-saved-route > p {
-  color: #526c5d;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.walk-external-map-button,
 .walk-view-route-button,
-.walk-map-controls button,
 .walk-month-navigation button {
   display: inline-flex;
   min-height: 48px;
@@ -555,7 +562,23 @@
 }
 
 .walk-map-controls {
-  margin-top: 10px;
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.walk-map-controls button {
+  min-width: 64px;
+  min-height: 64px;
+  padding: 8px;
+  color: #173d31;
+  background: #fff;
+  border: 2px solid #47735c;
+  border-radius: 14px;
+  box-shadow: 0 2px 5px rgba(24, 55, 39, 0.16);
+  cursor: pointer;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .walk-view-route-button {
@@ -563,28 +586,10 @@
   margin-top: 10px;
 }
 
-.walk-route-result,
-.walk-route-disclaimer {
-  margin: 10px 0 0;
-  color: #526c5d;
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.walk-route-result {
-  padding: 10px;
-  background: #edf5e9;
-  border-radius: 10px;
-}
-
-.walk-route-disclaimer {
-  color: #66776c;
-}
-
 .walk-privacy-note,
 .walk-map-disclaimer {
   color: var(--walk-muted);
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.65;
 }
 
@@ -1234,25 +1239,21 @@
     font-size: 15px;
   }
 
-  .walk-plan-controls {
-    margin: 20px 0 17px;
-  }
-
   .walk-location-options {
     gap: 5px;
   }
 
   .walk-location-options button {
-    min-height: 74px;
+    min-height: 84px;
     padding: 8px 3px;
   }
 
   .walk-location-options button strong {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .walk-location-options button span {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .walk-map {
