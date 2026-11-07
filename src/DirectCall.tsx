@@ -40,6 +40,8 @@ type DirectCallProps = {
   onCallPeerChange?: (peer: string | null) => void;
   controlRef?: MutableRefObject<DirectCallControl | null>;
   notify: (title: string, body: string, tag: string) => void;
+  visualSupportEnabled: boolean;
+  announce: (text: string) => void;
 };
 export type DirectCallControl = {
   startCall: (to: string) => void;
@@ -156,6 +158,8 @@ export default function DirectCall({
   onCallPeerChange,
   controlRef,
   notify,
+  visualSupportEnabled,
+  announce,
 }: DirectCallProps) {
   const [call, setCall] = useState<DmCallView | null>(null);
   const [phase, setPhase] = useState<Phase | null>(null);
@@ -180,6 +184,10 @@ export default function DirectCall({
 
   const headersRef = useRef(headers);
   headersRef.current = headers;
+  const visualSupportRef = useRef(visualSupportEnabled);
+  visualSupportRef.current = visualSupportEnabled;
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
   const callRef = useRef<DmCallView | null>(null);
   const phaseRef = useRef<Phase | null>(null);
   const roomRef = useRef<Room | null>(null);
@@ -194,6 +202,7 @@ export default function DirectCall({
   const pollingRef = useRef(false);
   const listeningRef = useRef<boolean | null>(null);
   const notifiedRef = useRef(new Set<string>());
+  const announcedIncomingRef = useRef(new Set<string>());
   const dismissedRef = useRef(new Set<string>());
   const hangingUpRef = useRef(false);
 
@@ -595,6 +604,16 @@ export default function DirectCall({
         } else if (!current && result.incoming) {
           const incoming = result.incoming as DmCallView;
           changeCall(incoming, "incoming");
+          if (
+            visualSupportRef.current &&
+            !document.hidden &&
+            !announcedIncomingRef.current.has(incoming.id)
+          ) {
+            announcedIncomingRef.current.add(incoming.id);
+            announceRef.current(
+              `${incoming.peer}さんから電話です。出る場合は「出る」、断る場合は「出ない」を選んでください。`,
+            );
+          }
           if (document.hidden && !notifiedRef.current.has(incoming.id)) {
             notifiedRef.current.add(incoming.id);
             notify(

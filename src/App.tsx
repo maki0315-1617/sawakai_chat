@@ -508,10 +508,21 @@ const appBadgeStorageKey = "sawakai-app-badge";
 const textSizeStorageKey = "sawakai-text-size";
 const analyticsStorageKey = "sawakai-analytics";
 const themeStorageKey = "sawakai-theme";
+const visualSupportStorageKey = "sawakai-visual-support";
 const replyModeStorageKey = "sawakai-reply-mode";
 type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
 const fallbackSuggestions = ["土曜でいいね", "何時ごろにしますか？"];
+
+function speakJapanese(text: string) {
+  if (!("speechSynthesis" in window)) return false;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ja-JP";
+  utterance.rate = 0.9;
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
 
 function loadStoredProfile(): Profile | null {
   const stored = localStorage.getItem(profileStorageKey);
@@ -3838,9 +3849,13 @@ function BrainPanel({
 function JoinScreen({
   onJoined,
   onOpenWalk,
+  visualSupportEnabled,
+  onVisualSupportChange,
 }: {
   onJoined: (token: string, profile: Profile, activeGroupId: string) => void;
   onOpenWalk: () => void;
+  visualSupportEnabled: boolean;
+  onVisualSupportChange: (enabled: boolean) => void;
 }) {
   const [name, setName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -4542,6 +4557,19 @@ function JoinScreen({
           </button>
         </form>
         )}
+        <label className="visual-support-setting">
+          <span>
+            <strong>視覚サポート</strong>
+            <small>起動・新着メッセージ・電話の着信を読み上げます</small>
+          </span>
+          <input
+            checked={visualSupportEnabled}
+            onChange={(event) =>
+              onVisualSupportChange(event.target.checked)
+            }
+            type="checkbox"
+          />
+        </label>
         <p className="join-note">
           この端末には表示名と参加情報だけが保存されます。使いやすさの改善のため、
           会話内容やお名前を含まない操作回数を記録します。
@@ -4553,6 +4581,12 @@ function JoinScreen({
 
 export default function App() {
   const [showWalking, setShowWalking] = useState(false);
+  const [visualSupportEnabled, setVisualSupportEnabled] = useState(
+    () => localStorage.getItem(visualSupportStorageKey) === "enabled",
+  );
+  const visualSupportEnabledRef = useRef(visualSupportEnabled);
+  visualSupportEnabledRef.current = visualSupportEnabled;
+  const shouldAnnounceStartupRef = useRef(visualSupportEnabled);
   const [token, setToken] = useState(
     () => localStorage.getItem(sessionStorageKey) ?? "",
   );
@@ -4614,10 +4648,14 @@ export default function App() {
   const [isLeaving, setIsLeaving] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
+  const showVoiceRef = useRef(showVoice);
+  showVoiceRef.current = showVoice;
   const [showDirectCall, setShowDirectCall] = useState(false);
   const [showDocuments, setShowDocuments] = useState(false);
   const [dmListening, setDmListening] = useState(true);
   const [dmInCall, setDmInCall] = useState(false);
+  const dmInCallRef = useRef(dmInCall);
+  dmInCallRef.current = dmInCall;
   const [dmPeer, setDmPeer] = useState<string | null>(null);
   const dmControlRef = useRef<DirectCallControl | null>(null);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
@@ -4679,6 +4717,7 @@ export default function App() {
   });
   const [pendingSend, setPendingSend] = useState<ChatMessage | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const pendingTimerRef = useRef<number | null>(null);
@@ -4779,6 +4818,23 @@ export default function App() {
         }
       }
       const wasFirstLoad = !hasLoadedMessagesRef.current;
+      if (
+        !wasFirstLoad &&
+        visualSupportEnabledRef.current &&
+        !document.hidden &&
+        !dmInCallRef.current &&
+        !showVoiceRef.current
+      ) {
+        const received = incoming.filter(
+          (message) => message.sender !== profileRef.current?.name,
+        )
+        const latest = received.at(-1)
+        if (latest) {
+          speakJapanese(
+            `新しいメッセージです。${latest.sender}さんから。${latest.text}`,
+          )
+        }
+      }
       hasLoadedMessagesRef.current = true;
       setMessages((current) => {
         const merged = wasFirstLoad
@@ -5260,6 +5316,42 @@ export default function App() {
     setActiveGroupId(nextGroupId);
     setToken(nextToken);
   };
+
+  const updateVisualSupport = (enabled: boolean) => {
+    localStorage.setItem(
+      visualSupportStorageKey,
+      enabled ? "enabled" : "disabled",
+    );
+    visualSupportEnabledRef.current = enabled;
+    setVisualSupportEnabled(enabled);
+    if (enabled) {
+      speakJapanese("視覚サポートを有効にしました。");
+    } else if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  };
+
+  useEffect(() => {
+    if (!shouldAnnounceStartupRef.current) return;
+    const timer = window.setTimeout(() => {
+      shouldAnnounceStartupRef.current = false;
+      if (localStorage.getItem(visualSupportStorageKey) === "enabled") {
+        speakJapanese("茶話会アプリが起動しました。");
+      }
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!showConfirmation || !visualSupportEnabled) return;
+    const timer = window.setTimeout(() => {
+      confirmationHeadingRef.current?.focus();
+      speakJapanese(
+        `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送る」を選んでください。`,
+      );
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [showConfirmation, visualSupportEnabled, pendingMessage]);
 
   const prepareMessage = (message: string) => {
     if (!message.trim()) return;
@@ -6078,6 +6170,50 @@ export default function App() {
     trackEvent("send_undone");
   };
 
+  const handleVoiceReply = (text: string) => {
+    const command = text
+      .normalize("NFKC")
+      .replace(/[\s。、．.!！?？]/g, "");
+
+    if (visualSupportEnabledRef.current) {
+      if (["送信", "送信して", "送って", "これを送信"].includes(command)) {
+        if (showConfirmation) {
+          sendMessage();
+        } else if (draft.trim()) {
+          prepareMessage(draft);
+        } else {
+          speakJapanese("送信する文章がありません。先に返事を話してください。");
+        }
+        return;
+      }
+
+      if (["修正", "訂正", "直す"].includes(command)) {
+        if (showConfirmation) {
+          setShowConfirmation(false);
+          setDraft(pendingMessage);
+        }
+        setReplyModeState("write");
+        localStorage.setItem(replyModeStorageKey, "write");
+        setIsReplyPanelOpen(true);
+        window.setTimeout(() => inputRef.current?.focus(), 50);
+        speakJapanese("返信の入力欄に戻りました。内容を修正してください。");
+        return;
+      }
+
+      if (["取り消し", "取消", "キャンセル"].includes(command)) {
+        if (showConfirmation) cancelConfirmation();
+        setDraft("");
+        setPendingMessage("");
+        speakJapanese("返信内容を取り消しました。");
+        return;
+      }
+    }
+
+    const next = `${draft ? `${draft}\n` : ""}${text}`.slice(0, 500);
+    setDraft(next);
+    speakDraft(next);
+  };
+
   const setTextSize = (size: "small" | "normal" | "large") => {
     setTextSizeState(size);
     localStorage.setItem(textSizeStorageKey, size);
@@ -6178,6 +6314,8 @@ export default function App() {
       <JoinScreen
         onJoined={handleJoined}
         onOpenWalk={() => setShowWalking(true)}
+        onVisualSupportChange={updateVisualSupport}
+        visualSupportEnabled={visualSupportEnabled}
       />
     );
   }
@@ -6545,15 +6683,13 @@ export default function App() {
                 disabled={showVoice || dmInCall}
                 disabledReason="通話中は、話して入力を使えません。"
                 headers={apiHeaders(token, activeGroupId)}
-                onText={(text) => {
-                  const next = `${draft ? `${draft}\n` : ""}${text}`.slice(
-                    0,
-                    500,
-                  );
-                  setDraft(next);
-                  speakDraft(next);
-                }}
+                onText={handleVoiceReply}
               />
+              {visualSupportEnabled && (
+                <p className="visual-voice-command-help" role="status">
+                  音声入力で「送信」と言うと確認画面、「修正」で文字入力、「取り消し」で本文を消せます。送信は確認後に行います。
+                </p>
+              )}
               <textarea
                 id="voice-message"
                 maxLength={500}
@@ -6697,6 +6833,7 @@ export default function App() {
       <DirectCall
         key={activeGroupId}
         apiRoot={apiRoot}
+        announce={speakJapanese}
         headers={apiHeaders(token, activeGroupId)}
         members={members}
         myName={profile.name}
@@ -6714,6 +6851,7 @@ export default function App() {
         onCallPeerChange={setDmPeer}
         controlRef={dmControlRef}
         onListeningChange={setDmListening}
+        visualSupportEnabled={visualSupportEnabled}
         showPanel={showDirectCall}
       />
 
@@ -6836,7 +6974,9 @@ export default function App() {
               <CloseIcon />
             </button>
             <p className="dialog-eyebrow">送信前の確認</p>
-            <h2 id="confirm-title">この返事を送りますか？</h2>
+            <h2 id="confirm-title" ref={confirmationHeadingRef} tabIndex={-1}>
+              この返事を送りますか？
+            </h2>
             <div className="message-preview">{pendingMessage}</div>
             <p className="dialog-note">
               「送る」を押すまで、自動で送信されることはありません。
@@ -7445,6 +7585,18 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            <label className="visual-support-setting">
+              <span>
+                <strong>視覚サポート</strong>
+                <small>起動・新着メッセージ・電話の着信を読み上げます</small>
+              </span>
+              <input
+                checked={visualSupportEnabled}
+                onChange={(event) => updateVisualSupport(event.target.checked)}
+                type="checkbox"
+              />
+            </label>
 
             <div className="theme-setting">
               <div>

@@ -1787,6 +1787,29 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     begin()
   }
 
+  const confirmDelete = () => {
+    if (!deleteTarget) return
+
+    const remainingRecords = records.filter(
+      (record) => record.id !== deleteTarget.id,
+    )
+
+    try {
+      localStorage.setItem(recordsStorageKey, JSON.stringify(remainingRecords))
+      setRecords(remainingRecords)
+      setExpandedRouteId((current) =>
+        current === deleteTarget.id ? null : current,
+      )
+      setDeleteTarget(null)
+      setStorageError("")
+    } catch (error) {
+      console.error("散歩の記録を削除できませんでした", error)
+      setStorageError(
+        "記録を削除できませんでした。端末の保存領域をご確認ください。",
+      )
+    }
+  }
+
   return (
     <main className="walk-app">
       <header className="walk-header">

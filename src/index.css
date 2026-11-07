@@ -3840,6 +3840,56 @@ input:focus-visible {
   gap: 14px;
 }
 
+.visual-support-setting {
+  display: flex;
+  min-height: 64px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  align-items: center;
+  justify-content: space-between;
+  color: #263b38;
+  background: #f0f5ef;
+  border: 2px solid #9db8a2;
+  border-radius: 14px;
+  cursor: pointer;
+  gap: 16px;
+}
+
+.visual-support-setting strong,
+.visual-support-setting small {
+  display: block;
+}
+
+.visual-support-setting strong {
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 16px;
+}
+
+.visual-support-setting small {
+  margin-top: 3px;
+  color: #52675d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.visual-support-setting input {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  accent-color: #245c4b;
+}
+
+.visual-voice-command-help {
+  margin: 10px 0;
+  padding: 12px 14px;
+  color: #214f3d;
+  background: #edf5e9;
+  border-left: 4px solid #2f725d;
+  border-radius: 8px;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
 .theme-setting {
   margin-top: 16px;
   padding: 15px;
