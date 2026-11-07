@@ -4622,6 +4622,11 @@ input:focus-visible {
   line-height: 1.5;
 }
 
+.confirm-dialog h2:focus {
+  outline: 3px solid #d29638;
+  outline-offset: 4px;
+}
+
 .message-preview {
   padding: 18px;
   color: #263b38;

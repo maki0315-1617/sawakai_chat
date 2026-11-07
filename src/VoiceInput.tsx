@@ -6,6 +6,8 @@ type VoiceInputProps = {
   disabled?: boolean;
   disabledReason?: string;
   onText: (text: string) => void;
+  autoStart?: boolean;
+  onListeningStart?: () => void;
 };
 
 type State = "idle" | "listening" | "sending";
@@ -106,6 +108,8 @@ export default function VoiceInput({
   disabled = false,
   disabledReason = "",
   onText,
+  autoStart = false,
+  onListeningStart,
 }: VoiceInputProps) {
   const [state, setState] = useState<State>("idle");
   const [seconds, setSeconds] = useState(0);
@@ -126,6 +130,9 @@ export default function VoiceInput({
   headersRef.current = headers;
   const onTextRef = useRef(onText);
   onTextRef.current = onText;
+  const onListeningStartRef = useRef(onListeningStart);
+  onListeningStartRef.current = onListeningStart;
+  const autoStartConsumedRef = useRef(false);
 
   const canRecord =
     typeof navigator !== "undefined" &&
@@ -362,9 +369,20 @@ export default function VoiceInput({
   };
 
   const startListening = () => {
+    onListeningStartRef.current?.();
     if (Date.now() < deviceModeUntil || !canRecord) beginDevice();
     else void begin();
   };
+
+  useEffect(() => {
+    if (!autoStart) {
+      autoStartConsumedRef.current = false;
+      return;
+    }
+    if (disabled || state !== "idle" || autoStartConsumedRef.current) return;
+    autoStartConsumedRef.current = true;
+    startListening();
+  }, [autoStart, disabled, state]);
 
   const press = () => {
     if (disabled) return;

@@ -514,12 +514,16 @@ type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
 const fallbackSuggestions = ["土曜でいいね", "何時ごろにしますか？"];
 
-function speakJapanese(text: string) {
-  if (!("speechSynthesis" in window)) return false;
+function speakJapanese(text: string, onEnd?: () => void) {
+  if (!("speechSynthesis" in window)) {
+    onEnd?.();
+    return false;
+  }
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "ja-JP";
   utterance.rate = 0.9;
+  utterance.onend = () => onEnd?.();
   window.speechSynthesis.speak(utterance);
   return true;
 }
@@ -4626,6 +4630,8 @@ export default function App() {
   });
   const [isReplyPanelOpen, setIsReplyPanelOpen] = useState(false);
   const [isSpeakingDraft, setIsSpeakingDraft] = useState(false);
+  const [voiceAutoMode, setVoiceAutoMode] = useState(false);
+  const [voiceConfirmationAutoStart, setVoiceConfirmationAutoStart] = useState(false);
   const [draft, setDraft] = useState("");
   const [pendingMessage, setPendingMessage] = useState("");
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -5324,6 +5330,8 @@ export default function App() {
     );
     visualSupportEnabledRef.current = enabled;
     setVisualSupportEnabled(enabled);
+    setVoiceAutoMode(false);
+    setVoiceConfirmationAutoStart(false);
     if (enabled) {
       speakJapanese("視覚サポートを有効にしました。");
     } else if ("speechSynthesis" in window) {
@@ -5344,14 +5352,32 @@ export default function App() {
 
   useEffect(() => {
     if (!showConfirmation || !visualSupportEnabled) return;
+    setVoiceConfirmationAutoStart(false);
     const timer = window.setTimeout(() => {
       confirmationHeadingRef.current?.focus();
       speakJapanese(
-        `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送る」を選んでください。`,
+        `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
+        () => {
+          if (
+            visualSupportEnabledRef.current &&
+            voiceAutoMode &&
+            replyMode === "voice" &&
+            isReplyPanelOpen
+          ) {
+            setVoiceConfirmationAutoStart(true);
+          }
+        },
       );
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [showConfirmation, visualSupportEnabled, pendingMessage]);
+  }, [
+    showConfirmation,
+    visualSupportEnabled,
+    pendingMessage,
+    voiceAutoMode,
+    replyMode,
+    isReplyPanelOpen,
+  ]);
 
   const prepareMessage = (message: string) => {
     if (!message.trim()) return;
@@ -5366,6 +5392,7 @@ export default function App() {
 
   const cancelConfirmation = () => {
     trackEvent("confirmation_cancelled");
+    setVoiceConfirmationAutoStart(false);
     setShowConfirmation(false);
   };
 
@@ -6069,14 +6096,22 @@ export default function App() {
     trackEvent("read_aloud");
   };
 
-  const speakDraft = (text: string) => {
-    if (!text.trim() || !("speechSynthesis" in window)) return;
+  const speakDraft = (text: string, onEnd?: () => void) => {
+    if (!text.trim() || !("speechSynthesis" in window)) {
+      onEnd?.();
+      return;
+    }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ja-JP";
     utterance.rate = 0.88;
-    utterance.onend = () => setIsSpeakingDraft(false);
-    utterance.onerror = () => setIsSpeakingDraft(false);
+    utterance.onend = () => {
+      setIsSpeakingDraft(false);
+      onEnd?.();
+    };
+    utterance.onerror = () => {
+      setIsSpeakingDraft(false);
+    };
     setIsSpeakingDraft(true);
     window.speechSynthesis.speak(utterance);
   };
@@ -6102,8 +6137,12 @@ export default function App() {
   const selectReplyMode = (mode: ReplyMode) => {
     if (isReplyPanelOpen && replyMode === mode) {
       setIsReplyPanelOpen(false);
+      setVoiceAutoMode(false);
+      setVoiceConfirmationAutoStart(false);
       return;
     }
+    setVoiceAutoMode(false);
+    setVoiceConfirmationAutoStart(false);
     setReplyModeState(mode);
     localStorage.setItem(replyModeStorageKey, mode);
     trackEvent(`reply_mode_${mode}`);
@@ -6150,6 +6189,8 @@ export default function App() {
     setPendingSend(optimisticMessage);
     setPendingMessage("");
     setDraft("");
+    setVoiceConfirmationAutoStart(false);
+    setVoiceAutoMode(false);
     stopSpeakingDraft();
     setIsReplyPanelOpen(false);
     setShowConfirmation(false);
@@ -6175,43 +6216,64 @@ export default function App() {
       .normalize("NFKC")
       .replace(/[\s。、．.!！?？]/g, "");
 
-    if (visualSupportEnabledRef.current) {
-      if (["送信", "送信して", "送って", "これを送信"].includes(command)) {
-        if (showConfirmation) {
-          sendMessage();
-        } else if (draft.trim()) {
-          prepareMessage(draft);
-        } else {
-          speakJapanese("送信する文章がありません。先に返事を話してください。");
-        }
-        return;
-      }
-
-      if (["修正", "訂正", "直す"].includes(command)) {
-        if (showConfirmation) {
-          setShowConfirmation(false);
-          setDraft(pendingMessage);
-        }
-        setReplyModeState("write");
-        localStorage.setItem(replyModeStorageKey, "write");
-        setIsReplyPanelOpen(true);
-        window.setTimeout(() => inputRef.current?.focus(), 50);
-        speakJapanese("返信の入力欄に戻りました。内容を修正してください。");
-        return;
-      }
-
-      if (["取り消し", "取消", "キャンセル"].includes(command)) {
-        if (showConfirmation) cancelConfirmation();
+    if (visualSupportEnabledRef.current && showConfirmation) {
+      setVoiceConfirmationAutoStart(false);
+      if (["はい送信", "はい送って"].includes(command)) {
+        sendMessage();
+        speakJapanese("送信を予約しました。5秒後に送信します。");
+      } else if (["修正", "訂正", "直す"].includes(command)) {
+        setShowConfirmation(false);
+        setPendingMessage("");
+        setDraft("");
+        speakJapanese("修正する内容を、続けてお話しください。", () => {
+          if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+        });
+      } else if (["取り消し", "取消", "キャンセル"].includes(command)) {
+        cancelConfirmation();
         setDraft("");
         setPendingMessage("");
-        speakJapanese("返信内容を取り消しました。");
-        return;
+        setVoiceAutoMode(false);
+        speakJapanese("返信を取り消しました。");
+      } else {
+        speakJapanese("送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。", () => {
+          if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+        });
       }
+      return;
+    }
+
+    if (visualSupportEnabledRef.current && command === "送信") {
+      if (draft.trim()) {
+        setVoiceConfirmationAutoStart(false);
+        prepareMessage(draft);
+      } else {
+        speakJapanese("送信する文章がありません。先に返事を話してください。", () => {
+          if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+        });
+      }
+      return;
+    }
+
+    if (
+      visualSupportEnabledRef.current &&
+      ["取り消し", "取消", "キャンセル"].includes(command)
+    ) {
+      setVoiceConfirmationAutoStart(false);
+      setDraft("");
+      speakJapanese("返信内容を取り消しました。", () => {
+        if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+      });
+      return;
     }
 
     const next = `${draft ? `${draft}\n` : ""}${text}`.slice(0, 500);
     setDraft(next);
-    speakDraft(next);
+    setVoiceConfirmationAutoStart(false);
+    speakDraft(next, () => {
+      if (visualSupportEnabledRef.current && voiceAutoMode) {
+        setVoiceConfirmationAutoStart(true);
+      }
+    });
   };
 
   const setTextSize = (size: "small" | "normal" | "large") => {
@@ -6680,14 +6742,20 @@ export default function App() {
               </div>
               <VoiceInput
                 apiRoot={apiRoot}
+                autoStart={
+                  visualSupportEnabled &&
+                  voiceAutoMode &&
+                  voiceConfirmationAutoStart
+                }
                 disabled={showVoice || dmInCall}
                 disabledReason="通話中は、話して入力を使えません。"
                 headers={apiHeaders(token, activeGroupId)}
                 onText={handleVoiceReply}
+                onListeningStart={() => setVoiceAutoMode(true)}
               />
               {visualSupportEnabled && (
                 <p className="visual-voice-command-help" role="status">
-                  音声入力で「送信」と言うと確認画面、「修正」で文字入力、「取り消し」で本文を消せます。送信は確認後に行います。
+                  文章を話した後「送信」と言うと確認します。読み上げ後に「はい、送信」で送信、「修正」で言い直し、「取り消し」で中止できます。
                 </p>
               )}
               <textarea
@@ -7589,7 +7657,7 @@ export default function App() {
             <label className="visual-support-setting">
               <span>
                 <strong>視覚サポート</strong>
-                <small>起動・新着メッセージ・電話の着信を読み上げます</small>
+                <small>起動・新着・電話着信を読み上げます。周囲に聞こえる場合があります。</small>
               </span>
               <input
                 checked={visualSupportEnabled}
