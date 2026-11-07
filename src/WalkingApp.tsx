@@ -1371,6 +1371,8 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     destinationDurationSeconds === null
       ? null
       : destinationDurationSeconds * (returnToStart ? 2 : 1)
+  const actualDistanceMeters =
+    summarizeRoute(route, routePartial.current).distanceMeters
   const todayWalkCount = records.filter(
     (record) => record.date === localDateKey() && record.kind === "walk",
   ).length
@@ -1494,6 +1496,55 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     } finally {
       setIsFindingRoute(false)
     }
+  }
+
+  const startTimer = (withLocation: boolean) => {
+    setLocationError("")
+    setIsReturning(false)
+    routeRef.current = []
+    setRoute([])
+    if (!withLocation) setCurrentPosition(null)
+
+    lastRecordedAt.current = 0
+    trackingStartedAt.current = Date.now()
+    routePartial.current = false
+    breakNextPoint.current = false
+    startedAt.current = Date.now()
+
+    setElapsedSeconds(0)
+    setLocationEnabled(withLocation)
+    setIsWalking(true)
+
+    if (!withLocation || !navigator.geolocation) {
+      setLocationEnabled(false)
+      setSaveRoute(false)
+      setCurrentPosition(null)
+      setLocationError(
+        withLocation
+          ? "この端末では現在地を確認できません。時間のみ記録します。"
+          : "",
+      )
+      return
+    }
+
+    watchId.current = navigator.geolocation.watchPosition(
+      ({ coords }) =>
+        addPosition(coords.latitude, coords.longitude, coords.accuracy),
+      (error) => {
+        routePartial.current = true
+        breakNextPoint.current = true
+        setLocationError(
+          error.code === error.PERMISSION_DENIED
+            ? "位置情報が許可されませんでした。時間は引き続き記録します。"
+            : "現在地を確認できません。位置情報の取得を続けます。",
+        )
+        if (error.code === error.PERMISSION_DENIED && watchId.current !== null) {
+          navigator.geolocation.clearWatch(watchId.current)
+          watchId.current = null
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    )
   }
 
   const askToStart = () => {
@@ -2069,23 +2120,39 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
           <section className="walk-active">
             <p className="walk-date">今日のお散歩</p>
             <h1>気持ちのよいペースで。</h1>
-            <div className="walk-timer" aria-live="off">
-              {`${`${Math.floor(elapsedSeconds / 60)}`.padStart(2, "0")}:${`${elapsedSeconds % 60}`.padStart(2, "0")}`}
+            <div className="walk-active-metrics">
+              <div className="walk-active-metric">
+                <span>経過時間</span>
+                <strong className="walk-timer" aria-live="off">
+                  {`${`${Math.floor(elapsedSeconds / 60)}`.padStart(2, "0")}:${`${elapsedSeconds % 60}`.padStart(2, "0")}`}
+                </strong>
+              </div>
+              <div className="walk-active-metric">
+                <span>歩いた距離</span>
+                <strong>
+                  {actualDistanceMeters === null
+                    ? locationEnabled
+                      ? "計測中"
+                      : "未計測"
+                    : actualDistanceMeters < 1000
+                      ? `${Math.round(actualDistanceMeters / 10) * 10}m`
+                      : `${(actualDistanceMeters / 1000).toFixed(1)}km`}
+                </strong>
+              </div>
             </div>
-            <p className="walk-timer-caption">おさんぽの時間</p>
-            <MapPreview
-              position={currentPosition}
-              route={route}
-              plannedRoute={plannedRoute}
-            />
             {plannedDistanceMeters !== null && plannedDurationSeconds !== null && (
               <p className="walk-active-plan">
-                目的地まで約{plannedDistanceMeters < 1000
+                予定ルート：{plannedDistanceMeters < 1000
                   ? `${Math.round(plannedDistanceMeters / 10) * 10}m`
                   : `${(plannedDistanceMeters / 1000).toFixed(1)}km`}・
                 約{Math.max(1, Math.round(plannedDurationSeconds / 60))}分
               </p>
             )}
+            <MapPreview
+              position={currentPosition}
+              route={route}
+              plannedRoute={plannedRoute}
+            />
             <p className="walk-location-status" role="status">
               {locationError || (locationEnabled && currentPosition
                 ? "地図に現在地と歩いた経路を表示しています"

@@ -500,9 +500,13 @@
 }
 
 .walk-active-plan {
-  margin: 12px 0;
+  margin: 0 0 16px;
+  padding: 14px;
   color: #315746;
-  font-size: 17px;
+  background: #edf5e9;
+  border: 1px solid #d5e6d3;
+  border-radius: 12px;
+  font-size: 18px;
   font-weight: 700;
 }
 
@@ -796,20 +800,46 @@
   text-align: center;
 }
 
-.walk-timer {
-  margin: 26px 0 0;
-  color: #275b48;
-  font-size: clamp(58px, 15vw, 88px);
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  line-height: 1;
+.walk-active-metrics {
+  display: grid;
+  margin: 22px 0 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.walk-timer-caption {
-  margin: 8px 0 22px;
-  color: var(--walk-muted);
-  font-size: 17px;
+.walk-active-metric {
+  display: grid;
+  min-width: 0;
+  min-height: 120px;
+  padding: 14px 8px;
+  align-content: center;
+  background: #fff;
+  border: 2px solid #d5e2d7;
+  border-radius: 14px;
+  gap: 8px;
+}
+
+.walk-active-metric > span {
+  color: #4d675b;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.walk-active-metric > strong:not(.walk-timer) {
+  overflow-wrap: anywhere;
+  color: #214f3d;
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.walk-timer {
+  margin: 0;
+  color: #275b48;
+  font-size: 38px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .walk-active .walk-map {
@@ -1258,6 +1288,23 @@
 
   .walk-map {
     height: 250px;
+  }
+
+  .walk-active-metrics {
+    gap: 8px;
+  }
+
+  .walk-active-metric {
+    min-height: 108px;
+    padding: 12px 6px;
+  }
+
+  .walk-active-metric > strong:not(.walk-timer) {
+    font-size: 24px;
+  }
+
+  .walk-timer {
+    font-size: 34px;
   }
 
   .walk-month-stats {
