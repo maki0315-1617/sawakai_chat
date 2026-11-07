@@ -6230,6 +6230,15 @@ export default function App() {
           >
             {dmListening ? "📞 着信待ち中" : "📵 着信できません"}
           </span>
+          <button
+            aria-label="退出する"
+            className="header-action header-action--leave"
+            onClick={() => setShowLeaveConfirmation(true)}
+            type="button"
+          >
+            <span aria-hidden="true" className="header-action__icon">🚪</span>
+            <span>退出</span>
+          </button>
         </div>
         <nav aria-label="メニュー" className="header-actions">
           <button
@@ -6278,14 +6287,6 @@ export default function App() {
               <PeopleIcon />
             </span>
             <span>参加者</span>
-          </button>
-          <button
-            aria-label="退出する"
-            className="header-action header-action--leave"
-            onClick={() => setShowLeaveConfirmation(true)}
-          >
-            <span aria-hidden="true" className="header-action__icon">🚪</span>
-            <span>退出</span>
           </button>
         </nav>
       </header>

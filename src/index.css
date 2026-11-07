@@ -5058,6 +5058,8 @@ input:focus-visible {
 }
 
 .header-action--leave {
+  flex: 0 0 48px;
+  min-height: 48px;
   color: #78817b;
   background: #f1f1ec;
 }

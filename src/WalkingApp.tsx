@@ -50,10 +50,13 @@ type WalkRecord = {
 type Recognition = {
   lang: string
 
+  continuous: boolean
+
   interimResults: boolean
 
   onresult: ((event: {
-    results: ArrayLike<ArrayLike<{ transcript: string }>>
+    resultIndex: number
+    results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>
   }) => void) | null
 
   onerror: ((event: { error: string }) => void) | null
@@ -78,7 +81,11 @@ const routeRetentionMs = 7 * 24 * 60 * 60 * 1000
 const tileSize = 256
 
 const mapZoom = 15
-const overpassEndpoint = "https://overpass-api.de/api/interpreter"
+const overpassEndpoints = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+]
 
 const weatherLabels: Record<Weather, string> = {
   sunny: "晴れ",
@@ -254,6 +261,71 @@ function parseOSMWays(value: unknown): OSMWay[] {
       )
     )
   })
+}
+
+async function fetchOSMWays(query: string): Promise<OSMWay[]> {
+  const controllers = overpassEndpoints.map(() => new AbortController())
+  const failures: unknown[] = []
+  let remaining = overpassEndpoints.length
+
+  try {
+    return await new Promise<OSMWay[]>((resolve, reject) => {
+      overpassEndpoints.forEach((endpoint, index) => {
+        const controller = controllers[index]
+        const timeout = window.setTimeout(() => controller.abort(), 8000)
+
+        fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        })
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(`地図サーバーの応答: ${response.status}`)
+            }
+            return response.json()
+          })
+          .then((value) => {
+            const ways = parseOSMWays(value)
+            if (ways.length === 0) {
+              throw new Error("近くの道が見つかりませんでした。")
+            }
+            return ways
+          })
+          .then(resolve)
+          .catch((error: unknown) => {
+            failures.push(error)
+            remaining -= 1
+            if (remaining === 0) reject(failures)
+          })
+          .finally(() => window.clearTimeout(timeout))
+      })
+    })
+  } catch {
+    if (
+      failures.length > 0 &&
+      failures.every(
+        (error) => error instanceof DOMException && error.name === "AbortError",
+      )
+    ) {
+      throw new Error(
+        "地図データのサーバーから時間内に応答がありませんでした。通信環境を確認してください。下のボタンから現在地周辺の地図を開いて、歩道のある道をご確認いただけます。",
+      )
+    }
+
+    const networkFailure = failures.find(
+      (error) => error instanceof TypeError,
+    )
+    if (networkFailure) {
+      throw new Error(
+        "地図データのサーバーに接続できませんでした。通信環境をご確認ください。下のボタンから現在地周辺の地図を開けます。",
+      )
+    }
+
+    throw new Error(
+      "近くの道の地図データを取得できませんでした。下の地図で周辺の道をご確認ください。",
+    )
+  } finally {
+    controllers.forEach((controller) => controller.abort())
+  }
 }
 
 function pushQueue(queue: QueueEntry[], entry: QueueEntry) {
@@ -663,6 +735,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const [deleteTarget, setDeleteTarget] = useState<WalkRecord | null>(null)
 
   const [isListening, setIsListening] = useState(false)
+  const [isStoppingVoice, setIsStoppingVoice] = useState(false)
 
   const [voiceError, setVoiceError] = useState("")
 
@@ -681,6 +754,23 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const lastRecordedAt = useRef(0)
 
   const recognitionRef = useRef<Recognition | null>(null)
+  const voiceActiveRef = useRef(false)
+  const voiceRestartTimer = useRef<number | null>(null)
+
+  const stopVoiceReview = () => {
+    voiceActiveRef.current = false
+    if (voiceRestartTimer.current !== null) {
+      window.clearTimeout(voiceRestartTimer.current)
+      voiceRestartTimer.current = null
+    }
+    if (recognitionRef.current) {
+      setIsStoppingVoice(true)
+      recognitionRef.current.stop()
+    } else {
+      setIsListening(false)
+      setIsStoppingVoice(false)
+    }
+  }
 
   useEffect(() => {
     window.scrollTo(0, 0)
@@ -723,6 +813,10 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         navigator.geolocation.clearWatch(watchId.current)
       }
 
+      voiceActiveRef.current = false
+      if (voiceRestartTimer.current !== null) {
+        window.clearTimeout(voiceRestartTimer.current)
+      }
       recognitionRef.current?.stop()
     },
 
@@ -831,26 +925,23 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         recordedAt: new Date().toISOString(),
       }
       setCurrentPosition(origin)
-      const query = `[out:json][timeout:15];way(around:1800,${origin.latitude},${origin.longitude})["highway"~"^(footway|pedestrian|path|living_street|residential|unclassified|service|tertiary|secondary|primary)$"];out body geom;`
-      const controller = new AbortController()
-      const timeout = window.setTimeout(() => controller.abort(), 20000)
-      let response: Response
-      let responseBody: unknown
-      try {
-        response = await fetch(
-          `${overpassEndpoint}?data=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
+      const searchRadius = Math.min(1800, Math.max(900, walkMinutes * 60))
+      const highwayValues = [
+        "footway",
+        "pedestrian",
+        "path",
+        "living_street",
+        "residential",
+        "tertiary",
+      ]
+      const wayQueries = highwayValues
+        .map(
+          (highway) =>
+            `way(around:${searchRadius},${origin.latitude},${origin.longitude})["highway"="${highway}"];`,
         )
-        if (!response.ok) {
-          throw new Error(
-            "近くの道の地図データを取得できませんでした。時間をおいてもう一度お試しください。",
-          )
-        }
-        responseBody = await response.json()
-      } finally {
-        window.clearTimeout(timeout)
-      }
-      const ways = parseOSMWays(responseBody)
+        .join("")
+      const query = `[out:json][timeout:10];(${wayQueries});out body geom;`
+      const ways = await fetchOSMWays(query)
       const outbound = buildSuggestedRoute(ways, origin, walkMinutes * 45)
       const completeRoute = returnToStart
         ? [...outbound, ...outbound.slice(0, -1).reverse()]
@@ -1059,45 +1150,80 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
     setVoiceError("")
 
-    const recognition = new RecognitionClass()
+    if (voiceActiveRef.current) return
+    voiceActiveRef.current = true
+    let silentEnds = 0
 
-    recognition.lang = "ja-JP"
+    const begin = () => {
+      if (!voiceActiveRef.current) return
+      const recognition = new RecognitionClass()
+      recognitionRef.current = recognition
+      recognition.lang = "ja-JP"
+      recognition.continuous = true
+      recognition.interimResults = false
+      let heardSpeech = false
+      let fatalError = false
 
-    recognition.interimResults = false
+      recognition.onresult = (event) => {
+        const text = Array.from(event.results)
+          .slice(event.resultIndex)
+          .filter((result) => result.isFinal)
+          .map((result) => result[0]?.transcript ?? "")
+          .join("")
+          .trim()
+        if (text) {
+          heardSpeech = true
+          silentEnds = 0
+          setReview((current) => [current.trim(), text].filter(Boolean).join(" "))
+        }
+      }
 
-    recognition.onresult = (event) => {
-      const text = Array.from(event.results)
+      recognition.onerror = (event) => {
+        if (!voiceActiveRef.current) return
+        if (event.error === "no-speech") return
+        fatalError = true
+        voiceActiveRef.current = false
+        setIsListening(false)
+        setVoiceError(
+          event.error === "not-allowed" || event.error === "service-not-allowed"
+            ? "マイクの使用が許可されませんでした。設定を確認するか、文字で入力してください。"
+            : "音声入力が止まりました。もう一度お試しください。",
+        )
+      }
 
-        .map((result) => result[0]?.transcript ?? "")
+      recognition.onend = () => {
+        if (recognitionRef.current === recognition) recognitionRef.current = null
+        if (!voiceActiveRef.current || fatalError) {
+          setIsListening(false)
+          setIsStoppingVoice(false)
+          return
+        }
+        if (!heardSpeech) silentEnds += 1
+        if (silentEnds >= 3) {
+          voiceActiveRef.current = false
+          setIsListening(false)
+          setVoiceError("声を聞き取れませんでした。もう一度ボタンを押してお話しください。")
+          return
+        }
+        voiceRestartTimer.current = window.setTimeout(() => {
+          voiceRestartTimer.current = null
+          begin()
+        }, 500)
+      }
 
-        .join("")
-
-      setReview((current) => [current.trim(), text].filter(Boolean).join(" "))
+      try {
+        recognition.start()
+        setIsListening(true)
+      } catch (error) {
+        console.error("音声入力を開始できませんでした", error)
+        voiceActiveRef.current = false
+        recognitionRef.current = null
+        setIsListening(false)
+        setVoiceError("音声入力を開始できませんでした。もう一度お試しください。")
+      }
     }
 
-    recognition.onerror = (event) => {
-      setVoiceError(
-        event.error === "not-allowed"
-          ? "マイクの使用が許可されませんでした。文字入力をご利用ください。"
-          : "音声を認識できませんでした。もう一度お試しください。",
-      )
-
-      setIsListening(false)
-    }
-
-    recognition.onend = () => setIsListening(false)
-
-    recognitionRef.current = recognition
-
-    setIsListening(true)
-
-    recognition.start()
-  }
-
-  const stopVoiceReview = () => {
-    recognitionRef.current?.stop()
-
-    setIsListening(false)
+    begin()
   }
 
   const confirmDelete = () => {
@@ -1130,7 +1256,10 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             className={
               screen === "home" || screen === "review" ? "is-current" : ""
             }
-            onClick={() => setScreen("home")}
+            onClick={() => {
+              stopVoiceReview()
+              setScreen("home")
+            }}
             type="button"
           >
             今日のお散歩
@@ -1138,7 +1267,10 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
           <button
             aria-current={screen === "month" ? "page" : undefined}
             className={screen === "month" ? "is-current" : ""}
-            onClick={() => setScreen("month")}
+            onClick={() => {
+              stopVoiceReview()
+              setScreen("month")
+            }}
             type="button"
           >
             月のふりかえり
@@ -1330,7 +1462,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
               </div>
               {locationEnabled && (
                 <p className="walk-privacy-note">
-                  地図表示とコース検索では位置情報をOpenStreetMapへ送信します。
+                  地図表示とコース検索では、現在地をOpenStreetMapの地図データサーバーへ送信します（コース検索では複数のサーバーへ同時に問い合わせます）。
                   {saveRoute
                     ? "歩いた経路はこの端末内に保存し、7日後に削除します。"
                     : "歩いた経路は保存しません。"}
@@ -1366,6 +1498,36 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                     <p className="walk-inline-error" role="status">
                       {routeSuggestionError}
                     </p>
+                  )}
+                  {routeSuggestionError && currentPosition && (
+                    <div className="walk-route-map-links">
+                      <p>コースを作成できないときは、地図アプリで近くの道を確認できます。</p>
+                      <p>選んだ地図サービスに現在地が共有されます。</p>
+                      <a
+                        className="walk-route-map-link"
+                        href={`https://www.google.com/maps/search/?api=1&query=${currentPosition.latitude}%2C${currentPosition.longitude}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Google マップで現在地を開く
+                      </a>
+                      <a
+                        className="walk-route-map-link"
+                        href={`https://maps.apple.com/?ll=${currentPosition.latitude}%2C${currentPosition.longitude}&q=${encodeURIComponent("現在地周辺")}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Apple マップで現在地を開く
+                      </a>
+                      <a
+                        className="walk-route-map-link walk-route-map-link--subtle"
+                        href={`https://www.openstreetmap.org/?mlat=${currentPosition.latitude}&mlon=${currentPosition.longitude}#map=16/${currentPosition.latitude}/${currentPosition.longitude}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        OpenStreetMapをブラウザーで開く
+                      </a>
+                    </div>
                   )}
                   <p className="walk-route-disclaimer">
                     ランダムな候補です。歩道や通行可否などの地図情報は不完全なことがあり、交差点ごとの音声案内もありません。案内に従う必要はありません。出発前に、ご自身で道の安全と現在地から道までの経路をご確認ください。
@@ -1493,14 +1655,19 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                   className={`walk-voice-button ${
                     isListening ? "is-listening" : ""
                   }`}
+                  disabled={isStoppingVoice}
                   onClick={isListening ? stopVoiceReview : startVoiceReview}
                   type="button"
                 >
                   <span aria-hidden="true">{isListening ? "⏹" : "🎙"}</span>
-                  {isListening ? "音声入力を止める" : "声でふりかえる"}
+                  {isStoppingVoice
+                    ? "音声入力を終了しています…"
+                    : isListening
+                      ? "音声入力を止める"
+                      : "声でふりかえる"}
                 </button>
                 <p>
-                  音声入力はボタンを押したときだけ行います。認識はブラウザーの音声機能で処理され、内容を確認してから保存できます。
+                  お話し終わったら「音声入力を止める」を押してください。音声はブラウザーの音声機能で処理され、内容を確認・修正してから保存できます。
                 </p>
                 {voiceError && (
                   <p className="walk-inline-error" role="status">
@@ -1512,17 +1679,21 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             <div className="walk-review-actions">
               <button
                 className="walk-secondary-button"
-                onClick={() => setScreen("home")}
+                onClick={() => {
+                  stopVoiceReview()
+                  setScreen("home")
+                }}
                 type="button"
               >
                 保存せず戻る
               </button>
               <button
                 className="walk-start-button"
+                disabled={isListening}
                 onClick={saveRecord}
                 type="button"
               >
-                記録を保存する
+                {isListening ? "音声入力を止めてから保存" : "記録を保存する"}
               </button>
             </div>
           </section>

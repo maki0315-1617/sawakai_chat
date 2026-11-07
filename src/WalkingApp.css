@@ -460,6 +460,34 @@
   opacity: 0.7;
 }
 
+.walk-route-map-links {
+  display: grid;
+  justify-items: start;
+  margin-top: 8px;
+}
+
+.walk-route-map-links p {
+  margin: 0;
+  color: #526c5d;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.walk-route-map-link {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  color: #245c46;
+  font-size: 16px;
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+
+.walk-route-map-link--subtle {
+  font-size: 14px;
+  font-weight: 500;
+}
+
 .walk-route-result,
 .walk-route-disclaimer {
   margin: 10px 0 0;
