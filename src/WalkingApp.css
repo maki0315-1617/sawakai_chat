@@ -488,6 +488,81 @@
   font-weight: 500;
 }
 
+.walk-external-maps {
+  display: grid;
+  gap: 9px;
+  margin: 16px 0;
+  padding: 16px;
+  text-align: left;
+  background: #f7f9f4;
+  border: 1px solid #dce8da;
+  border-radius: 14px;
+}
+
+.walk-external-maps h3,
+.walk-external-maps p {
+  margin: 0;
+}
+
+.walk-external-maps p,
+.walk-saved-route > p {
+  color: #526c5d;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.walk-external-map-button,
+.walk-view-route-button,
+.walk-map-controls button,
+.walk-month-navigation button {
+  display: inline-flex;
+  min-height: 48px;
+  padding: 10px 15px;
+  align-items: center;
+  justify-content: center;
+  color: #245c46;
+  background: #fff;
+  border: 1px solid #8eae99;
+  border-radius: 11px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+.walk-map-controls button:disabled,
+.walk-month-navigation button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.walk-month-navigation,
+.walk-map-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.walk-month-navigation {
+  margin: 20px 0;
+  justify-content: space-between;
+}
+
+.walk-saved-route {
+  margin-top: 12px;
+}
+
+.walk-map-controls {
+  margin-top: 10px;
+}
+
+.walk-view-route-button {
+  display: flex;
+  margin-top: 10px;
+}
+
 .walk-route-result,
 .walk-route-disclaimer {
   margin: 10px 0 0;
@@ -954,6 +1029,10 @@
 
 .walk-record > div {
   min-width: 0;
+}
+
+.walk-record-content {
+  flex: 1;
 }
 
 .walk-record strong {

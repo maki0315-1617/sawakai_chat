@@ -10,6 +10,7 @@ type Position = {
   latitude: number
   longitude: number
   recordedAt: string
+  breakBefore?: boolean
 }
 
 type OSMGeometryPoint = {
@@ -45,6 +46,8 @@ type WalkRecord = {
   createdAt: string
 
   route: Position[]
+  distanceMeters?: number | null
+  distanceStatus?: "approximate" | "partial" | "unavailable"
 }
 
 type Recognition = {
@@ -77,6 +80,7 @@ type RecognitionWindow = Window & {
 const recordsStorageKey = "sawakai-walking-records-v1"
 
 const routeRetentionMs = 7 * 24 * 60 * 60 * 1000
+const maxPositionGapMs = 2 * 60 * 1000
 
 const tileSize = 256
 
@@ -112,12 +116,16 @@ function localDateKey(date = new Date()): string {
 }
 
 function cleanExpiredRoutes(records: WalkRecord[], now = Date.now()) {
-  return records.map((record) =>
-    record.route.length > 0 &&
-    now - new Date(record.createdAt).getTime() >= routeRetentionMs
-      ? { ...record, route: [] }
-      : record,
-  )
+  return records.map((record) => {
+    const withDistance =
+      record.kind === "walk" && record.distanceStatus === undefined
+        ? { ...record, ...summarizeRoute(record.route, true) }
+        : record
+    return withDistance.route.length > 0 &&
+      now - new Date(withDistance.createdAt).getTime() >= routeRetentionMs
+      ? { ...withDistance, route: [] }
+      : withDistance
+  })
 }
 
 function loadRecords(): WalkRecord[] {
@@ -147,6 +155,15 @@ function loadRecords(): WalkRecord[] {
         typeof record.review === "string" &&
         "route" in record &&
         Array.isArray(record.route) &&
+        (!("distanceMeters" in record) ||
+          record.distanceMeters === null ||
+          (typeof record.distanceMeters === "number" &&
+            Number.isFinite(record.distanceMeters) &&
+            record.distanceMeters >= 0)) &&
+        (!("distanceStatus" in record) ||
+          record.distanceStatus === "approximate" ||
+          record.distanceStatus === "partial" ||
+          record.distanceStatus === "unavailable") &&
         record.route.every(
           (point: unknown) =>
             typeof point === "object" &&
@@ -156,7 +173,9 @@ function loadRecords(): WalkRecord[] {
             "longitude" in point &&
             typeof point.longitude === "number" &&
             "recordedAt" in point &&
-            typeof point.recordedAt === "string",
+            typeof point.recordedAt === "string" &&
+            (!("breakBefore" in point) ||
+              typeof point.breakBefore === "boolean"),
         ),
     )
   ) {
@@ -166,8 +185,8 @@ function loadRecords(): WalkRecord[] {
   return cleanExpiredRoutes(parsed as WalkRecord[])
 }
 
-function projectToWorld(latitude: number, longitude: number) {
-  const scale = tileSize * 2 ** mapZoom
+function projectToWorld(latitude: number, longitude: number, zoom = mapZoom) {
+  const scale = tileSize * 2 ** zoom
 
   const x = ((longitude + 180) / 360) * scale
 
@@ -195,6 +214,52 @@ function distanceMeters(
   return (
     6_371_000 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
   )
+}
+
+function isRouteGap(first: Position, second: Position) {
+  const gap = Date.parse(second.recordedAt) - Date.parse(first.recordedAt)
+  return (
+    second.breakBefore === true ||
+    !Number.isFinite(gap) ||
+    gap <= 0 ||
+    gap > maxPositionGapMs ||
+    distanceMeters(first, second) > (gap / 1000) * 4 + 50
+  )
+}
+
+function summarizeRoute(route: Position[], partial: boolean): {
+  distanceMeters: number | null
+  distanceStatus: "approximate" | "partial" | "unavailable"
+} {
+  let distance = 0
+  let segments = 0
+  for (let index = 1; index < route.length; index += 1) {
+    if (isRouteGap(route[index - 1], route[index])) {
+      partial = true
+    } else {
+      distance += distanceMeters(route[index - 1], route[index])
+      segments += 1
+    }
+  }
+  return segments === 0
+    ? { distanceMeters: null, distanceStatus: "unavailable" }
+    : {
+        distanceMeters: distance,
+        distanceStatus: partial ? "partial" : "approximate",
+      }
+}
+
+function distanceText(
+  record: Pick<WalkRecord, "distanceMeters" | "distanceStatus">,
+) {
+  if (record.distanceMeters == null || record.distanceStatus === "unavailable") {
+    return "距離：記録なし"
+  }
+  const distance =
+    record.distanceMeters < 1000
+      ? `約${Math.round(record.distanceMeters / 10) * 10} m`
+      : `約${(record.distanceMeters / 1000).toFixed(1)} km`
+  return `距離：${distance}${record.distanceStatus === "partial" ? "（一部のみ記録）" : "（目安）"}`
 }
 
 function roadPriority(tags: Record<string, string>) {
@@ -594,15 +659,13 @@ function MapPreview({
 
   const yOffset = center.y - startY * tileSize
 
-  const line = route
-
-    .map((point) => {
-      const projected = projectToWorld(point.latitude, point.longitude)
-
-      return `${projected.x - startX * tileSize},${projected.y - startY * tileSize}`
-    })
-
-    .join(" ")
+  const routePoints = route.map((point) => {
+    const projected = projectToWorld(point.latitude, point.longitude)
+    return {
+      x: projected.x - startX * tileSize,
+      y: projected.y - startY * tileSize,
+    }
+  })
 
   const suggestedLine = suggestedRoute
     .map((point) => {
@@ -642,15 +705,19 @@ function MapPreview({
             )
           }),
         )}
-        {route.length > 1 && (
-          <polyline
-            points={line}
-            fill="none"
-            stroke="#2f7d67"
-            strokeWidth="7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+        {routePoints.slice(1).map((point, index) =>
+          isRouteGap(route[index], route[index + 1]) ? null : (
+            <line
+              key={index}
+              x1={routePoints[index].x}
+              y1={routePoints[index].y}
+              x2={point.x}
+              y2={point.y}
+              stroke="#2f7d67"
+              strokeWidth="7"
+              strokeLinecap="round"
+            />
+          ),
         )}
         {suggestedRoute.length > 1 && (
           <polyline
@@ -681,6 +748,126 @@ function MapPreview({
   )
 }
 
+function SavedRouteMap({ route }: { route: Position[] }) {
+  const [zoomOffset, setZoomOffset] = useState(0)
+  const [tileError, setTileError] = useState(false)
+  const [tileAttempt, setTileAttempt] = useState(0)
+  const atBaseZoom = route.map((point) =>
+    projectToWorld(point.latitude, point.longitude, 16),
+  )
+  const minX = Math.min(...atBaseZoom.map((point) => point.x))
+  const maxX = Math.max(...atBaseZoom.map((point) => point.x))
+  const minY = Math.min(...atBaseZoom.map((point) => point.y))
+  const maxY = Math.max(...atBaseZoom.map((point) => point.y))
+  const span = Math.max((maxX - minX) / 600, (maxY - minY) / 400, 1)
+  const fitZoom = Math.max(2, Math.min(16, 16 - Math.ceil(Math.log2(span))))
+  const zoom = Math.max(2, Math.min(18, fitZoom + zoomOffset))
+  const scale = 2 ** (zoom - 16)
+  const left = ((minX + maxX) / 2) * scale - 384
+  const top = ((minY + maxY) / 2) * scale - 256
+  const tileCount = 2 ** zoom
+  const tiles = []
+  for (
+    let x = Math.floor(left / tileSize);
+    x <= Math.floor((left + 768) / tileSize);
+    x += 1
+  ) {
+    for (
+      let y = Math.floor(top / tileSize);
+      y <= Math.floor((top + 512) / tileSize);
+      y += 1
+    ) {
+      if (y < 0 || y >= tileCount) continue
+      tiles.push(
+        <image
+          key={`${tileAttempt}-${x}-${y}`}
+          href={`https://tile.openstreetmap.org/${zoom}/${((x % tileCount) + tileCount) % tileCount}/${y}.png`}
+          onError={() => setTileError(true)}
+          x={x * tileSize - left}
+          y={y * tileSize - top}
+          width={tileSize}
+          height={tileSize}
+        />,
+      )
+    }
+  }
+  const points = route.map((point) => {
+    const projected = projectToWorld(point.latitude, point.longitude, zoom)
+    return { x: projected.x - left, y: projected.y - top }
+  })
+
+  return (
+    <div className="walk-saved-route">
+      <div className="walk-map">
+        <svg
+          className="walk-map__tiles"
+          viewBox="0 0 768 512"
+          role="img"
+          aria-label="記録された散歩経路の地図"
+        >
+          {tiles}
+          {points.slice(1).map((point, index) =>
+            isRouteGap(route[index], route[index + 1]) ? null : (
+              <line
+                key={index}
+                x1={points[index].x}
+                y1={points[index].y}
+                x2={point.x}
+                y2={point.y}
+                stroke="#2f7d67"
+                strokeWidth="7"
+                strokeLinecap="round"
+              />
+            ),
+          )}
+          {points.map((point, index) => (
+            <circle key={index} cx={point.x} cy={point.y} r="4" fill="#2f7d67" />
+          ))}
+        </svg>
+        <a className="walk-map__attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+          © OpenStreetMap contributors
+        </a>
+      </div>
+      <div className="walk-map-controls" role="group" aria-label="記録した経路の地図操作">
+        <button type="button" disabled={zoom >= 18} onClick={() => setZoomOffset(zoom - fitZoom + 1)}>拡大する ＋</button>
+        <button type="button" disabled={zoom <= 2} onClick={() => setZoomOffset(zoom - fitZoom - 1)}>小さくする −</button>
+        <button type="button" onClick={() => setZoomOffset(0)}>経路を全体表示</button>
+      </div>
+      {tileError && (
+        <div role="status">
+          <p>地図画像を読み込めませんでした。通信環境を確認してください。</p>
+          <button
+            className="walk-view-route-button"
+            type="button"
+            onClick={() => {
+              setTileError(false)
+              setTileAttempt((attempt) => attempt + 1)
+            }}
+          >
+            地図を再読み込み
+          </button>
+        </div>
+      )}
+      <p>線が途切れた場所は、位置を続けて記録できなかった区間です。地図画像の取得時に経路周辺の位置が地図サービスに送信されます。</p>
+    </div>
+  )
+}
+
+function ExternalMapLinks({ position }: { position: Position | null }) {
+  return (
+    <div className="walk-external-maps">
+      <h3>地図アプリで道を選ぶ</h3>
+      <p>地図を開き、目的地を選んで徒歩ルートをご確認ください。選んだ経路はこのアプリには取り込まれません。</p>
+      <a className="walk-external-map-button" href="https://www.google.com/maps/@?api=1&map_action=map" target="_blank" rel="noreferrer">Google マップを開く</a>
+      <a className="walk-external-map-button" href="https://maps.apple.com/" target="_blank" rel="noreferrer">Apple マップを開く</a>
+      {position && (
+        <a className="walk-route-map-link" href={`https://www.openstreetmap.org/?mlat=${position.latitude}&mlon=${position.longitude}#map=16/${position.latitude}/${position.longitude}`} target="_blank" rel="noreferrer">OpenStreetMapで現在地を開く</a>
+      )}
+      <p>地図アプリ側で位置情報を使う場合は、そのサービスに現在地が送られます。切り替え中は散歩の位置記録が途切れることがあります。</p>
+    </div>
+  )
+}
+
 function formatMonth(date = new Date()) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月`
 }
@@ -702,6 +889,11 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const [storageError, setStorageError] = useState(initialRecords.error)
 
   const [screen, setScreen] = useState<"home" | "month" | "review">("home")
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
+  })
+  const [expandedRouteId, setExpandedRouteId] = useState<string | null>(null)
 
   const [condition, setCondition] = useState<Condition>("good")
 
@@ -752,6 +944,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const routeRef = useRef<Position[]>([])
 
   const lastRecordedAt = useRef(0)
+  const trackingStartedAt = useRef(0)
+  const routePartial = useRef(false)
+  const breakNextPoint = useRef(false)
 
   const recognitionRef = useRef<Recognition | null>(null)
   const voiceActiveRef = useRef(false)
@@ -792,6 +987,18 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   }, [initialRecords.error, records])
 
   useEffect(() => {
+    const interval = window.setInterval(() => {
+      setRecords((current) => {
+        const cleaned = cleanExpiredRoutes(current)
+        return cleaned.some((record, index) => record !== current[index])
+          ? cleaned
+          : current
+      })
+    }, 60_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
     if (!isWalking) return
 
     const interval = window.setInterval(() => {
@@ -823,7 +1030,8 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     [],
   )
 
-  const monthKey = `${new Date().getFullYear()}-${`${new Date().getMonth() + 1}`.padStart(2, "0")}`
+  const monthKey = localDateKey(selectedMonth).slice(0, 7)
+  const currentMonthKey = localDateKey().slice(0, 7)
 
   const monthRecords = records.filter((record) =>
     record.date.startsWith(monthKey),
@@ -879,8 +1087,8 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     weekday: "long",
   }).format(new Date())
 
-  const addPosition = (latitude: number, longitude: number) => {
-    const point = {
+  const addPosition = (latitude: number, longitude: number, accuracy: number) => {
+    const point: Position = {
       latitude,
 
       longitude,
@@ -889,9 +1097,25 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     }
 
     setCurrentPosition(point)
+    setLocationError("")
 
     if (!saveRoute || Date.now() - lastRecordedAt.current < 12000) return
 
+    if (!Number.isFinite(accuracy) || accuracy > 100) {
+      routePartial.current = true
+      breakNextPoint.current = true
+      return
+    }
+
+    const previous = routeRef.current[routeRef.current.length - 1]
+    if (!previous && Date.now() - trackingStartedAt.current > maxPositionGapMs) {
+      routePartial.current = true
+    }
+    if (previous && (breakNextPoint.current || isRouteGap(previous, point))) {
+      routePartial.current = true
+      point.breakBefore = true
+    }
+    breakNextPoint.current = false
     lastRecordedAt.current = Date.now()
 
     routeRef.current = [...routeRef.current, point]
@@ -980,6 +1204,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     setCurrentPosition(null)
 
     lastRecordedAt.current = 0
+    trackingStartedAt.current = Date.now()
+    routePartial.current = false
+    breakNextPoint.current = false
 
     startedAt.current = Date.now()
 
@@ -1001,21 +1228,17 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     }
 
     watchId.current = navigator.geolocation.watchPosition(
-      ({ coords }) => addPosition(coords.latitude, coords.longitude),
+      ({ coords }) => addPosition(coords.latitude, coords.longitude, coords.accuracy),
       (error) => {
-        setLocationEnabled(false)
-        setSaveRoute(false)
-        setCurrentPosition(null)
-        setRoute([])
-        routeRef.current = []
-
+        routePartial.current = true
+        breakNextPoint.current = true
         setLocationError(
           error.code === error.PERMISSION_DENIED
-            ? "位置情報が許可されなかったため、時間のみ記録します。"
-            : "現在地を確認できないため、時間のみ記録します。",
+            ? "位置情報が許可されませんでした。時間は引き続き記録します。"
+            : "現在地を確認できません。位置情報の取得を続けます。",
         )
 
-        if (watchId.current !== null) {
+        if (error.code === error.PERMISSION_DENIED && watchId.current !== null) {
           navigator.geolocation.clearWatch(watchId.current)
 
           watchId.current = null
@@ -1044,13 +1267,19 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   }
 
   const finishWalk = () => {
+    if (lastRecordedAt.current && Date.now() - lastRecordedAt.current > maxPositionGapMs) {
+      routePartial.current = true
+    }
     if (watchId.current !== null && navigator.geolocation) {
       navigator.geolocation.clearWatch(watchId.current)
 
       watchId.current = null
     }
 
-    const durationMinutes = Math.max(1, Math.round(elapsedSeconds / 60))
+    const seconds = startedAt.current === null
+      ? elapsedSeconds
+      : Math.floor((Date.now() - startedAt.current) / 1000)
+    const durationMinutes = Math.max(1, Math.round(seconds / 60))
 
     startedAt.current = null
 
@@ -1076,6 +1305,13 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
       watchId.current = null
     }
 
+    if (lastRecordedAt.current && Date.now() - lastRecordedAt.current > maxPositionGapMs) {
+      routePartial.current = true
+    }
+    breakNextPoint.current = true
+    if (startedAt.current !== null) {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt.current) / 1000))
+    }
     startedAt.current = null
 
     setIsWalking(false)
@@ -1106,6 +1342,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         pendingKind === "walk" && routeRef.current.length > 0
           ? [...routeRef.current]
           : [],
+      ...(pendingKind === "walk"
+        ? summarizeRoute(routeRef.current, routePartial.current)
+        : {}),
     }
 
     setRecords((current) => [...cleanExpiredRoutes(current), record])
@@ -1464,7 +1703,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                 <p className="walk-privacy-note">
                   地図表示とコース検索では、現在地をOpenStreetMapの地図データサーバーへ送信します（コース検索では複数のサーバーへ同時に問い合わせます）。
                   {saveRoute
-                    ? "歩いた経路はこの端末内に保存し、7日後に削除します。"
+                    ? "歩いた経路はこの端末内に保存し、7日経過後にアプリを開いたときなどに削除します。時間とおおよその距離は記録を削除するまで残ります。"
                     : "歩いた経路は保存しません。"}
                 </p>
               )}
@@ -1499,41 +1738,12 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                       {routeSuggestionError}
                     </p>
                   )}
-                  {routeSuggestionError && currentPosition && (
-                    <div className="walk-route-map-links">
-                      <p>コースを作成できないときは、地図アプリで近くの道を確認できます。</p>
-                      <p>選んだ地図サービスに現在地が共有されます。</p>
-                      <a
-                        className="walk-route-map-link"
-                        href={`https://www.google.com/maps/search/?api=1&query=${currentPosition.latitude}%2C${currentPosition.longitude}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        Google マップで現在地を開く
-                      </a>
-                      <a
-                        className="walk-route-map-link"
-                        href={`https://maps.apple.com/?ll=${currentPosition.latitude}%2C${currentPosition.longitude}&q=${encodeURIComponent("現在地周辺")}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        Apple マップで現在地を開く
-                      </a>
-                      <a
-                        className="walk-route-map-link walk-route-map-link--subtle"
-                        href={`https://www.openstreetmap.org/?mlat=${currentPosition.latitude}&mlon=${currentPosition.longitude}#map=16/${currentPosition.latitude}/${currentPosition.longitude}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        OpenStreetMapをブラウザーで開く
-                      </a>
-                    </div>
-                  )}
                   <p className="walk-route-disclaimer">
                     ランダムな候補です。歩道や通行可否などの地図情報は不完全なことがあり、交差点ごとの音声案内もありません。案内に従う必要はありません。出発前に、ご自身で道の安全と現在地から道までの経路をご確認ください。
                   </p>
                 </div>
               )}
+              <ExternalMapLinks position={currentPosition} />
               {locationError && (
                 <p className="walk-inline-error" role="status">
                   {locationError}
@@ -1606,9 +1816,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
               suggestedRoute={suggestedRoute}
             />
             <p className="walk-location-status" role="status">
-              {locationEnabled && currentPosition
+              {locationError || (locationEnabled && currentPosition
                 ? "地図に現在地と歩いた経路を表示しています"
-                : locationError || "位置情報は使わず、時間のみ記録しています"}
+                : "位置情報は使わず、時間のみ記録しています")}
             </p>
             <p className="walk-look-away">
               画面を見続けず、周りに気をつけて歩きましょう。
@@ -1620,6 +1830,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             >
               お散歩を終える
             </button>
+            <ExternalMapLinks position={currentPosition} />
           </section>
         )}
 
@@ -1639,6 +1850,9 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                 ? `今日のお散歩：${Math.max(1, Math.round(elapsedSeconds / 60))}分`
                 : "休むことも、健やかに続けるための大切な選択です。"}
             </p>
+            {pendingKind === "walk" && (
+              <p>{distanceText(summarizeRoute(routeRef.current, routePartial.current))}</p>
+            )}
             <label htmlFor="walk-review-input">
               今日の気分を残しませんか？（任意）
             </label>
@@ -1702,10 +1916,15 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         {screen === "month" && (
           <section className="walk-monthly">
             <p className="walk-date">ひと月のふりかえり</p>
-            <h1>{formatMonth()}も、自分のペースで。</h1>
+            <h1>{formatMonth(selectedMonth)}も、自分のペースで。</h1>
             <p className="walk-monthly-intro">
               歩いた日も、充電した日も。ひと月の大切な記録です。
             </p>
+            <div className="walk-month-navigation" aria-label="記録する月の切り替え">
+              <button type="button" onClick={() => { setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1)); setExpandedRouteId(null) }}>前の月</button>
+              <strong>{formatMonth(selectedMonth)}</strong>
+              <button type="button" disabled={monthKey >= currentMonthKey} onClick={() => { setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1)); setExpandedRouteId(null) }}>次の月</button>
+            </div>
             <div className="walk-month-stats">
               <article>
                 <span aria-hidden="true">👟</span>
@@ -1733,7 +1952,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
               </article>
             </div>
             <div className="walk-month-total">
-              <span>今月のお散歩時間</span>
+              <span>この月のお散歩時間</span>
               <strong>
                 {totalMinutes >= 60
                   ? `${Math.floor(totalMinutes / 60)}時間${
@@ -1747,7 +1966,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
               className="walk-record-list"
               aria-labelledby="walk-records-title"
             >
-              <h2 id="walk-records-title">今月の記録</h2>
+              <h2 id="walk-records-title">この月の記録</h2>
               {monthRecords.length === 0 ? (
                 <p className="walk-empty-records">
                   記録はまだありません。今日の気分から始めてみませんか？
@@ -1759,20 +1978,28 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
                   .map((record) => (
                     <article className="walk-record" key={record.id}>
-                      <div>
+                      <div className="walk-record-content">
                         <strong>
                           {record.date.slice(5).replace("-", "月")}日 ・
                           {record.kind === "walk"
                             ? `お散歩 ${record.durationMinutes}分`
                             : "充電日"}
                         </strong>
+                        <p>{new Date(record.createdAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}に保存</p>
                         {record.review && <p>{record.review}</p>}
                         {record.kind === "walk" && (
-                          <small>
-                            {record.route.length > 0
-                              ? "経路を保存中（7日間）"
-                              : "時間のみ記録"}
-                          </small>
+                          <>
+                            <p>{distanceText(record)}</p>
+                            <small>{record.route.length > 0 ? "経路を保存中（7日間）" : "経路なし（未記録または保存期間終了）"}</small>
+                            {record.route.length > 0 && (
+                              <>
+                                <button className="walk-view-route-button" type="button" aria-expanded={expandedRouteId === record.id} onClick={() => setExpandedRouteId(expandedRouteId === record.id ? null : record.id)}>
+                                  {expandedRouteId === record.id ? "経路を閉じる" : "歩いた経路を見る"}
+                                </button>
+                                {expandedRouteId === record.id && <SavedRouteMap route={record.route} />}
+                              </>
+                            )}
+                          </>
                         )}
                       </div>
                       <button
@@ -1812,7 +2039,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                 ? "現在地をOpenStreetMapの地図データに照会して、歩行者道や歩道が登録された道を優先する候補を作ります。候補の検索に現在地が送信されます。"
                 : `地図画像の取得時に、現在地がOpenStreetMapへ送信されます。${
                     saveRoute
-                      ? "歩いた経路はこの端末に保存され、7日後に削除されます。"
+                      ? "歩いた経路はこの端末に保存され、7日経過後にアプリを開いたときなどに削除されます。時間とおおよその距離は記録を削除するまで残ります。"
                       : "選択した設定では、歩いた経路は保存しません。"
                   }`}
             </p>
@@ -1889,15 +2116,18 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
                   setIsWalking(true)
 
-                  if (routeRef.current.length > 0 && navigator.geolocation) {
+                  if (locationEnabled && navigator.geolocation) {
                     watchId.current = navigator.geolocation.watchPosition(
                       ({ coords }) =>
-                        addPosition(coords.latitude, coords.longitude),
+                        addPosition(coords.latitude, coords.longitude, coords.accuracy),
 
-                      () =>
+                      () => {
+                        routePartial.current = true
+                        breakNextPoint.current = true
                         setLocationError(
                           "位置情報を再取得できません。時間は引き続き記録します。",
-                        ),
+                        )
+                      },
 
                       {
                         enableHighAccuracy: true,
