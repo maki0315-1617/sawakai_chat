@@ -1246,6 +1246,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const breakNextPoint = useRef(false)
 
   const recognitionRef = useRef<Recognition | null>(null)
+  const reviewInputRef = useRef<HTMLTextAreaElement>(null)
   const voiceActiveRef = useRef(false)
   const voiceRestartTimer = useRef<number | null>(null)
 
@@ -2203,6 +2204,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
             </label>
             <textarea
               id="walk-review-input"
+                    ref={reviewInputRef}
               onChange={(event) => setReview(event.target.value)}
               placeholder="「風が気持ちよかった」など、ひとこと"
               rows={4}
@@ -2230,9 +2232,19 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                     "お話し終わったら「音声入力を止める」を押してください。音声はブラウザーで処理され、内容を確認・修正してから保存できます。"}
                 </p>
                 {voiceError && (
-                  <p className="walk-inline-error" role="status">
-                    {voiceError}
-                  </p>
+                  <div className="walk-voice-fallback" role="status">
+                    <p className="walk-inline-error">{voiceError}</p>
+                    <button
+                      className="walk-voice-fallback-button"
+                      onClick={() => {
+                        setVoiceStatus("キーボードのマイクを押してお話しください。")
+                        reviewInputRef.current?.focus()
+                      }}
+                      type="button"
+                    >
+                      感想欄を開いてキーボードのマイクを使う
+                    </button>
+                  </div>
                 )}
               </div>
             )}

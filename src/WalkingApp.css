@@ -938,6 +938,28 @@
   line-height: 1.6;
 }
 
+.walk-voice-fallback {
+  margin-top: 12px;
+}
+
+.walk-voice-fallback .walk-inline-error {
+  margin: 0;
+}
+
+.walk-voice-fallback-button {
+  width: 100%;
+  min-height: 60px;
+  margin-top: 10px;
+  padding: 8px 14px;
+  color: #fff;
+  background: #245c4b;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+}
+
 .walk-review-actions {
   display: flex;
   margin-top: 24px;
