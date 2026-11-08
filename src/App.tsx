@@ -4585,6 +4585,7 @@ function JoinScreen({
 
 export default function App() {
   const [showWalking, setShowWalking] = useState(false);
+  const [scrollChatToEnd, setScrollChatToEnd] = useState(false);
   const [visualSupportEnabled, setVisualSupportEnabled] = useState(
     () => localStorage.getItem(visualSupportStorageKey) === "enabled",
   );
@@ -5141,6 +5142,16 @@ export default function App() {
   }, [showGroup, token, activeGroupId]);
 
   const latestMessageId = pendingSend?.id ?? messages.at(-1)?.id;
+  useLayoutEffect(() => {
+    if (showWalking || !scrollChatToEnd) return;
+    const scrollToLatest = () => {
+      messageEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    };
+    scrollToLatest();
+    const frame = window.requestAnimationFrame(scrollToLatest);
+    setScrollChatToEnd(false);
+    return () => window.cancelAnimationFrame(frame);
+  }, [showWalking, scrollChatToEnd, messages.length]);
   useLayoutEffect(() => {
     if (isLoading || !isPositioningMessages || !messageEndRef.current) return;
     messageEndRef.current.scrollIntoView({ behavior: "auto", block: "end" });
@@ -6482,6 +6493,10 @@ export default function App() {
       <WalkingApp
         defaultShareGroupId={token ? activeGroupId : ""}
         onBack={() => setShowWalking(false)}
+        onSentToGroup={() => {
+          setShowWalking(false);
+          setScrollChatToEnd(true);
+        }}
         onShareToGroup={token ? shareWalkToGroup : undefined}
         shareGroups={walkShareGroups}
       />

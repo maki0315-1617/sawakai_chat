@@ -13,6 +13,7 @@ export type WalkShareTextInput = {
   review: string
   includeReview: boolean
   hasRoute: boolean
+  mapKind?: "walked" | "planned" | "both" | "none"
 }
 
 const maxShareTextLength = 500
@@ -32,10 +33,15 @@ export function walkShareText(input: WalkShareTextInput) {
     lines.push(`${input.when}の散歩です。`)
     lines.push(`時間：${input.durationText}`)
     lines.push(input.distanceLine)
+    const mapKind = input.mapKind ?? (input.hasRoute ? "walked" : "none")
     lines.push(
-      input.hasRoute
-        ? "歩いた道の図を添えています。"
-        : "道の記録はないため、時間と距離だけのお知らせです。",
+      mapKind === "planned"
+        ? "予定した道の図を添えています。"
+        : mapKind === "both"
+          ? "歩いた道と予定の道の図を添えています。"
+          : mapKind === "walked"
+            ? "歩いた道の図を添えています。"
+            : "道の記録はないため、時間と距離だけのお知らせです。",
     )
   }
   const review = input.includeReview ? input.review.trim() : ""
@@ -53,28 +59,35 @@ export async function createWalkShareImage<T extends SharePoint>(
   route: T[],
   captionLines: string[],
   separates: (first: T, second: T) => boolean,
+  plannedRoute: T[] = [],
 ) {
-  const usable = route.filter(
+  const usable = validSharePoints(route)
+  const planned = validSharePoints(plannedRoute)
+  if (usable.length === 0 && planned.length === 0) {
+    throw new Error("道の図を作る位置がありません。")
+  }
+  const parts = segments(usable, separates)
+  const lines = [...captionLines]
+  if (parts.length > 1) lines.push("途切れた区間は線にしていません")
+  if (planned.length > 1) lines.push("点線は予定の道です")
+  try {
+    const blob = await drawStreetMap(usable, parts, lines, planned)
+    if (blob) return { blob, showsStreetNames: true }
+  } catch (error) {
+    console.error("道の名前つき地図を作れませんでした", error)
+  }
+  const blob = await drawLineMap(usable, parts, lines, planned)
+  return { blob, showsStreetNames: false }
+}
+
+function validSharePoints<T extends SharePoint>(route: T[]) {
+  return route.filter(
     (point) =>
       Number.isFinite(point.latitude) &&
       Number.isFinite(point.longitude) &&
       Math.abs(point.latitude) <= 85 &&
       Math.abs(point.longitude) <= 180,
   )
-  if (usable.length === 0) {
-    throw new Error("道の図を作る位置がありません。")
-  }
-  const parts = segments(usable, separates)
-  const lines = [...captionLines]
-  if (parts.length > 1) lines.push("途切れた区間は線にしていません")
-  try {
-    const blob = await drawStreetMap(usable, parts, lines)
-    if (blob) return { blob, showsStreetNames: true }
-  } catch (error) {
-    console.error("道の名前つき地図を作れませんでした", error)
-  }
-  const blob = await drawLineMap(usable, parts, lines)
-  return { blob, showsStreetNames: false }
 }
 
 export async function sharePreparedWalk(
@@ -238,8 +251,9 @@ async function drawStreetMap<T extends SharePoint>(
   route: T[],
   parts: T[][],
   lines: string[],
+  planned: T[],
 ) {
-  const view = chooseView(route)
+  const view = chooseView([...route, ...planned])
   const centerX = (view.minX + view.maxX) / 2
   const centerY = (view.minY + view.maxY) / 2
   const left = centerX - canvasWidth / 2
@@ -290,6 +304,10 @@ async function drawStreetMap<T extends SharePoint>(
       tileSize,
     )
   })
+  drawPlanned(context, planned, (point) => {
+    const projected = project(point, view.zoom)
+    return { x: projected.x - left, y: projected.y - top }
+  })
   drawRoute(
     context,
     parts,
@@ -298,6 +316,12 @@ async function drawStreetMap<T extends SharePoint>(
       return { x: projected.x - left, y: projected.y - top }
     },
   )
+  if (route.length === 0) {
+    drawPlannedEnds(context, planned, (point) => {
+      const projected = project(point, view.zoom)
+      return { x: projected.x - left, y: projected.y - top }
+    })
+  }
   context.restore()
   drawFooter(context, lines, "© OpenStreetMap contributors")
   return canvasToJpeg(canvas)
@@ -307,6 +331,7 @@ async function drawLineMap<T extends SharePoint>(
   route: T[],
   parts: T[][],
   lines: string[],
+  planned: T[],
 ) {
   const canvas = document.createElement("canvas")
   canvas.width = canvasWidth
@@ -317,11 +342,11 @@ async function drawLineMap<T extends SharePoint>(
   context.fillRect(0, 0, canvasWidth, canvasHeight)
   context.fillStyle = "#f7faf4"
   context.fillRect(36, 36, canvasWidth - 72, mapHeight - 72)
-  const projected = route.map((point) => project(point, 16))
-  const minX = Math.min(...projected.map((point) => point.x))
-  const maxX = Math.max(...projected.map((point) => point.x))
-  const minY = Math.min(...projected.map((point) => point.y))
-  const maxY = Math.max(...projected.map((point) => point.y))
+  const bounds = [...route, ...planned].map((point) => project(point, 16))
+  const minX = Math.min(...bounds.map((point) => point.x))
+  const maxX = Math.max(...bounds.map((point) => point.x))
+  const minY = Math.min(...bounds.map((point) => point.y))
+  const maxY = Math.max(...bounds.map((point) => point.y))
   const spanX = Math.max(maxX - minX, 80)
   const spanY = Math.max(maxY - minY, 80)
   const scale = Math.min(
@@ -331,13 +356,40 @@ async function drawLineMap<T extends SharePoint>(
   const offsetX = (canvasWidth - spanX * scale) / 2 - minX * scale
   const offsetY = (mapHeight - spanY * scale) / 2 - minY * scale
   const pointAt = (point: T) => {
-    const index = route.indexOf(point)
-    const source = projected[index] ?? project(point, 16)
+    const source = project(point, 16)
     return { x: source.x * scale + offsetX, y: source.y * scale + offsetY }
   }
+  drawPlanned(context, planned, pointAt)
   drawRoute(context, parts, pointAt)
+  if (route.length === 0) drawPlannedEnds(context, planned, pointAt)
   drawFooter(context, lines, "道の名前は出ていません")
   return canvasToJpeg(canvas)
+}
+
+function drawPlanned<T extends SharePoint>(
+  context: CanvasRenderingContext2D,
+  points: T[],
+  pointAt: (point: T) => { x: number; y: number },
+) {
+  if (points.length < 2) return
+  const pixels = points.map(pointAt)
+  context.save()
+  context.setLineDash([16, 12])
+  strokePath(context, pixels, "#ffffff", 12)
+  strokePath(context, pixels, "#c15b38", 6)
+  context.restore()
+}
+
+function drawPlannedEnds<T extends SharePoint>(
+  context: CanvasRenderingContext2D,
+  points: T[],
+  pointAt: (point: T) => { x: number; y: number },
+) {
+  if (points.length === 0) return
+  const start = pointAt(points[0])
+  const end = pointAt(points[points.length - 1])
+  drawMarker(context, start, "#c15b38", "出発", -22)
+  if (points.length > 1) drawMarker(context, end, "#c15b38", "目的地", 36)
 }
 
 function drawRoute<T extends SharePoint>(

@@ -1192,15 +1192,27 @@ function walkWhenLabel(record: WalkRecord) {
   return `${Number(month)}月${Number(day)}日${time ? ` ${time}` : ""}`
 }
 
+function shareMapKind(record: WalkRecord) {
+  if (record.kind !== "walk") return "none" as const
+  const walked = record.route.length > 0
+  const planned = (record.plannedRoute?.length ?? 0) > 0
+  if (walked && planned) return "both" as const
+  if (walked) return "walked" as const
+  if (planned) return "planned" as const
+  return "none" as const
+}
+
 export type WalkShareGroup = { id: string; name: string }
 
 export default function WalkingApp({
   onBack,
+  onSentToGroup,
   shareGroups = [],
   defaultShareGroupId = "",
   onShareToGroup,
 }: {
   onBack: () => void
+  onSentToGroup?: () => void
   shareGroups?: WalkShareGroup[]
   defaultShareGroupId?: string
   onShareToGroup?: (input: {
@@ -1363,11 +1375,7 @@ export default function WalkingApp({
       URL.revokeObjectURL(sharePreviewUrl.current)
       sharePreviewUrl.current = null
     }
-    if (
-      !shareRequest ||
-      shareRequest.record.kind !== "walk" ||
-      shareRequest.record.route.length === 0
-    ) {
+    if (!shareRequest || shareMapKind(shareRequest.record) === "none") {
       releasePreview()
       shareImageFile.current = null
       setShareImageUrl(null)
@@ -1389,6 +1397,7 @@ export default function WalkingApp({
         distanceText(record).replace(/^距離：/, ""),
       ],
       isRouteGap,
+      record.plannedRoute ?? [],
     )
       .then((result) => {
         if (cancelled) return
@@ -1401,9 +1410,11 @@ export default function WalkingApp({
         setShareImageUrl(sharePreviewUrl.current)
         setShareImageReady(true)
         setShareMapNote(
-          result.showsStreetNames
-            ? "道の名前が入った地図です。送る前に、図を見てください。"
-            : "道の名前が出せなかったため、線だけの図です。送る前に、図を見てください。",
+          shareMapKind(record) === "planned"
+            ? "予定した道の図です。送る前に、図を見てください。"
+            : result.showsStreetNames
+              ? "道の名前が入った地図です。送る前に、図を見てください。"
+              : "道の名前が出せなかったため、線だけの図です。送る前に、図を見てください。",
         )
       })
       .catch((error) => {
@@ -1923,9 +1934,8 @@ export default function WalkingApp({
         distanceLine: distanceText(shareRequest.record),
         review: shareRequest.record.review,
         includeReview,
-        hasRoute:
-          shareRequest.record.kind === "walk" &&
-          shareRequest.record.route.length > 0,
+        hasRoute: shareMapKind(shareRequest.record) !== "none",
+        mapKind: shareMapKind(shareRequest.record),
       })
     : ""
   const sendingMap = Boolean(shareImageUrl)
@@ -1941,7 +1951,7 @@ export default function WalkingApp({
 
   const openShare = (record: WalkRecord, channel: "external" | "group") => {
     clearShareImage()
-    const hasRoute = record.kind === "walk" && record.route.length > 0
+    const hasRoute = shareMapKind(record) !== "none"
     setSavedForShare(null)
     setShareError("")
     setShareNotice("")
@@ -1978,7 +1988,8 @@ export default function WalkingApp({
       distanceLine: distanceText(record),
       review: record.review,
       includeReview,
-      hasRoute: record.kind === "walk" && record.route.length > 0,
+      hasRoute: shareMapKind(record) !== "none",
+      mapKind: shareMapKind(record),
     })
 
   const shareSubjectFor = (record: WalkRecord) =>
@@ -2027,9 +2038,7 @@ export default function WalkingApp({
     try {
       if (shareRequest.channel === "external") {
         const imageFile = shareImageFile.current
-        const needsMap =
-          shareRequest.record.kind === "walk" &&
-          shareRequest.record.route.length > 0
+        const needsMap = shareMapKind(shareRequest.record) !== "none"
         if (needsMap && !imageFile) {
           setShareError(
             "道の図を添付できませんでした。確認画面を開き直して、もう一度送ってください。",
@@ -2081,9 +2090,7 @@ export default function WalkingApp({
         return
       }
       const imageFile = shareImageFile.current
-      const needsMap =
-        shareRequest.record.kind === "walk" &&
-        shareRequest.record.route.length > 0
+      const needsMap = shareMapKind(shareRequest.record) !== "none"
       if (needsMap && !imageFile) {
         setShareError(
           "道の図を添付できませんでした。確認画面を開き直して、もう一度送ってください。",
@@ -2095,12 +2102,9 @@ export default function WalkingApp({
         text,
         image: imageFile ?? undefined,
       })
-      setShareNotice(
-        imageFile
-          ? `「${selectedShareGroup.name}」に、文章と道の図を送りました。`
-          : `「${selectedShareGroup.name}」に、文章を送りました。`,
-      )
       closeShare()
+      if (onSentToGroup) onSentToGroup()
+      else onBack()
     } catch (error) {
       setShareError(
         error instanceof Error
@@ -2731,7 +2735,7 @@ export default function WalkingApp({
                       </div>
                       <div className="walk-share-actions">
                         <p className="walk-share-hint">
-                          {record.kind === "walk" && record.route.length > 0
+                          {shareMapKind(record) !== "none"
                             ? "道の図は7日以内なら一緒に送れます。"
                             : "時間などの記録を送れます。道の図はありません。"}
                         </p>
@@ -2890,8 +2894,8 @@ export default function WalkingApp({
             <h2 id="walk-saved-share-title">記録を保存しました</h2>
             <p>誰かに知らせますか？</p>
             <p>
-              {savedForShare.kind === "walk" && savedForShare.route.length > 0
-                ? "歩いた道の図は、7日たつとこの端末から消えます。今なら一緒に送れます。"
+              {shareMapKind(savedForShare) !== "none"
+                ? "画面の道の図は、7日たつとこの端末から消えます。今なら一緒に送れます。"
                 : "時間などの記録を送れます。道の図はありません。"}
             </p>
             <div className="walk-dialog-actions walk-dialog-actions--stack">
@@ -3031,7 +3035,7 @@ export default function WalkingApp({
             )}
             {(sendingMap ||
               (!shareImageReady &&
-                shareRequest.record.route.length > 0)) && (
+                shareMapKind(shareRequest.record) !== "none")) && (
               <p>
                 自宅の近くが分かることがあります。送った相手は、ほかの人へ転送できます。
               </p>
