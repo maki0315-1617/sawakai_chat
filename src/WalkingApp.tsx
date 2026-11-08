@@ -2064,7 +2064,7 @@ export default function WalkingApp({
           setDesktopGuide("line")
           return
         }
-        const outcome = await sharePreparedWalk(text, imageFile)
+        const outcome = await sharePreparedWalk(text, imageFile, subject)
         if (outcome === "cancelled") {
           setShareError("送信を中止しました。もう一度送れます。")
           return
@@ -2999,7 +2999,7 @@ export default function WalkingApp({
               <p>
                 {usesDesktopMail()
                   ? "パソコンでは、下のボタンを押したあと、画面の案内に従って送ってください。"
-                  : "次の画面で、LINEやメールなどの送り先を選んでください。"}
+                  : "LINEは次の画面で送り先を選びます。メールは、件名に「おさんぽ日和」と日時が入って開きます。"}
               </p>
             )}
             {desktopGuide === "mail" && (
@@ -3127,6 +3127,41 @@ export default function WalkingApp({
                     送るのをやめる
                   </button>
                 </>
+              ) : shareRequest.channel === "external" ? (
+                <>
+                  <button
+                    className="walk-start-button"
+                    disabled={!shareImageReady || isSharing}
+                    onClick={() => void confirmShare("sheet")}
+                    type="button"
+                  >
+                    {shareAction === "sheet"
+                      ? "送り先を開いています…"
+                      : !shareImageReady
+                        ? "道の図を作っています…"
+                        : "LINEで送る"}
+                  </button>
+                  <button
+                    className="walk-share-button walk-share-button--group"
+                    disabled={!shareImageReady || isSharing}
+                    onClick={() => void confirmShare("mail")}
+                    type="button"
+                  >
+                    {shareAction === "mail"
+                      ? "開いています…"
+                      : !shareImageReady
+                        ? "道の図を作っています…"
+                        : "メールで送る"}
+                  </button>
+                  <button
+                    className="walk-secondary-button"
+                    disabled={isSharing}
+                    onClick={closeShare}
+                    type="button"
+                  >
+                    送るのをやめる
+                  </button>
+                </>
               ) : (
                 <>
                   <button
@@ -3143,9 +3178,7 @@ export default function WalkingApp({
                       ? "送っています…"
                       : !shareImageReady
                         ? "道の図を作っています…"
-                        : shareRequest.channel === "group"
-                          ? `「${selectedShareGroup?.name ?? "茶話会"}」に送る`
-                          : "この内容で送り先を選ぶ"}
+                        : `「${selectedShareGroup?.name ?? "茶話会"}」に送る`}
                   </button>
                   <button
                     className="walk-secondary-button"

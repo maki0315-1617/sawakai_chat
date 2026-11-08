@@ -93,13 +93,17 @@ function validSharePoints<T extends SharePoint>(route: T[]) {
 export async function sharePreparedWalk(
   text: string,
   file: File | null,
+  subject = "おさんぽの記録",
 ): Promise<"shared" | "shared-file" | "cancelled" | "copied" | "saved-only"> {
+  const namedFile = file
+    ? new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" })
+    : null
   if (typeof navigator.share === "function") {
     try {
-      if (file) {
-        await navigator.share({ files: [file], text, title: "おさんぽの記録" })
+      if (namedFile) {
+        await navigator.share({ files: [namedFile], text, title: subject })
       } else {
-        await navigator.share({ text, title: "おさんぽの記録" })
+        await navigator.share({ text, title: subject })
       }
       return "shared"
     } catch (error) {
@@ -107,9 +111,9 @@ export async function sharePreparedWalk(
         return "cancelled"
       }
     }
-    if (file) {
+    if (namedFile) {
       try {
-        await navigator.share({ files: [file], title: "おさんぽの記録" })
+        await navigator.share({ files: [namedFile], title: subject })
         return "shared-file"
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -119,9 +123,9 @@ export async function sharePreparedWalk(
     }
   }
   const copied = await copyText(text)
-  if (file) downloadFile(file)
+  if (namedFile) downloadFile(namedFile)
   if (copied) return "copied"
-  if (file) return "saved-only"
+  if (namedFile) return "saved-only"
   throw new Error(
     "この端末では共有画面を開けません。文章を長押ししてコピーしてください。",
   )
