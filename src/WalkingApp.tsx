@@ -6,7 +6,7 @@ import {
   createWalkShareImage,
   downloadWalkImage,
   saveWalkForDesktopLine,
-  phoneMailHref,
+  sendPhoneMailWithImage,
   sendWalkByMail,
   sharePreparedWalk,
   usesDesktopMail,
@@ -1996,6 +1996,37 @@ export default function WalkingApp({
   const shareSubjectFor = (record: WalkRecord) =>
     walkShareSubject(walkWhenLabel(record))
 
+  const sendPhoneMail = async () => {
+    if (!shareRequest || !shareImageReady || isSharing) return
+    const text = shareTextFor(shareRequest.record)
+    const subject = shareSubjectFor(shareRequest.record)
+    setShareAction("mail")
+    setIsSharing(true)
+    setShareError("")
+    try {
+      const outcome = await sendPhoneMailWithImage(
+        text,
+        subject,
+        shareImageFile.current,
+      )
+      if (outcome === "cancelled") {
+        setShareError("送信を中止しました。もう一度送れます。")
+        return
+      }
+      setShareNotice("送信が完了しました。")
+      closeShare()
+    } catch (error) {
+      setShareError(
+        error instanceof Error
+          ? error.message
+          : "メールの送信画面を開けませんでした。もう一度押してください。",
+      )
+    } finally {
+      setIsSharing(false)
+      setShareAction(null)
+    }
+  }
+
   const saveShareImage = () => {
     if (!shareRequest) return
     const imageFile = shareImageFile.current
@@ -3001,7 +3032,7 @@ export default function WalkingApp({
               <p>
                 {usesDesktopMail()
                   ? "パソコンでは、下のボタンを押したあと、画面の案内に従って送ってください。"
-                  : "LINEは次の画面で送り先を選びます。メールは、件名と文章が入った送信画面が開きます。"}
+                  : "LINEは次の画面で送り先を選びます。メールは、次の画面でメールを選ぶと、件名と文章が入った送信画面が開き、経路図も添付されます。"}
               </p>
             )}
             {desktopGuide === "mail" && (
@@ -3143,31 +3174,18 @@ export default function WalkingApp({
                         ? "道の図を作っています…"
                         : "LINEで送る"}
                   </button>
-                  {shareImageReady && !isSharing ? (
-                    <a
-                      className="walk-share-button walk-share-button--group"
-                      href={phoneMailHref(
-                        shareTextFor(shareRequest.record),
-                        shareSubjectFor(shareRequest.record),
-                      )}
-                      onClick={() => {
-                        window.setTimeout(() => {
-                          setShareNotice("送信が完了しました。")
-                          closeShare()
-                        }, 500)
-                      }}
-                    >
-                      メールで送る
-                    </a>
-                  ) : (
-                    <button
-                      className="walk-share-button walk-share-button--group"
-                      disabled
-                      type="button"
-                    >
-                      {isSharing ? "開いています…" : "道の図を作っています…"}
-                    </button>
-                  )}
+                  <button
+                    className="walk-share-button walk-share-button--group"
+                    disabled={!shareImageReady || isSharing}
+                    onClick={() => void sendPhoneMail()}
+                    type="button"
+                  >
+                    {shareAction === "mail"
+                      ? "開いています…"
+                      : !shareImageReady
+                        ? "道の図を作っています…"
+                        : "メールで送る"}
+                  </button>
                   <button
                     className="walk-secondary-button"
                     disabled={isSharing}

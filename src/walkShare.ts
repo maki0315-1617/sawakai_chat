@@ -145,8 +145,36 @@ export function sendWalkByMail(text: string, subject: string, file: File | null)
   window.setTimeout(() => openMailDraft(subject, text), 700)
 }
 
-export function phoneMailHref(text: string, subject: string) {
-  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
+export async function sendPhoneMailWithImage(
+  text: string,
+  subject: string,
+  file: File | null,
+): Promise<"shared" | "cancelled"> {
+  const named = file
+    ? new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" })
+    : null
+  if (
+    !named ||
+    typeof navigator.share !== "function" ||
+    !navigator.canShare?.({ files: [named] })
+  ) {
+    openMailDraft(subject, text)
+    return "shared"
+  }
+  const previousTitle = document.title
+  document.title = subject
+  try {
+    await navigator.share({ files: [named], title: subject, text })
+    return "shared"
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return "cancelled"
+    }
+    openMailDraft(subject, text)
+    return "shared"
+  } finally {
+    document.title = previousTitle
+  }
 }
 
 export async function saveWalkForDesktopLine(
