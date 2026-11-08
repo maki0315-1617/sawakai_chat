@@ -6427,7 +6427,8 @@ export default function App() {
         );
       }
       appendIfActive(result.message);
-      if (result.message.text.trim() === text.trim()) return;
+      const delivered = result.message.text.replace(/\r\n/g, "\n").trim();
+      if (delivered && delivered !== "画像を送信しました。") return;
     }
     const response = await fetch(`${apiRoot}/messages`, {
       method: "POST",

@@ -118,126 +118,30 @@ export function usesDesktopMail() {
   return !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 }
 
-export async function downloadWalkEmail(text: string, file: File | null) {
-  if (!file) {
-    window.location.href = `mailto:?subject=${encodeURIComponent("おさんぽの記録")}&body=${encodeURIComponent(text)}`
-    return
-  }
-  const pictured = await fileWithMessage(file, text)
-  const imageBytes = new Uint8Array(await pictured.arrayBuffer())
-  const imageBase64 = wrapBase64(toBase64(imageBytes))
-  const textBase64 = wrapBase64(toBase64(new TextEncoder().encode(text)))
-  const subject = mimeUtf8("おさんぽの記録")
-  const eml = [
-    `Subject: ${subject}`,
-    "MIME-Version: 1.0",
-    'Content-Type: multipart/mixed; boundary="osanpo"',
-    "",
-    "--osanpo",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
-    "",
-    textBase64,
-    "",
-    "--osanpo",
-    'Content-Type: image/jpeg; name="osanpo.jpg"',
-    'Content-Disposition: attachment; filename="osanpo.jpg"',
-    "Content-Transfer-Encoding: base64",
-    "",
-    imageBase64,
-    "",
-    "--osanpo--",
-    "",
-  ].join("\r\n")
-  downloadFile(
-    new File([eml], "おさんぽの記録.eml", { type: "message/rfc822" }),
-  )
+export function walkShareSubject(when: string) {
+  const safeWhen = when.replace(/(\d{1,2}):(\d{2})/g, "$1時$2分")
+  return `おさんぽ日和　${safeWhen}`
 }
 
-export async function downloadWalkPicture(text: string, file: File) {
-  const pictured = await fileWithMessage(file, text)
-  downloadFile(
-    new File([pictured], "おさんぽの記録.jpg", { type: "image/jpeg" }),
-  )
+export function sendWalkByMail(text: string, subject: string, file: File | null) {
+  if (file) downloadNamedImage(file, subject)
+  window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
 }
 
-function mimeUtf8(value: string) {
-  return `=?UTF-8?B?${toBase64(new TextEncoder().encode(value))}?=`
-}
-
-function toBase64(bytes: Uint8Array) {
-  let binary = ""
-  const chunk = 0x2000
-  for (let index = 0; index < bytes.length; index += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunk))
-  }
-  return btoa(binary)
-}
-
-function wrapBase64(value: string) {
-  return value.replace(/.{1,76}/g, "$&\r\n").trim()
-}
-
-async function fileWithMessage(file: File, text: string) {
-  try {
-    const bitmap = await createImageBitmap(file)
-    const width = bitmap.width
-    const height = bitmap.height
-    const canvas = document.createElement("canvas")
-    const context = canvas.getContext("2d")
-    if (!context) {
-      bitmap.close()
-      return file
-    }
-    context.font = `700 28px ${fontFamily}`
-    const maxWidth = width - 64
-    const lines = wrapLines(context, text, maxWidth).slice(0, 12)
-    const lineHeight = 40
-    const extra = 36 + lines.length * lineHeight
-    canvas.width = width
-    canvas.height = height + extra
-    context.fillStyle = "#fffefa"
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    context.drawImage(bitmap, 0, 0)
-    bitmap.close()
-    context.fillStyle = "#203d35"
-    context.textBaseline = "top"
-    context.font = `700 28px ${fontFamily}`
-    lines.forEach((line, index) => {
-      context.fillText(line, 32, height + 24 + index * lineHeight, maxWidth)
-    })
-    const blob = await canvasToJpeg(canvas)
-    return new File([blob], "osanpo.jpg", { type: "image/jpeg" })
-  } catch (error) {
-    console.error("文章を道の図へ重ねられませんでした", error)
-    return file
-  }
-}
-
-function wrapLines(
-  context: CanvasRenderingContext2D,
+export async function saveWalkForDesktopLine(
   text: string,
-  maxWidth: number,
+  subject: string,
+  file: File | null,
 ) {
-  const lines: string[] = []
-  text.split("\n").forEach((paragraph) => {
-    if (!paragraph) {
-      lines.push("")
-      return
-    }
-    let current = ""
-    for (const character of paragraph) {
-      const next = current + character
-      if (context.measureText(next).width > maxWidth && current) {
-        lines.push(current)
-        current = character
-      } else {
-        current = next
-      }
-    }
-    if (current) lines.push(current)
-  })
-  return lines
+  const copied = await copyText(text)
+  if (file) downloadNamedImage(file, subject)
+  return copied
+}
+
+function downloadNamedImage(file: File, subject: string) {
+  downloadFile(
+    new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" }),
+  )
 }
 
 async function copyText(text: string) {

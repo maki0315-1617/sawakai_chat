@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from "react"
 import "./WalkingApp.css"
 import {
   createWalkShareImage,
-  downloadWalkEmail,
-  downloadWalkPicture,
+  saveWalkForDesktopLine,
+  sendWalkByMail,
   sharePreparedWalk,
   usesDesktopMail,
+  walkShareSubject,
   walkShareText,
 } from "./walkShare"
 
@@ -1273,9 +1274,10 @@ export default function WalkingApp({
   const [shareImageUrl, setShareImageUrl] = useState<string | null>(null)
   const [shareImageReady, setShareImageReady] = useState(true)
   const [shareMapNote, setShareMapNote] = useState("")
-  const [mailReady, setMailReady] = useState(false)
+  const [desktopGuide, setDesktopGuide] = useState<null | "mail" | "line">(null)
+  const [lineTextCopied, setLineTextCopied] = useState(true)
   const [shareAction, setShareAction] = useState<
-    "sheet" | "line" | "mail" | "picture" | null
+    "sheet" | "line" | "mail" | null
   >(null)
 
   const [isListening, setIsListening] = useState(false)
@@ -1941,7 +1943,8 @@ export default function WalkingApp({
     setSavedForShare(null)
     setShareError("")
     setShareNotice("")
-    setMailReady(false)
+    setDesktopGuide(null)
+    setLineTextCopied(true)
     setShareImageReady(!hasRoute)
     setShareMapNote(
       hasRoute ? "道の図を作っています。できあがってから送ってください。" : "",
@@ -1959,7 +1962,8 @@ export default function WalkingApp({
     setShareRequest(null)
     setShareError("")
     setIsSharing(false)
-    setMailReady(false)
+    setDesktopGuide(null)
+    setLineTextCopied(true)
   }
 
   const shareTextFor = (record: WalkRecord) =>
@@ -1976,7 +1980,7 @@ export default function WalkingApp({
     })
 
   const confirmShare = async (
-    target: "sheet" | "line" | "mail" | "picture" = "sheet",
+    target: "sheet" | "line" | "mail" = "sheet",
   ) => {
     if (!shareRequest || !shareImageReady || isSharing) return
     const text = shareTextFor(shareRequest.record)
@@ -1995,25 +1999,23 @@ export default function WalkingApp({
           )
           return
         }
-        if (target === "mail" || target === "picture") {
-          if (target === "picture") {
-            if (!imageFile) {
-              setShareError("保存できる道の図がありません。")
-              return
-            }
-            await downloadWalkPicture(text, imageFile)
+        const subject = walkShareSubject(walkWhenLabel(shareRequest.record))
+        if (target === "mail") {
+          sendWalkByMail(text, subject, imageFile)
+          if (imageFile) {
+            setDesktopGuide("mail")
           } else {
-            await downloadWalkEmail(text, imageFile)
-            if (imageFile) {
-              setMailReady(true)
-            } else {
-              setShareNotice(
-                "メールの画面を開きました。送りたい人を選んで送ってください。",
-              )
-              closeShare()
-            }
+            setShareNotice(
+              "メールの画面を開きました。送りたい人を選んで送ってください。",
+            )
+            closeShare()
           }
-          setShareError("")
+          return
+        }
+        if (target === "line") {
+          const copied = await saveWalkForDesktopLine(text, subject, imageFile)
+          setLineTextCopied(copied)
+          setDesktopGuide("line")
           return
         }
         const outcome = await sharePreparedWalk(text, imageFile)
@@ -2952,23 +2954,39 @@ export default function WalkingApp({
                 </p>
               </>
             )}
-            {shareRequest.channel === "external" && !mailReady && (
+            {shareRequest.channel === "external" && !desktopGuide && (
               <p>
                 {usesDesktopMail()
-                  ? "パソコンでは、LINEとメールで送り方が違います。下のボタンから選んでください。"
+                  ? "パソコンでは、下のボタンを押したあと、画面の案内に従って送ってください。"
                   : "次の画面で、LINEやメールなどの送り先を選んでください。"}
               </p>
             )}
-            {mailReady && (
+            {desktopGuide === "mail" && (
               <>
-                <p>道の図の付いたメールを保存しました。</p>
+                <p>メールの画面を開きました。</p>
                 <ol className="walk-share-steps">
-                  <li>ダウンロードした「おさんぽの記録」を開いてください。</li>
-                  <li>道の図が付いたメールが開きます。</li>
-                  <li>そのメールを転送し、送りたい人を選んで送ってください。</li>
+                  <li>
+                    件名は「{walkShareSubject(walkWhenLabel(shareRequest.record))}」です。本文は今の案内文です。
+                  </li>
+                  <li>
+                    ダウンロードフォルダーに、件名と同じ名前の経路図を保存しました。
+                  </li>
+                  <li>開いたメールに、その画像を添付して送ってください。</li>
+                </ol>
+              </>
+            )}
+            {desktopGuide === "line" && (
+              <>
+                <p>パソコンのLINEには、この画面から直接送れません。</p>
+                <ol className="walk-share-steps">
+                  <li>
+                    {lineTextCopied
+                      ? "文章をコピーしました。LINEのトークに貼り付けてください。"
+                      : "上の文章を長押ししてコピーし、LINEのトークに貼り付けてください。"}
+                  </li>
                   {shareImageUrl && (
                     <li>
-                      メールのファイルが開けないときは、「画像だけ保存する」を押し、保存した画像をメールに添付してください。
+                      ダウンロードフォルダーの「{walkShareSubject(walkWhenLabel(shareRequest.record))}」を、LINEのトークへドラッグするか、添付ボタンで選んでください。
                     </li>
                   )}
                 </ol>
@@ -2987,28 +3005,22 @@ export default function WalkingApp({
               </p>
             )}
             <div className="walk-dialog-actions walk-dialog-actions--stack">
-              {mailReady ? (
+              {desktopGuide ? (
                 <>
                   <button
                     className="walk-start-button"
                     disabled={isSharing}
-                    onClick={() => void confirmShare("mail")}
+                    onClick={() => void confirmShare(desktopGuide)}
                     type="button"
                   >
-                    {shareAction === "mail" ? "保存しています…" : "もう一度保存する"}
+                    {isSharing
+                      ? desktopGuide === "mail"
+                        ? "開いています…"
+                        : "保存しています…"
+                      : desktopGuide === "mail"
+                        ? "もう一度開く"
+                        : "もう一度保存する"}
                   </button>
-                  {shareImageUrl && (
-                    <button
-                      className="walk-share-button walk-share-button--group"
-                      disabled={isSharing}
-                      onClick={() => void confirmShare("picture")}
-                      type="button"
-                    >
-                      {shareAction === "picture"
-                        ? "保存しています…"
-                        : "画像だけ保存する"}
-                    </button>
-                  )}
                   <button
                     className="walk-secondary-button"
                     disabled={isSharing}
@@ -3027,7 +3039,7 @@ export default function WalkingApp({
                     type="button"
                   >
                     {shareAction === "line"
-                      ? "送り先を開いています…"
+                      ? "保存しています…"
                       : !shareImageReady
                         ? "道の図を作っています…"
                         : "LINEで送る"}
