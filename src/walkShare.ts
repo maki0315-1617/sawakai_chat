@@ -80,30 +80,29 @@ export async function createWalkShareImage<T extends SharePoint>(
 export async function sharePreparedWalk(
   text: string,
   file: File | null,
-): Promise<
-  "shared" | "shared-file" | "cancelled" | "copied" | "saved-only"
-> {
-  const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-  try {
-    if (file && phone && canShareFile(file, text)) {
-      await navigator.share({ files: [file], text, title: "おさんぽの記録" })
+): Promise<"shared" | "shared-file" | "cancelled" | "copied" | "saved-only"> {
+  if (typeof navigator.share === "function") {
+    try {
+      if (file) {
+        await navigator.share({ files: [file], text, title: "おさんぽの記録" })
+      } else {
+        await navigator.share({ text, title: "おさんぽの記録" })
+      }
       return "shared"
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return "cancelled"
+      }
     }
-    if (file && canShareFile(file)) {
-      const pictured = await fileWithMessage(file, text)
-      await navigator.share({
-        files: [pictured],
-        title: "おさんぽの記録",
-      })
-      return "shared-file"
-    }
-    if (!file && typeof navigator.share === "function") {
-      await navigator.share({ text, title: "おさんぽの記録" })
-      return "shared"
-    }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return "cancelled"
+    if (file) {
+      try {
+        await navigator.share({ files: [file], title: "おさんぽの記録" })
+        return "shared-file"
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return "cancelled"
+        }
+      }
     }
   }
   const copied = await copyText(text)
@@ -115,13 +114,68 @@ export async function sharePreparedWalk(
   )
 }
 
-function canShareFile(file: File, text?: string) {
-  if (typeof navigator.canShare !== "function") return false
-  try {
-    return navigator.canShare(text ? { files: [file], text } : { files: [file] })
-  } catch {
-    return false
+export function usesDesktopMail() {
+  return !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
+export async function downloadWalkEmail(text: string, file: File | null) {
+  if (!file) {
+    window.location.href = `mailto:?subject=${encodeURIComponent("おさんぽの記録")}&body=${encodeURIComponent(text)}`
+    return
   }
+  const pictured = await fileWithMessage(file, text)
+  const imageBytes = new Uint8Array(await pictured.arrayBuffer())
+  const imageBase64 = wrapBase64(toBase64(imageBytes))
+  const textBase64 = wrapBase64(toBase64(new TextEncoder().encode(text)))
+  const subject = mimeUtf8("おさんぽの記録")
+  const eml = [
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    'Content-Type: multipart/mixed; boundary="osanpo"',
+    "",
+    "--osanpo",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    textBase64,
+    "",
+    "--osanpo",
+    'Content-Type: image/jpeg; name="osanpo.jpg"',
+    'Content-Disposition: attachment; filename="osanpo.jpg"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    imageBase64,
+    "",
+    "--osanpo--",
+    "",
+  ].join("\r\n")
+  downloadFile(
+    new File([eml], "おさんぽの記録.eml", { type: "message/rfc822" }),
+  )
+}
+
+export async function downloadWalkPicture(text: string, file: File) {
+  const pictured = await fileWithMessage(file, text)
+  downloadFile(
+    new File([pictured], "おさんぽの記録.jpg", { type: "image/jpeg" }),
+  )
+}
+
+function mimeUtf8(value: string) {
+  return `=?UTF-8?B?${toBase64(new TextEncoder().encode(value))}?=`
+}
+
+function toBase64(bytes: Uint8Array) {
+  let binary = ""
+  const chunk = 0x2000
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk))
+  }
+  return btoa(binary)
+}
+
+function wrapBase64(value: string) {
+  return value.replace(/.{1,76}/g, "$&\r\n").trim()
 }
 
 async function fileWithMessage(file: File, text: string) {

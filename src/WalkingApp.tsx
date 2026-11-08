@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from "react"
 import "./WalkingApp.css"
 import {
   createWalkShareImage,
+  downloadWalkEmail,
+  downloadWalkPicture,
   sharePreparedWalk,
+  usesDesktopMail,
   walkShareText,
 } from "./walkShare"
 
@@ -1270,6 +1273,10 @@ export default function WalkingApp({
   const [shareImageUrl, setShareImageUrl] = useState<string | null>(null)
   const [shareImageReady, setShareImageReady] = useState(true)
   const [shareMapNote, setShareMapNote] = useState("")
+  const [mailReady, setMailReady] = useState(false)
+  const [shareAction, setShareAction] = useState<
+    "sheet" | "line" | "mail" | "picture" | null
+  >(null)
 
   const [isListening, setIsListening] = useState(false)
   const [isStoppingVoice, setIsStoppingVoice] = useState(false)
@@ -1934,6 +1941,7 @@ export default function WalkingApp({
     setSavedForShare(null)
     setShareError("")
     setShareNotice("")
+    setMailReady(false)
     setShareImageReady(!hasRoute)
     setShareMapNote(
       hasRoute ? "道の図を作っています。できあがってから送ってください。" : "",
@@ -1951,29 +1959,63 @@ export default function WalkingApp({
     setShareRequest(null)
     setShareError("")
     setIsSharing(false)
+    setMailReady(false)
   }
 
-  const confirmShare = async () => {
-    if (!shareRequest || !shareImageReady || isSharing) return
-    const text = walkShareText({
-      when: walkWhenLabel(shareRequest.record),
-      kind: shareRequest.record.kind,
+  const shareTextFor = (record: WalkRecord) =>
+    walkShareText({
+      when: walkWhenLabel(record),
+      kind: record.kind,
       durationText: formatDuration(
-        shareRequest.record.durationSeconds ??
-          shareRequest.record.durationMinutes * 60,
+        record.durationSeconds ?? record.durationMinutes * 60,
       ),
-      distanceLine: distanceText(shareRequest.record),
-      review: shareRequest.record.review,
+      distanceLine: distanceText(record),
+      review: record.review,
       includeReview,
-      hasRoute:
-        shareRequest.record.kind === "walk" &&
-        shareRequest.record.route.length > 0,
+      hasRoute: record.kind === "walk" && record.route.length > 0,
     })
+
+  const confirmShare = async (
+    target: "sheet" | "line" | "mail" | "picture" = "sheet",
+  ) => {
+    if (!shareRequest || !shareImageReady || isSharing) return
+    const text = shareTextFor(shareRequest.record)
+    setShareAction(target)
     setIsSharing(true)
     setShareError("")
     try {
       if (shareRequest.channel === "external") {
         const imageFile = shareImageFile.current
+        const needsMap =
+          shareRequest.record.kind === "walk" &&
+          shareRequest.record.route.length > 0
+        if (needsMap && !imageFile) {
+          setShareError(
+            "道の図を添付できませんでした。確認画面を開き直して、もう一度送ってください。",
+          )
+          return
+        }
+        if (target === "mail" || target === "picture") {
+          if (target === "picture") {
+            if (!imageFile) {
+              setShareError("保存できる道の図がありません。")
+              return
+            }
+            await downloadWalkPicture(text, imageFile)
+          } else {
+            await downloadWalkEmail(text, imageFile)
+            if (imageFile) {
+              setMailReady(true)
+            } else {
+              setShareNotice(
+                "メールの画面を開きました。送りたい人を選んで送ってください。",
+              )
+              closeShare()
+            }
+          }
+          setShareError("")
+          return
+        }
         const outcome = await sharePreparedWalk(text, imageFile)
         if (outcome === "cancelled") {
           setShareError("送信を中止しました。もう一度送れます。")
@@ -1986,13 +2028,11 @@ export default function WalkingApp({
           return
         }
         setShareNotice(
-          outcome === "shared"
-            ? "送り先の画面を開きました。"
-            : outcome === "shared-file"
-              ? "送り先の画面を開きました。道の図を添付しています。文章は図の下に入っています。"
-              : imageFile
-                ? "道の図を保存し、文章をコピーしました。メールには自動で添付できないため、保存した画像を添付してください。"
-                : "文章をコピーしました。LINEやメールに貼り付けてください。",
+          outcome === "shared" || outcome === "shared-file"
+            ? "LINEなどの送り先の画面を開きました。"
+            : imageFile
+              ? "道の図を保存し、文章をコピーしました。メールには自動で添付できないため、保存した画像を添付してください。"
+              : "文章をコピーしました。LINEやメールに貼り付けてください。",
         )
         closeShare()
         return
@@ -2030,6 +2070,7 @@ export default function WalkingApp({
       )
     } finally {
       setIsSharing(false)
+      setShareAction(null)
     }
   }
 
@@ -2911,8 +2952,27 @@ export default function WalkingApp({
                 </p>
               </>
             )}
-            {shareRequest.channel === "external" && (
-              <p>次の画面で、LINEやメールなどの送り先を選んでください。</p>
+            {shareRequest.channel === "external" && !mailReady && (
+              <p>
+                {usesDesktopMail()
+                  ? "パソコンでは、LINEとメールで送り方が違います。下のボタンから選んでください。"
+                  : "次の画面で、LINEやメールなどの送り先を選んでください。"}
+              </p>
+            )}
+            {mailReady && (
+              <>
+                <p>道の図の付いたメールを保存しました。</p>
+                <ol className="walk-share-steps">
+                  <li>ダウンロードした「おさんぽの記録」を開いてください。</li>
+                  <li>道の図が付いたメールが開きます。</li>
+                  <li>そのメールを転送し、送りたい人を選んで送ってください。</li>
+                  {shareImageUrl && (
+                    <li>
+                      メールのファイルが開けないときは、「画像だけ保存する」を押し、保存した画像をメールに添付してください。
+                    </li>
+                  )}
+                </ol>
+              </>
             )}
             {(sendingMap ||
               (!shareImageReady &&
@@ -2927,32 +2987,102 @@ export default function WalkingApp({
               </p>
             )}
             <div className="walk-dialog-actions walk-dialog-actions--stack">
-              <button
-                className="walk-start-button"
-                disabled={
-                  !shareImageReady ||
-                  isSharing ||
-                  (shareRequest.channel === "group" && !selectedShareGroup)
-                }
-                onClick={() => void confirmShare()}
-                type="button"
-              >
-                {isSharing
-                  ? "送っています…"
-                  : !shareImageReady
-                    ? "道の図を作っています…"
-                    : shareRequest.channel === "group"
-                      ? `「${selectedShareGroup?.name ?? "茶話会"}」に送る`
-                      : "この内容で送り先を選ぶ"}
-              </button>
-              <button
-                className="walk-secondary-button"
-                disabled={isSharing}
-                onClick={closeShare}
-                type="button"
-              >
-                送るのをやめる
-              </button>
+              {mailReady ? (
+                <>
+                  <button
+                    className="walk-start-button"
+                    disabled={isSharing}
+                    onClick={() => void confirmShare("mail")}
+                    type="button"
+                  >
+                    {shareAction === "mail" ? "保存しています…" : "もう一度保存する"}
+                  </button>
+                  {shareImageUrl && (
+                    <button
+                      className="walk-share-button walk-share-button--group"
+                      disabled={isSharing}
+                      onClick={() => void confirmShare("picture")}
+                      type="button"
+                    >
+                      {shareAction === "picture"
+                        ? "保存しています…"
+                        : "画像だけ保存する"}
+                    </button>
+                  )}
+                  <button
+                    className="walk-secondary-button"
+                    disabled={isSharing}
+                    onClick={closeShare}
+                    type="button"
+                  >
+                    閉じる
+                  </button>
+                </>
+              ) : shareRequest.channel === "external" && usesDesktopMail() ? (
+                <>
+                  <button
+                    className="walk-start-button"
+                    disabled={!shareImageReady || isSharing}
+                    onClick={() => void confirmShare("line")}
+                    type="button"
+                  >
+                    {shareAction === "line"
+                      ? "送り先を開いています…"
+                      : !shareImageReady
+                        ? "道の図を作っています…"
+                        : "LINEで送る"}
+                  </button>
+                  <button
+                    className="walk-share-button walk-share-button--group"
+                    disabled={!shareImageReady || isSharing}
+                    onClick={() => void confirmShare("mail")}
+                    type="button"
+                  >
+                    {shareAction === "mail"
+                      ? "保存しています…"
+                      : !shareImageReady
+                        ? "道の図を作っています…"
+                        : "メールで送る"}
+                  </button>
+                  <button
+                    className="walk-secondary-button"
+                    disabled={isSharing}
+                    onClick={closeShare}
+                    type="button"
+                  >
+                    送るのをやめる
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="walk-start-button"
+                    disabled={
+                      !shareImageReady ||
+                      isSharing ||
+                      (shareRequest.channel === "group" && !selectedShareGroup)
+                    }
+                    onClick={() => void confirmShare()}
+                    type="button"
+                  >
+                    {isSharing
+                      ? "送っています…"
+                      : !shareImageReady
+                        ? "道の図を作っています…"
+                        : shareRequest.channel === "group"
+                          ? `「${selectedShareGroup?.name ?? "茶話会"}」に送る`
+                          : "この内容で送り先を選ぶ"}
+                  </button>
+                  <button
+                    className="walk-secondary-button"
+                    disabled={isSharing}
+                    onClick={closeShare}
+                    type="button"
+                  >
+                    送るのをやめる
+                  </button>
+                </>
+              )}
             </div>
           </section>
         </div>
