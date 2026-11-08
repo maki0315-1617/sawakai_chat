@@ -6367,8 +6367,101 @@ export default function App() {
     }
   };
 
+  const shareWalkToGroup = async ({
+    groupId,
+    text,
+    image,
+  }: {
+    groupId: string;
+    text: string;
+    image?: Blob;
+  }) => {
+    const appendIfActive = (message: ChatMessage) => {
+      if (groupId !== activeGroupId) return;
+      setMessages((current) =>
+        current.some((item) => item.id === message.id)
+          ? current
+          : [...current, message],
+      );
+    };
+    if (image) {
+      const file =
+        image instanceof File
+          ? image
+          : new File([image], "osanpo.jpg", { type: "image/jpeg" });
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      formData.append("text", text);
+      const response = await fetch(`${apiRoot}/messages/media`, {
+        method: "POST",
+        headers: mediaHeaders(token, groupId),
+        body: formData,
+      });
+      const responseText = await response.text();
+      let result: { error?: string; message?: ChatMessage } = {};
+      try {
+        result = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        result = {};
+      }
+      if (response.status === 401) {
+        throw new Error(
+          "参加情報の有効期限が切れました。茶話会に入り直してから送ってください。",
+        );
+      }
+      if (!response.ok || !result.message) {
+        throw new Error(
+          result.error ??
+            "茶話会に送れませんでした。通信を確認してもう一度お試しください。",
+        );
+      }
+      appendIfActive(result.message);
+      if (result.message.text === text) return;
+    }
+    const response = await fetch(`${apiRoot}/messages`, {
+      method: "POST",
+      headers: apiHeaders(token, groupId),
+      body: JSON.stringify({ text }),
+    });
+    let result: { error?: string; message?: ChatMessage } = {};
+    try {
+      result = await response.json();
+    } catch {
+      result = {};
+    }
+    if (response.status === 401) {
+      throw new Error(
+        "参加情報の有効期限が切れました。茶話会に入り直してから送ってください。",
+      );
+    }
+    if (!response.ok || !result.message) {
+      throw new Error(
+        image
+          ? "道の図は茶話会に送れました。文章は送れなかったので、もう一度お試しください。"
+          : (result.error ?? "茶話会に送れませんでした。"),
+      );
+    }
+    appendIfActive(result.message);
+  };
+
   if (showWalking) {
-    return <WalkingApp onBack={() => setShowWalking(false)} />;
+    const listedGroups = groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+    }));
+    const walkShareGroups = !token
+      ? []
+      : listedGroups.some((group) => group.id === activeGroupId)
+        ? listedGroups
+        : [{ id: activeGroupId, name: groupName }, ...listedGroups];
+    return (
+      <WalkingApp
+        defaultShareGroupId={token ? activeGroupId : ""}
+        onBack={() => setShowWalking(false)}
+        onShareToGroup={token ? shareWalkToGroup : undefined}
+        shareGroups={walkShareGroups}
+      />
+    );
   }
 
   if (!token || !profile) {

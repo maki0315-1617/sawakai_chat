@@ -3851,10 +3851,13 @@ app.post(`${root}/messages/media`, async (c) => {
   const { data: signed } = await client.storage
     .from(mediaBucket)
     .createSignedUrl(path, 24 * 60 * 60);
+  const suppliedText = formData.get("text");
+  const caption =
+    typeof suppliedText === "string" ? suppliedText.trim().slice(0, 500) : "";
   const message: Message = {
     id: crypto.randomUUID(),
     sender: session.name,
-    text: isImage ? "画像を送信しました。" : "動画を送信しました。",
+    text: caption || (isImage ? "画像を送信しました。" : "動画を送信しました。"),
     createdAt: new Date().toISOString(),
     avatar: avatarFor(session.name),
     attachment: {

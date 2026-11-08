@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react"
 
 import "./WalkingApp.css"
+import {
+  createWalkShareImage,
+  sharePreparedWalk,
+  walkShareText,
+} from "./walkShare"
 
 type Weather = "sunny" | "cloudy" | "rain" | "hot" | "windy" | "snow"
 
@@ -1169,7 +1174,35 @@ function formatMonth(date = new Date()) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月`
 }
 
-export default function WalkingApp({ onBack }: { onBack: () => void }) {
+function walkWhenLabel(record: WalkRecord) {
+  const [, month, day] = record.date.split("-")
+  const savedAt = new Date(record.createdAt)
+  const time = Number.isNaN(savedAt.getTime())
+    ? ""
+    : savedAt.toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+  return `${Number(month)}月${Number(day)}日${time ? ` ${time}` : ""}`
+}
+
+export type WalkShareGroup = { id: string; name: string }
+
+export default function WalkingApp({
+  onBack,
+  shareGroups = [],
+  defaultShareGroupId = "",
+  onShareToGroup,
+}: {
+  onBack: () => void
+  shareGroups?: WalkShareGroup[]
+  defaultShareGroupId?: string
+  onShareToGroup?: (input: {
+    groupId: string
+    text: string
+    image?: Blob
+  }) => Promise<void>
+}) {
   const [initialRecords] = useState(() => {
     try {
       return { records: loadRecords(), error: "" }
@@ -1224,6 +1257,19 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
   const [pendingKind, setPendingKind] = useState<"walk" | "charge">("walk")
 
   const [deleteTarget, setDeleteTarget] = useState<WalkRecord | null>(null)
+  const [shareRequest, setShareRequest] = useState<{
+    record: WalkRecord
+    channel: "external" | "group"
+  } | null>(null)
+  const [savedForShare, setSavedForShare] = useState<WalkRecord | null>(null)
+  const [shareGroupId, setShareGroupId] = useState(defaultShareGroupId)
+  const [includeReview, setIncludeReview] = useState(true)
+  const [shareError, setShareError] = useState("")
+  const [shareNotice, setShareNotice] = useState("")
+  const [isSharing, setIsSharing] = useState(false)
+  const [shareImageUrl, setShareImageUrl] = useState<string | null>(null)
+  const [shareImageReady, setShareImageReady] = useState(true)
+  const [shareMapNote, setShareMapNote] = useState("")
 
   const [isListening, setIsListening] = useState(false)
   const [isStoppingVoice, setIsStoppingVoice] = useState(false)
@@ -1247,6 +1293,8 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
 
   const recognitionRef = useRef<Recognition | null>(null)
   const reviewInputRef = useRef<HTMLTextAreaElement>(null)
+  const shareImageFile = useRef<File | null>(null)
+  const sharePreviewUrl = useRef<string | null>(null)
   const voiceActiveRef = useRef(false)
   const voiceRestartTimer = useRef<number | null>(null)
 
@@ -1297,6 +1345,68 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     }, 60_000)
     return () => window.clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    const releasePreview = () => {
+      if (!sharePreviewUrl.current) return
+      URL.revokeObjectURL(sharePreviewUrl.current)
+      sharePreviewUrl.current = null
+    }
+    if (
+      !shareRequest ||
+      shareRequest.record.kind !== "walk" ||
+      shareRequest.record.route.length === 0
+    ) {
+      releasePreview()
+      shareImageFile.current = null
+      setShareImageUrl(null)
+      setShareImageReady(true)
+      setShareMapNote("")
+      return
+    }
+    let cancelled = false
+    setShareImageReady(false)
+    setShareMapNote("道の図を作っています。できあがってから送ってください。")
+    setShareImageUrl(null)
+    shareImageFile.current = null
+    const record = shareRequest.record
+    createWalkShareImage(
+      record.route,
+      [
+        walkWhenLabel(record),
+        formatDuration(record.durationSeconds ?? record.durationMinutes * 60),
+        distanceText(record).replace(/^距離：/, ""),
+      ],
+      isRouteGap,
+    )
+      .then((result) => {
+        if (cancelled) return
+        releasePreview()
+        const file = new File([result.blob], "osanpo.jpg", {
+          type: "image/jpeg",
+        })
+        shareImageFile.current = file
+        sharePreviewUrl.current = URL.createObjectURL(file)
+        setShareImageUrl(sharePreviewUrl.current)
+        setShareImageReady(true)
+        setShareMapNote(
+          result.showsStreetNames
+            ? "道の名前が入った地図です。送る前に、図を見てください。"
+            : "道の名前が出せなかったため、線だけの図です。送る前に、図を見てください。",
+        )
+      })
+      .catch((error) => {
+        console.error("道の図を作れませんでした", error)
+        if (cancelled) return
+        shareImageFile.current = null
+        setShareImageReady(true)
+        setShareMapNote("道の図は作れませんでした。文章だけ送れます。")
+      })
+    return () => {
+      cancelled = true
+      releasePreview()
+    }
+  }, [shareRequest])
 
   useEffect(() => {
     if (!isWalking) return
@@ -1649,6 +1759,7 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     }
 
     setRecords((current) => [...cleanExpiredRoutes(current), record])
+    setSavedForShare(record)
 
     setLocationEnabled(false)
 
@@ -1787,6 +1898,131 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
     begin()
   }
 
+  const canShareToGroup = Boolean(onShareToGroup) && shareGroups.length > 0
+  const selectedShareGroup =
+    shareGroups.find((group) => group.id === shareGroupId) ?? shareGroups[0]
+  const sharePreviewText = shareRequest
+    ? walkShareText({
+        when: walkWhenLabel(shareRequest.record),
+        kind: shareRequest.record.kind,
+        durationText: formatDuration(
+          shareRequest.record.durationSeconds ??
+            shareRequest.record.durationMinutes * 60,
+        ),
+        distanceLine: distanceText(shareRequest.record),
+        review: shareRequest.record.review,
+        includeReview,
+        hasRoute:
+          shareRequest.record.kind === "walk" &&
+          shareRequest.record.route.length > 0,
+      })
+    : ""
+  const sendingMap = Boolean(shareImageUrl)
+
+  const clearShareImage = () => {
+    shareImageFile.current = null
+    if (sharePreviewUrl.current) {
+      URL.revokeObjectURL(sharePreviewUrl.current)
+      sharePreviewUrl.current = null
+    }
+    setShareImageUrl(null)
+  }
+
+  const openShare = (record: WalkRecord, channel: "external" | "group") => {
+    clearShareImage()
+    const hasRoute = record.kind === "walk" && record.route.length > 0
+    setSavedForShare(null)
+    setShareError("")
+    setShareNotice("")
+    setShareImageReady(!hasRoute)
+    setShareMapNote(
+      hasRoute ? "道の図を作っています。できあがってから送ってください。" : "",
+    )
+    setIncludeReview(Boolean(record.review.trim()))
+    setShareGroupId(
+      shareGroups.some((group) => group.id === defaultShareGroupId)
+        ? defaultShareGroupId
+        : (shareGroups[0]?.id ?? ""),
+    )
+    setShareRequest({ record, channel })
+  }
+
+  const closeShare = () => {
+    setShareRequest(null)
+    setShareError("")
+    setIsSharing(false)
+  }
+
+  const confirmShare = async () => {
+    if (!shareRequest || !shareImageReady || isSharing) return
+    const text = walkShareText({
+      when: walkWhenLabel(shareRequest.record),
+      kind: shareRequest.record.kind,
+      durationText: formatDuration(
+        shareRequest.record.durationSeconds ??
+          shareRequest.record.durationMinutes * 60,
+      ),
+      distanceLine: distanceText(shareRequest.record),
+      review: shareRequest.record.review,
+      includeReview,
+      hasRoute:
+        shareRequest.record.kind === "walk" &&
+        shareRequest.record.route.length > 0,
+    })
+    setIsSharing(true)
+    setShareError("")
+    try {
+      if (shareRequest.channel === "external") {
+        const imageFile = shareImageFile.current
+        const outcome = await sharePreparedWalk(text, imageFile)
+        if (outcome === "cancelled") {
+          setShareError("送信を中止しました。もう一度送れます。")
+          return
+        }
+        if (outcome === "saved-only") {
+          setShareError(
+            "道の図は写真として保存しました。文章はコピーできなかったので、上の文章を長押ししてコピーしてください。",
+          )
+          return
+        }
+        setShareNotice(
+          outcome === "shared"
+            ? "送り先の画面を開きました。"
+            : outcome === "shared-and-saved"
+              ? "文章の送り先を開きました。道の図は写真として保存したので、そこに添付してください。"
+              : imageFile
+                ? "文章をコピーし、道の図を写真として保存しました。LINEやメールに貼り付けてください。"
+                : "文章をコピーしました。LINEやメールに貼り付けてください。",
+        )
+        closeShare()
+        return
+      }
+      if (!onShareToGroup || !selectedShareGroup) {
+        setShareError("茶話会に入ってから送れます。")
+        return
+      }
+      await onShareToGroup({
+        groupId: selectedShareGroup.id,
+        text,
+        image: shareImageFile.current ?? undefined,
+      })
+      setShareNotice(
+        shareImageFile.current
+          ? `「${selectedShareGroup.name}」に、文章と道の図を送りました。`
+          : `「${selectedShareGroup.name}」に、文章を送りました。`,
+      )
+      closeShare()
+    } catch (error) {
+      setShareError(
+        error instanceof Error
+          ? error.message
+          : "送れませんでした。もう一度お試しください。",
+      )
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
   const confirmDelete = () => {
     if (!deleteTarget) return
 
@@ -1856,6 +2092,11 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
         {storageError && (
           <p className="walk-storage-error" role="alert">
             {storageError}
+          </p>
+        )}
+        {shareNotice && (
+          <p className="walk-share-notice" role="status">
+            {shareNotice}
           </p>
         )}
         {screen === "home" && !isWalking && (
@@ -2398,16 +2639,41 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                           </>
                         )}
                       </div>
-                      <button
-                        aria-label={`${record.date}の${
-                          record.kind === "walk" ? "散歩" : "充電日"
-                        }記録を削除`}
-                        className="walk-delete-button"
-                        onClick={() => setDeleteTarget(record)}
-                        type="button"
-                      >
-                        削除
-                      </button>
+                      <div className="walk-share-actions">
+                        <p className="walk-share-hint">
+                          {record.kind === "walk" && record.route.length > 0
+                            ? "道の図は7日以内なら一緒に送れます。"
+                            : "時間などの記録を送れます。道の図はありません。"}
+                        </p>
+                        <button
+                          aria-label={`${walkWhenLabel(record)}の記録を、LINEやメールで送る`}
+                          className="walk-share-button"
+                          onClick={() => openShare(record, "external")}
+                          type="button"
+                        >
+                          LINEやメールで送る
+                        </button>
+                        {canShareToGroup && (
+                          <button
+                            aria-label={`${walkWhenLabel(record)}の記録を、茶話会に送る`}
+                            className="walk-share-button walk-share-button--group"
+                            onClick={() => openShare(record, "group")}
+                            type="button"
+                          >
+                            茶話会に送る
+                          </button>
+                        )}
+                        <button
+                          aria-label={`${record.date}の${
+                            record.kind === "walk" ? "散歩" : "充電日"
+                          }記録を削除`}
+                          className="walk-delete-button"
+                          onClick={() => setDeleteTarget(record)}
+                          type="button"
+                        >
+                          この記録を削除
+                        </button>
+                      </div>
                     </article>
                   ))
               )}
@@ -2517,6 +2783,165 @@ export default function WalkingApp({ onBack }: { onBack: () => void }) {
                 type="button"
               >
                 いいえ、終了します
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {savedForShare && !shareRequest && (
+        <div className="walk-dialog-backdrop">
+          <section
+            aria-labelledby="walk-saved-share-title"
+            aria-modal="true"
+            className="walk-dialog walk-share-dialog"
+            role="dialog"
+          >
+            <h2 id="walk-saved-share-title">記録を保存しました</h2>
+            <p>誰かに知らせますか？</p>
+            <p>
+              {savedForShare.kind === "walk" && savedForShare.route.length > 0
+                ? "歩いた道の図は、7日たつとこの端末から消えます。今なら一緒に送れます。"
+                : "時間などの記録を送れます。道の図はありません。"}
+            </p>
+            <div className="walk-dialog-actions walk-dialog-actions--stack">
+              <button
+                className="walk-share-button"
+                onClick={() => openShare(savedForShare, "external")}
+                type="button"
+              >
+                LINEやメールで送る
+              </button>
+              {canShareToGroup && (
+                <button
+                  className="walk-share-button walk-share-button--group"
+                  onClick={() => openShare(savedForShare, "group")}
+                  type="button"
+                >
+                  茶話会に送る
+                </button>
+              )}
+              <button
+                className="walk-secondary-button"
+                onClick={() => setSavedForShare(null)}
+                type="button"
+              >
+                今は送らない
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {shareRequest && (
+        <div className="walk-dialog-backdrop">
+          <section
+            aria-labelledby="walk-share-title"
+            aria-modal="true"
+            className="walk-dialog walk-share-dialog"
+            role="dialog"
+          >
+            <h2 id="walk-share-title">
+              {shareRequest.channel === "group"
+                ? "茶話会へ送る前の確認"
+                : "送る前の確認"}
+            </h2>
+            <p>この内容で間違いありませんか？</p>
+            <p className="walk-share-preview">{sharePreviewText}</p>
+            {shareMapNote && <p role="status">{shareMapNote}</p>}
+            {shareImageUrl && (
+              <img
+                alt="送る道の図"
+                className="walk-share-map"
+                src={shareImageUrl}
+              />
+            )}
+            {shareRequest.record.review.trim() && (
+              <label className="walk-share-review">
+                <input
+                  checked={includeReview}
+                  onChange={(event) => setIncludeReview(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>感想も一緒に送る</span>
+              </label>
+            )}
+            {shareRequest.channel === "group" && selectedShareGroup && (
+              <>
+                {shareGroups.length > 1 ? (
+                  <div
+                    aria-label="送り先の茶話会"
+                    className="walk-share-groups"
+                    role="group"
+                  >
+                    <p>送り先を選んでください。いま開いている茶話会を最初に選んでいます。</p>
+                    {shareGroups.map((group) => (
+                      <button
+                        aria-pressed={selectedShareGroup.id === group.id}
+                        className={
+                          selectedShareGroup.id === group.id ? "is-selected" : ""
+                        }
+                        key={group.id}
+                        onClick={() => setShareGroupId(group.id)}
+                        type="button"
+                      >
+                        {group.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="walk-share-destination">
+                    送り先は、いま開いている「{selectedShareGroup.name}」です。
+                  </p>
+                )}
+                <p>
+                  {sendingMap || !shareImageReady
+                    ? "茶話会では、道の図と文章は約30日残ります。"
+                    : "茶話会では、この文章は約90日残ります。"}
+                </p>
+              </>
+            )}
+            {shareRequest.channel === "external" && (
+              <p>次の画面で、LINEやメールなどの送り先を選んでください。</p>
+            )}
+            {(sendingMap ||
+              (!shareImageReady &&
+                shareRequest.record.route.length > 0)) && (
+              <p>
+                自宅の近くが分かることがあります。送った相手は、ほかの人へ転送できます。
+              </p>
+            )}
+            {shareError && (
+              <p className="walk-inline-error" role="alert">
+                {shareError}
+              </p>
+            )}
+            <div className="walk-dialog-actions walk-dialog-actions--stack">
+              <button
+                className="walk-start-button"
+                disabled={
+                  !shareImageReady ||
+                  isSharing ||
+                  (shareRequest.channel === "group" && !selectedShareGroup)
+                }
+                onClick={() => void confirmShare()}
+                type="button"
+              >
+                {isSharing
+                  ? "送っています…"
+                  : !shareImageReady
+                    ? "道の図を作っています…"
+                    : shareRequest.channel === "group"
+                      ? `「${selectedShareGroup?.name ?? "茶話会"}」に送る`
+                      : "この内容で送り先を選ぶ"}
+              </button>
+              <button
+                className="walk-secondary-button"
+                disabled={isSharing}
+                onClick={closeShare}
+                type="button"
+              >
+                送るのをやめる
               </button>
             </div>
           </section>
