@@ -6557,19 +6557,16 @@ export default function App() {
       <header className="group-header">
         <div className="group-header__inner">
           <button
-            aria-label="茶話会を切り替える"
+            aria-label="設定を開く"
             className="group-icon"
             onClick={() => {
-              setShowGroups(true);
-              void loadGroups();
+              setShowGroup(true);
+              void loadGroup();
             }}
+            type="button"
           >
-            <img
-              alt=""
-              height="25"
-              src="/assets/9cbab.svg"
-              width="25"
-            />
+            <span aria-hidden="true" className="group-icon__settings">⚙️</span>
+            <span className="group-icon__label">設定</span>
             {totalGroupUnread > 0 && (
               <span className="group-unread-badge">
                 {totalGroupUnread > 99 ? "99+" : totalGroupUnread}
@@ -6785,7 +6782,7 @@ export default function App() {
             )}
             <div aria-hidden="true" className="message-end" ref={messageEndRef} />
             <div className="app-credits">
-              <span>© Ron AI Systems</span>
+              <span>茶話会・みんなで脳活 Ver1.00</span>
               <a
                 href="https://ron-home-app.vercel.app/"
                 rel="noopener noreferrer"
@@ -7065,6 +7062,7 @@ export default function App() {
               )}
             </div>
           )}
+          <div className="app-copyright">© Ron AI Systems. All rights reserved.</div>
         </div>
       </footer>
 
@@ -7506,7 +7504,18 @@ export default function App() {
               <CloseIcon />
             </button>
             <p className="dialog-eyebrow">招待された方だけのグループ</p>
-            <h2 id="group-panel-title">参加者と招待</h2>
+            <h2 id="group-panel-title">参加者と招待・設定</h2>
+            <button
+              className="group-settings-switch"
+              onClick={() => {
+                setShowGroup(false);
+                setShowGroups(true);
+                void loadGroups();
+              }}
+              type="button"
+            >
+              茶話会を切り替える{totalGroupUnread > 0 ? `（未読 ${totalGroupUnread}件）` : ""}
+            </button>
             <LocationSharingPanel sharing={locationSharing} />
 
             <div className="image-setting">
