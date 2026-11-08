@@ -8,9 +8,11 @@ type VoiceInputProps = {
   onText: (text: string) => void;
   autoStart?: boolean;
   onListeningStart?: () => void;
+  onStatusChange?: (status: State, error: string) => void;
+  cancelSignal?: number;
 };
 
-type State = "idle" | "listening" | "sending";
+type State = "idle" | "starting" | "listening" | "sending";
 
 const maxSeconds = 60;
 const silenceStopMs = 3000;
@@ -110,6 +112,8 @@ export default function VoiceInput({
   onText,
   autoStart = false,
   onListeningStart,
+  onStatusChange,
+  cancelSignal = 0,
 }: VoiceInputProps) {
   const [state, setState] = useState<State>("idle");
   const [seconds, setSeconds] = useState(0);
@@ -133,6 +137,13 @@ export default function VoiceInput({
   const onListeningStartRef = useRef(onListeningStart);
   onListeningStartRef.current = onListeningStart;
   const autoStartConsumedRef = useRef(false);
+  const lastCancelSignalRef = useRef(cancelSignal);
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+
+  useEffect(() => {
+    onStatusChangeRef.current?.(state, error);
+  }, [state, error]);
 
   const canRecord =
     typeof navigator !== "undefined" &&
@@ -180,13 +191,18 @@ export default function VoiceInput({
         signal: controller.signal,
       });
       const result = await response.json().catch(() => ({}));
+      if (cancelledRef.current) return;
       if (!response.ok || typeof result.text !== "string") {
         throw new TranscribeError(
           result.error ?? `文字にできませんでした。（原因コード：${response.status}）`,
           response.status,
         );
       }
-      onTextRef.current(result.text);
+      if (!result.text.trim()) {
+        setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
+        return;
+      }
+      onTextRef.current(result.text.trim());
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") {
         if (timedOut) {
@@ -223,12 +239,22 @@ export default function VoiceInput({
     setError("");
     const Context = getAudioContextClass();
     if (!Context) return;
-    const context = new Context();
+    let context: AudioContext;
+    try {
+      context = new Context();
+    } catch (reason) {
+      console.error("音声入力の準備に失敗しました", reason);
+      setError("音声入力を準備できませんでした。もう一度お試しください。");
+      return;
+    }
     contextRef.current = context;
-    void context.resume().catch(() => undefined);
+    void context.resume().catch((reason) =>
+      console.error("音声入力の準備を再試行します", reason),
+    );
     cancelledRef.current = false;
     stoppedRef.current = false;
     chunksRef.current = [];
+    setState("starting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -238,7 +264,17 @@ export default function VoiceInput({
         },
       });
       streamRef.current = stream;
-      if (context.state !== "running") await context.resume().catch(() => undefined);
+      if (cancelledRef.current) {
+        cleanup();
+        setState("idle");
+        return;
+      }
+      if (context.state !== "running") await context.resume();
+      if (cancelledRef.current) {
+        cleanup();
+        setState("idle");
+        return;
+      }
       const source = context.createMediaStreamSource(stream);
       const node = context.createScriptProcessor(4096, 1, 1);
       nodeRef.current = node;
@@ -298,6 +334,8 @@ export default function VoiceInput({
     } catch (reason) {
       cleanup();
       setState("idle");
+      if (cancelledRef.current) return;
+      console.error("マイクを開始できませんでした", reason);
       setError(
         reason instanceof DOMException && reason.name === "NotAllowedError"
           ? "マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。"
@@ -320,7 +358,7 @@ export default function VoiceInput({
     recognition.interimResults = false;
     recognitionRef.current = recognition;
     cancelledRef.current = false;
-    let gotText = false;
+    let recognizedText = "";
     let failed = false;
     const startedAt = Date.now();
     recognition.onresult = (event) => {
@@ -328,12 +366,10 @@ export default function VoiceInput({
         .map((result) => result[0]?.transcript ?? "")
         .join("")
         .trim();
-      if (text) {
-        gotText = true;
-        onTextRef.current(text);
-      }
+      if (text && !cancelledRef.current) recognizedText = text;
     };
     recognition.onerror = (event) => {
+      if (cancelledRef.current) return;
       failed = true;
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
@@ -348,7 +384,9 @@ export default function VoiceInput({
       timerRef.current = null;
       recognitionRef.current = null;
       setState("idle");
-      if (!gotText && !failed && !cancelledRef.current) {
+      if (recognizedText && !failed && !cancelledRef.current) {
+        onTextRef.current(recognizedText);
+      } else if (!failed && !cancelledRef.current) {
         setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
       }
     };
@@ -381,6 +419,10 @@ export default function VoiceInput({
     }
     if (disabled || state !== "idle" || autoStartConsumedRef.current) return;
     autoStartConsumedRef.current = true;
+    if (localStorage.getItem(consentKey) !== "agreed") {
+      setNeedsConsent(true);
+      return;
+    }
     startListening();
   }, [autoStart, disabled, state]);
 
@@ -400,9 +442,16 @@ export default function VoiceInput({
 
   const cancel = () => {
     cancelledRef.current = true;
+    if (abortRef.current) abortRef.current.abort();
     if (recognitionRef.current) recognitionRef.current.abort();
     else finishRef.current?.();
   };
+
+  useEffect(() => {
+    if (lastCancelSignalRef.current === cancelSignal) return;
+    lastCancelSignalRef.current = cancelSignal;
+    cancel();
+  }, [cancelSignal]);
 
   useEffect(
     () => () => {
@@ -416,7 +465,7 @@ export default function VoiceInput({
   );
 
   useEffect(() => {
-    if (disabled && state === "listening") cancel();
+    if (disabled && state !== "idle") cancel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled]);
 
@@ -433,19 +482,21 @@ export default function VoiceInput({
       <button
         aria-label={state === "listening" ? "話し終わったら押してください" : "話して入力する"}
         className={`voice-input__button ${state === "listening" ? "is-listening" : ""}`}
-        disabled={disabled || state === "sending"}
+        disabled={disabled || state === "sending" || state === "starting"}
         onClick={press}
         type="button"
       >
         {state === "listening"
           ? `⏹ 話し終わったら押す（${seconds}秒）`
+          : state === "starting"
+            ? "🎤 マイクを準備しています…"
           : state === "sending"
             ? "✍ 文字にしています…"
             : "🎤 話して入力"}
       </button>
-      {state === "listening" && (
+      {(state === "starting" || state === "listening") && (
         <p className="voice-input__status" role="status">
-          🔴 聞いています。ゆっくり話してください。
+          {state === "starting" ? "マイクの準備をしています。" : "🔴 聞いています。ゆっくり話してください。"}
           <button className="voice-input__cancel" onClick={cancel} type="button">
             やめる
           </button>
@@ -456,7 +507,7 @@ export default function VoiceInput({
           少しお待ちください。
           <button
             className="voice-input__cancel"
-            onClick={() => abortRef.current?.abort()}
+            onClick={cancel}
             type="button"
           >
             やめる
