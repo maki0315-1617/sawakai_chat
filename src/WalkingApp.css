@@ -1137,6 +1137,10 @@
 }
 
 .walk-share-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   width: 100%;
   min-height: 60px;
   padding: 12px 16px;
@@ -1147,6 +1151,8 @@
   cursor: pointer;
   font-size: 18px;
   font-weight: 700;
+  text-align: center;
+  text-decoration: none;
 }
 
 .walk-share-button--group {

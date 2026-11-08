@@ -145,34 +145,8 @@ export function sendWalkByMail(text: string, subject: string, file: File | null)
   window.setTimeout(() => openMailDraft(subject, text), 700)
 }
 
-export async function sendWalkByPhoneMail(
-  text: string,
-  subject: string,
-  file: File | null,
-): Promise<"shared" | "cancelled"> {
-  const namedFile = file
-    ? new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" })
-    : null
-  if (!namedFile || typeof navigator.share !== "function") {
-    openMailDraft(subject, text)
-    return "shared"
-  }
-  // スマホのメールは、共有の title を件名に使わず空欄にする。
-  // ページの題名と、経路図のファイル名を件名にする。本文は text のまま渡す。
-  const previousTitle = document.title
-  document.title = subject
-  try {
-    await navigator.share({ files: [namedFile], text })
-    return "shared"
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return "cancelled"
-    }
-    openMailDraft(subject, text)
-    return "shared"
-  } finally {
-    document.title = previousTitle
-  }
+export function phoneMailHref(text: string, subject: string) {
+  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
 }
 
 export async function saveWalkForDesktopLine(
