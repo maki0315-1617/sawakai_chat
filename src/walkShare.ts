@@ -125,7 +125,7 @@ export function walkShareSubject(when: string) {
 
 export function sendWalkByMail(text: string, subject: string, file: File | null) {
   if (file) downloadNamedImage(file, subject)
-  window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
+  window.setTimeout(() => openMailDraft(subject, text), 700)
 }
 
 export async function saveWalkForDesktopLine(
@@ -133,15 +133,30 @@ export async function saveWalkForDesktopLine(
   subject: string,
   file: File | null,
 ) {
-  const copied = await copyText(text)
   if (file) downloadNamedImage(file, subject)
-  return copied
+  return copyText(text)
+}
+
+export function downloadWalkImage(file: File, subject: string) {
+  downloadNamedImage(file, subject)
+}
+
+export function copyWalkText(text: string) {
+  return copyText(text)
 }
 
 function downloadNamedImage(file: File, subject: string) {
   downloadFile(
     new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" }),
   )
+}
+
+function openMailDraft(subject: string, text: string) {
+  const link = document.createElement("a")
+  link.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
 }
 
 async function copyText(text: string) {
@@ -158,11 +173,12 @@ function downloadFile(file: File) {
   const link = document.createElement("a")
   link.href = url
   link.download = file.name
-  link.rel = "noopener"
   document.body.appendChild(link)
   link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+  window.setTimeout(() => {
+    link.remove()
+    URL.revokeObjectURL(url)
+  }, 4000)
 }
 
 function segments<T extends SharePoint>(

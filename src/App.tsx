@@ -6394,7 +6394,19 @@ export default function App() {
           "道の図を読み取れませんでした。もう一度送ってください。",
         );
       }
-      const file = await compressImage(source);
+      const bytes = await source.arrayBuffer();
+      if (bytes.byteLength <= 0) {
+        throw new Error(
+          "道の図を読み取れませんでした。もう一度送ってください。",
+        );
+      }
+      const snapshot = new File([bytes], "osanpo.jpg", {
+        type: source.type || "image/jpeg",
+      });
+      const file =
+        snapshot.type === "image/jpeg" && snapshot.size <= 2 * 1024 * 1024
+          ? snapshot
+          : await compressImage(snapshot);
       const formData = new FormData();
       formData.append("file", file, file.name);
       formData.append("text", text);
