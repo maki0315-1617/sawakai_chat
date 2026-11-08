@@ -5148,9 +5148,18 @@ export default function App() {
       messageEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
     };
     scrollToLatest();
-    const frame = window.requestAnimationFrame(scrollToLatest);
-    setScrollChatToEnd(false);
-    return () => window.cancelAnimationFrame(frame);
+    const timers = [50, 300, 900].map((delay) =>
+      window.setTimeout(scrollToLatest, delay),
+    );
+    const images = document.querySelectorAll<HTMLImageElement>(".message-media");
+    const lastImage = images[images.length - 1];
+    lastImage?.addEventListener("load", scrollToLatest);
+    const done = window.setTimeout(() => setScrollChatToEnd(false), 1000);
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.clearTimeout(done);
+      lastImage?.removeEventListener("load", scrollToLatest);
+    };
   }, [showWalking, scrollChatToEnd, messages.length]);
   useLayoutEffect(() => {
     if (isLoading || !isPositioningMessages || !messageEndRef.current) return;
@@ -6450,8 +6459,7 @@ export default function App() {
         );
       }
       appendIfActive(result.message);
-      const delivered = result.message.text.replace(/\r\n/g, "\n").trim();
-      if (delivered && delivered !== "画像を送信しました。") return;
+      return;
     }
     const response = await fetch(`${apiRoot}/messages`, {
       method: "POST",
