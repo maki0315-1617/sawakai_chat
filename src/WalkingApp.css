@@ -996,7 +996,8 @@
   gap: 10px;
 }
 
-.walk-month-stats article {
+.walk-month-stats article,
+.walk-calendar-trigger {
   display: flex;
   min-height: 150px;
   padding: 15px 8px;
@@ -1009,17 +1010,20 @@
   gap: 3px;
 }
 
-.walk-month-stats article > span:first-child {
+.walk-month-stats article > span:first-child,
+.walk-calendar-trigger > span:first-child {
   font-size: 24px;
 }
 
-.walk-month-stats article > strong {
+.walk-month-stats article > strong,
+.walk-calendar-trigger > strong {
   color: #2d654f;
   font-size: 31px;
   line-height: 1.2;
 }
 
-.walk-month-stats article > strong small {
+.walk-month-stats article > strong small,
+.walk-calendar-trigger > strong small {
   margin-left: 2px;
   font-size: 15px;
 }
@@ -1028,6 +1032,98 @@
   color: var(--walk-muted);
   font-size: 14px;
   font-weight: 700;
+}
+
+.walk-calendar-trigger {
+  width: 100%;
+  color: var(--walk-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.walk-calendar-trigger > span:nth-last-child(2) {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.walk-calendar-trigger > span:last-child {
+  color: #2d654f;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.walk-calendar-dialog {
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  overflow-y: auto;
+}
+
+.walk-calendar-dialog::backdrop {
+  background: rgba(24, 42, 34, 0.5);
+}
+
+.walk-calendar-navigation {
+  margin: 14px 0;
+}
+
+.walk-calendar-dialog .walk-calendar-legend {
+  margin: 10px 0;
+  font-weight: 700;
+}
+
+.walk-calendar {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: center;
+}
+
+.walk-calendar th {
+  color: #52695e;
+  font-size: 15px;
+}
+
+.walk-calendar td {
+  padding: 2px 0;
+  vertical-align: top;
+}
+
+.walk-calendar-day {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+}
+
+.walk-calendar-number {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  color: #294d3f;
+  font-size: 18px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.walk-calendar-number.is-walk {
+  border-color: #2d654f;
+}
+
+.walk-calendar-charge {
+  min-height: 23px;
+  font-size: 19px;
+  line-height: 23px;
+}
+
+.walk-calendar-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .walk-month-total {
@@ -1481,12 +1577,14 @@
     gap: 6px;
   }
 
-  .walk-month-stats article {
+  .walk-month-stats article,
+  .walk-calendar-trigger {
     min-height: 132px;
     padding: 12px 4px;
   }
 
-  .walk-month-stats article > strong {
+  .walk-month-stats article > strong,
+  .walk-calendar-trigger > strong {
     font-size: 27px;
   }
 

@@ -1244,6 +1244,8 @@ export default function WalkingApp({
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const calendarDialogRef = useRef<HTMLDialogElement>(null)
   const [expandedRouteId, setExpandedRouteId] = useState<string | null>(null)
 
   const [condition, setCondition] = useState<Condition>("good")
@@ -1346,6 +1348,12 @@ export default function WalkingApp({
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [])
+
+  useEffect(() => {
+    if (calendarOpen && calendarDialogRef.current && !calendarDialogRef.current.open) {
+      calendarDialogRef.current.showModal()
+    }
+  }, [calendarOpen])
 
   useEffect(() => {
     if (initialRecords.error) return
@@ -1470,21 +1478,33 @@ export default function WalkingApp({
     record.date.startsWith(monthKey),
   )
 
-  const walkingDays = new Set(
+  const walkingDates = new Set(
     monthRecords
       .filter((record) => record.kind === "walk")
       .map((record) => record.date),
-  ).size
+  )
 
-  const chargeDays = new Set(
+  const chargeDates = new Set(
     monthRecords
 
       .filter((record) => record.kind === "charge")
 
       .map((record) => record.date),
-  ).size
+  )
 
+  const walkingDays = walkingDates.size
+  const chargeDays = chargeDates.size
   const totalDays = new Set(monthRecords.map((record) => record.date)).size
+  const firstWeekday = selectedMonth.getDay()
+  const daysInMonth = new Date(
+    selectedMonth.getFullYear(),
+    selectedMonth.getMonth() + 1,
+    0,
+  ).getDate()
+  const calendarWeeks = Array.from(
+    { length: Math.ceil((firstWeekday + daysInMonth) / 7) },
+    (_, week) => Array.from({ length: 7 }, (_, weekday) => week * 7 + weekday - firstWeekday + 1),
+  )
 
   const totalSeconds = monthRecords
 
@@ -2705,14 +2725,20 @@ export default function WalkingApp({
                 </strong>
                 <span>充電した日</span>
               </article>
-              <article>
+              <button
+                className="walk-calendar-trigger"
+                onClick={() => setCalendarOpen(true)}
+                type="button"
+                aria-haspopup="dialog"
+              >
                 <span aria-hidden="true">📅</span>
                 <strong>
                   {totalDays}
                   <small>日</small>
                 </strong>
                 <span>記録した日</span>
-              </article>
+                <span>カレンダーを見る</span>
+              </button>
             </div>
             <div className="walk-month-total">
               <span>この月のお散歩時間</span>
@@ -2820,6 +2846,57 @@ export default function WalkingApp({
           </section>
         )}
       </div>
+
+      <dialog
+        aria-labelledby="walk-calendar-title"
+        className="walk-dialog walk-calendar-dialog"
+        onClose={() => setCalendarOpen(false)}
+        ref={calendarDialogRef}
+      >
+        <h2 id="walk-calendar-title">記録のカレンダー</h2>
+        <div className="walk-month-navigation walk-calendar-navigation" aria-label="カレンダーの月の切り替え">
+          <button type="button" onClick={() => { setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1)); setExpandedRouteId(null) }}>前の月</button>
+          <strong aria-live="polite">{formatMonth(selectedMonth)}</strong>
+          <button type="button" disabled={monthKey >= currentMonthKey} onClick={() => { setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1)); setExpandedRouteId(null) }}>次の月</button>
+        </div>
+        <p className="walk-calendar-legend">○ 散歩の記録　🌤️ 充電日の記録</p>
+        <table className="walk-calendar">
+          <caption className="walk-calendar-sr">{formatMonth(selectedMonth)}の記録</caption>
+          <thead>
+            <tr>
+              {["日", "月", "火", "水", "木", "金", "土"].map((day) => (
+                <th key={day} scope="col">{day}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {calendarWeeks.map((week, index) => (
+              <tr key={index}>
+                {week.map((day, weekday) => {
+                  if (day < 1 || day > daysInMonth) return <td key={weekday} />
+                  const date = localDateKey(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day))
+                  const hasWalk = walkingDates.has(date)
+                  const hasCharge = chargeDates.has(date)
+                  return (
+                    <td key={weekday}>
+                      <span className="walk-calendar-sr">
+                        {day}日、{hasWalk && hasCharge ? "散歩と充電日の記録" : hasWalk ? "散歩の記録" : hasCharge ? "充電日の記録" : "記録なし"}
+                      </span>
+                      <span aria-hidden="true" className="walk-calendar-day">
+                        <span className={hasWalk ? "walk-calendar-number is-walk" : "walk-calendar-number"}>{day}</span>
+                        <span className="walk-calendar-charge">{hasCharge ? "🌤️" : "\u00a0"}</span>
+                      </span>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="walk-dialog-actions">
+          <button className="walk-start-button" onClick={() => calendarDialogRef.current?.close()} type="button">閉じる</button>
+        </div>
+      </dialog>
 
       {showLocationNotice && (
         <div className="walk-dialog-backdrop">
