@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from "react"
 
 import "./WalkingApp.css"
 import {
+  canShareWalkBySystem,
   copyWalkText,
   createWalkShareImage,
   downloadWalkImage,
   saveWalkForDesktopLine,
   sendPhoneMailWithImage,
-  sendWalkByMail,
   sharePreparedWalk,
+  shareWalkBySystem,
   usesDesktopMail,
+  walkMailDraftHref,
   walkShareSubject,
   walkShareText,
 } from "./walkShare"
@@ -1289,8 +1291,10 @@ export default function WalkingApp({
   const [shareImageUrl, setShareImageUrl] = useState<string | null>(null)
   const [shareImageReady, setShareImageReady] = useState(true)
   const [shareMapNote, setShareMapNote] = useState("")
-  const [desktopGuide, setDesktopGuide] = useState<null | "mail" | "line">(null)
-  const [lineTextCopied, setLineTextCopied] = useState(true)
+  const [desktopGuide, setDesktopGuide] = useState<
+    null | "mail" | "phone-mail" | "line" | "system-share"
+  >(null)
+  const [lineTextCopied, setLineTextCopied] = useState(false)
   const [shareAction, setShareAction] = useState<
     "sheet" | "line" | "mail" | null
   >(null)
@@ -1937,6 +1941,10 @@ export default function WalkingApp({
         includeReview,
         hasRoute: shareMapKind(shareRequest.record) !== "none",
         mapKind: shareMapKind(shareRequest.record),
+        imageUnavailable:
+          shareImageReady &&
+          !shareImageUrl &&
+          shareMapKind(shareRequest.record) !== "none",
       })
     : ""
   const sendingMap = Boolean(shareImageUrl)
@@ -1957,7 +1965,7 @@ export default function WalkingApp({
     setShareError("")
     setShareNotice("")
     setDesktopGuide(null)
-    setLineTextCopied(true)
+    setLineTextCopied(false)
     setShareImageReady(!hasRoute)
     setShareMapNote(
       hasRoute ? "道の図を作っています。できあがってから送ってください。" : "",
@@ -1976,7 +1984,7 @@ export default function WalkingApp({
     setShareError("")
     setIsSharing(false)
     setDesktopGuide(null)
-    setLineTextCopied(true)
+    setLineTextCopied(false)
   }
 
   const shareTextFor = (record: WalkRecord) =>
@@ -1991,6 +1999,10 @@ export default function WalkingApp({
       includeReview,
       hasRoute: shareMapKind(record) !== "none",
       mapKind: shareMapKind(record),
+      imageUnavailable:
+        shareImageReady &&
+        !shareImageFile.current &&
+        shareMapKind(record) !== "none",
     })
 
   const shareSubjectFor = (record: WalkRecord) =>
@@ -2013,8 +2025,14 @@ export default function WalkingApp({
         setShareError("送信を中止しました。もう一度送れます。")
         return
       }
-      setShareNotice("送信が完了しました。")
-      closeShare()
+      if (outcome === "draft") {
+        setDesktopGuide("phone-mail")
+      } else {
+        setShareNotice(
+          "共有画面を終了しました。メールアプリで宛先、本文、経路図を確認して送信してください。送信が完了したかはメールアプリでご確認ください。",
+        )
+        closeShare()
+      }
     } catch (error) {
       setShareError(
         error instanceof Error
@@ -2036,8 +2054,13 @@ export default function WalkingApp({
       )
       return
     }
-    downloadWalkImage(imageFile, shareSubjectFor(shareRequest.record))
-    setShareError("")
+    try {
+      downloadWalkImage(imageFile, shareSubjectFor(shareRequest.record))
+      setShareError("")
+    } catch (error) {
+      console.error("道の図を保存できませんでした", error)
+      setShareError("道の図を保存できませんでした。もう一度お試しください。")
+    }
   }
 
   const copyShareMessage = async () => {
@@ -2070,24 +2093,22 @@ export default function WalkingApp({
     try {
       if (shareRequest.channel === "external") {
         const imageFile = shareImageFile.current
-        const needsMap = shareMapKind(shareRequest.record) !== "none"
-        if (needsMap && !imageFile) {
-          setShareError(
-            "道の図を添付できませんでした。確認画面を開き直して、もう一度送ってください。",
-          )
-          return
-        }
         const subject = walkShareSubject(walkWhenLabel(shareRequest.record))
         if (target === "mail") {
           if (!usesDesktopMail()) return
-          sendWalkByMail(text, subject, imageFile)
-          if (imageFile) {
+          if (!canShareWalkBySystem(imageFile)) {
             setDesktopGuide("mail")
+            return
+          }
+          const outcome = await shareWalkBySystem(text, subject, imageFile)
+          if (outcome === "cancelled") {
+            setDesktopGuide("system-share")
+            setShareError("共有画面を閉じたか、共有先が見つかりませんでした。もう一度試すか、既定のメールアプリをお使いください。")
           } else {
-            setShareNotice(
-              "メールの画面を開きました。送りたい人を選んで送ってください。",
-            )
-            closeShare()
+            setDesktopGuide("system-share")
+            if (outcome === "failed") {
+              setShareError("共有画面を開けませんでした。下のボタンから既定のメールアプリをお試しください。")
+            }
           }
           return
         }
@@ -2123,13 +2144,6 @@ export default function WalkingApp({
         return
       }
       const imageFile = shareImageFile.current
-      const needsMap = shareMapKind(shareRequest.record) !== "none"
-      if (needsMap && !imageFile) {
-        setShareError(
-          "道の図を添付できませんでした。確認画面を開き直して、もう一度送ってください。",
-        )
-        return
-      }
       await onShareToGroup({
         groupId: selectedShareGroup.id,
         text,
@@ -2780,16 +2794,14 @@ export default function WalkingApp({
                         >
                           LINEやメールで送る
                         </button>
-                        {canShareToGroup && (
-                          <button
-                            aria-label={`${walkWhenLabel(record)}の記録を、茶話会に送る`}
-                            className="walk-share-button walk-share-button--group"
-                            onClick={() => openShare(record, "group")}
-                            type="button"
-                          >
-                            茶話会に送る
-                          </button>
-                        )}
+                        <button
+                          aria-label={`${walkWhenLabel(record)}の記録を、茶話会に送る`}
+                          className="walk-share-button walk-share-button--group"
+                          onClick={() => openShare(record, "group")}
+                          type="button"
+                        >
+                          茶話会に送る
+                        </button>
                         <button
                           aria-label={`${record.date}の${
                             record.kind === "walk" ? "散歩" : "充電日"
@@ -2939,15 +2951,13 @@ export default function WalkingApp({
               >
                 LINEやメールで送る
               </button>
-              {canShareToGroup && (
-                <button
-                  className="walk-share-button walk-share-button--group"
-                  onClick={() => openShare(savedForShare, "group")}
-                  type="button"
-                >
-                  茶話会に送る
-                </button>
-              )}
+              <button
+                className="walk-share-button walk-share-button--group"
+                onClick={() => openShare(savedForShare, "group")}
+                type="button"
+              >
+                茶話会に送る
+              </button>
               <button
                 className="walk-secondary-button"
                 onClick={() => setSavedForShare(null)}
@@ -3028,24 +3038,58 @@ export default function WalkingApp({
                 </p>
               </>
             )}
+            {shareRequest.channel === "group" && !canShareToGroup && (
+              <p>
+                茶話会に送るには、先に茶話会へ参加してください。記録はこの端末に残りますので、参加した後に記録から送れます。
+              </p>
+            )}
             {shareRequest.channel === "external" && !desktopGuide && (
               <p>
                 {usesDesktopMail()
-                  ? "パソコンでは、下のボタンを押したあと、画面の案内に従って送ってください。"
-                  : "LINEは次の画面で送り先を選びます。メールは、次の画面でメールを選ぶと、件名と文章が入った送信画面が開き、経路図も添付されます。"}
+                  ? "共有画面が開いたらOutlookなどのメールを選んでください。共有先によって本文・件名や画像が渡らない場合があります。"
+                  : "LINEやメールは次の画面で送り先を選びます。メールを送る前に、本文と経路図の添付をご確認ください。端末によっては経路図を手動で添付します。"}
               </p>
             )}
-            {desktopGuide === "mail" && (
+            {desktopGuide === "system-share" && (
               <>
-                <p>メールの画面を開きました。</p>
+                <p>
+                  共有画面が表示されたら、Outlookなどのメールを選んでください。
+                  メールアプリが開いたら、宛先・件名・本文と経路図を確認して送信してください。
+                  このアプリでは送信完了を確認できません。
+                </p>
+                <p>
+                  メールが選べない、または内容が渡らない場合は、下のボタンから文章をコピーし、既定のメールアプリを開いて貼り付けることができます。経路図は保存して手動で添付できます。
+                </p>
+              </>
+            )}
+            {(desktopGuide === "mail" || desktopGuide === "phone-mail") && (
+              <>
+                <p>
+                  {desktopGuide === "mail"
+                    ? "下の「既定のメールアプリを開く」を押してください。"
+                    : "メール画面を開く操作を行いました。"}
+                  このアプリではメールの起動や送信完了を確認できません。
+                  開かない場合は、端末のメールアプリの設定をご確認ください。
+                </p>
                 <ol className="walk-share-steps">
                   <li>
-                    件名は「{walkShareSubject(walkWhenLabel(shareRequest.record))}」です。本文は今の案内文です。
+                    件名と本文を確認し、送り先を選んでください。
                   </li>
-                  <li>
-                    ダウンロードフォルダーに「{walkShareSubject(walkWhenLabel(shareRequest.record))}」という経路図を保存しました。見当たらないときは、「経路図を保存する」を押してください。
-                  </li>
-                  <li>開いたメールに、その画像を添付して送ってください。</li>
+                  {shareImageUrl && (
+                    <>
+                      <li>
+                        経路図は自動で添付されません。
+                        {desktopGuide === "mail"
+                          ? "下の「経路図を保存する」を押してください。保存先は端末の設定によって異なります。"
+                          : "この画面に戻り、下の「経路図を保存する」を押してください。保存先は端末の設定によって異なります。"}
+                      </li>
+                      <li>メールの添付ボタンから保存した画像を選んでください。</li>
+                    </>
+                  )}
+                  {!shareImageUrl && (
+                    <li>経路図の添付はありません。文章のみになります。</li>
+                  )}
+                  <li>メールアプリで内容を確認して送信してください。</li>
                 </ol>
               </>
             )}
@@ -3090,7 +3134,10 @@ export default function WalkingApp({
                       経路図を保存する
                     </button>
                   )}
-                  {desktopGuide === "line" && (
+                  {(desktopGuide === "line" ||
+                    desktopGuide === "mail" ||
+                    desktopGuide === "phone-mail" ||
+                    desktopGuide === "system-share") && (
                     <button
                       className="walk-share-button walk-share-button--group"
                       disabled={isSharing}
@@ -3104,11 +3151,36 @@ export default function WalkingApp({
                           : "文章をコピーする"}
                     </button>
                   )}
-                  {desktopGuide === "mail" && (
+                  {(desktopGuide === "mail" || desktopGuide === "system-share") && (
+                    <a
+                      className="walk-share-button walk-share-button--group"
+                      href={walkMailDraftHref(
+                        shareTextFor(shareRequest.record),
+                        shareSubjectFor(shareRequest.record),
+                      )}
+                      onClick={() => {
+                        setShareError("")
+                        setDesktopGuide("mail")
+                      }}
+                    >
+                      既定のメールアプリを開く
+                    </a>
+                  )}
+                  {desktopGuide === "system-share" && (
                     <button
                       className="walk-share-button walk-share-button--group"
                       disabled={isSharing}
                       onClick={() => void confirmShare("mail")}
+                      type="button"
+                    >
+                      もう一度共有画面を開く
+                    </button>
+                  )}
+                  {desktopGuide === "phone-mail" && (
+                    <button
+                      className="walk-share-button walk-share-button--group"
+                      disabled={isSharing}
+                      onClick={() => void sendPhoneMail()}
                       type="button"
                     >
                       {isSharing && shareAction === "mail"
@@ -3193,6 +3265,23 @@ export default function WalkingApp({
                     type="button"
                   >
                     送るのをやめる
+                  </button>
+                </>
+              ) : !canShareToGroup ? (
+                <>
+                  <button
+                    className="walk-start-button"
+                    onClick={onBack}
+                    type="button"
+                  >
+                    茶話会へ戻る
+                  </button>
+                  <button
+                    className="walk-secondary-button"
+                    onClick={closeShare}
+                    type="button"
+                  >
+                    閉じる
                   </button>
                 </>
               ) : (

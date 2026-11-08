@@ -1264,7 +1264,8 @@
   align-items: stretch;
 }
 
-.walk-dialog-actions--stack button {
+.walk-dialog-actions--stack button,
+.walk-dialog-actions--stack a {
   width: 100%;
   font-size: 18px;
 }

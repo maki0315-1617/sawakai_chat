@@ -14,6 +14,7 @@ export type WalkShareTextInput = {
   includeReview: boolean
   hasRoute: boolean
   mapKind?: "walked" | "planned" | "both" | "none"
+  imageUnavailable?: boolean
 }
 
 const maxShareTextLength = 500
@@ -35,12 +36,14 @@ export function walkShareText(input: WalkShareTextInput) {
     lines.push(input.distanceLine)
     const mapKind = input.mapKind ?? (input.hasRoute ? "walked" : "none")
     lines.push(
-      mapKind === "planned"
-        ? "予定した道の図を添えています。"
+      input.imageUnavailable
+        ? "道の図を作れなかったため、添付されていません。"
+        : mapKind === "planned"
+        ? "予定した道の図もご確認ください。"
         : mapKind === "both"
-          ? "歩いた道と予定の道の図を添えています。"
+          ? "歩いた道と予定の道の図もご確認ください。"
           : mapKind === "walked"
-            ? "歩いた道の図を添えています。"
+            ? "歩いた道の図もご確認ください。"
             : "道の記録はないため、時間と距離だけのお知らせです。",
     )
   }
@@ -140,16 +143,50 @@ export function walkShareSubject(when: string) {
   return `おさんぽ日和　${safeWhen}`
 }
 
-export function sendWalkByMail(text: string, subject: string, file: File | null) {
-  if (file) downloadNamedImage(file, subject)
-  window.setTimeout(() => openMailDraft(subject, text), 700)
+export function walkMailDraftHref(text: string, subject: string) {
+  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
+}
+
+export function canShareWalkBySystem(file: File | null) {
+  if (typeof navigator.share !== "function") return false
+  if (!file) return true
+  try {
+    return navigator.canShare?.({ files: [file] }) === true
+  } catch (error) {
+    console.error("画像を共有できるか確認できませんでした", error)
+    return false
+  }
+}
+
+export async function shareWalkBySystem(
+  text: string,
+  subject: string,
+  file: File | null,
+): Promise<"opened" | "cancelled" | "failed"> {
+  const named = file
+    ? new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" })
+    : null
+  try {
+    await navigator.share({
+      title: subject,
+      text,
+      ...(named ? { files: [named] } : {}),
+    })
+    return "opened"
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return "cancelled"
+    }
+    console.error("共有画面を開けませんでした", error)
+    return "failed"
+  }
 }
 
 export async function sendPhoneMailWithImage(
   text: string,
   subject: string,
   file: File | null,
-): Promise<"shared" | "cancelled"> {
+): Promise<"shared" | "draft" | "cancelled"> {
   const named = file
     ? new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" })
     : null
@@ -159,7 +196,7 @@ export async function sendPhoneMailWithImage(
     !navigator.canShare?.({ files: [named] })
   ) {
     openMailDraft(subject, text)
-    return "shared"
+    return "draft"
   }
   const previousTitle = document.title
   document.title = subject
@@ -170,8 +207,9 @@ export async function sendPhoneMailWithImage(
     if (error instanceof DOMException && error.name === "AbortError") {
       return "cancelled"
     }
+    console.error("画像を共有できませんでした", error)
     openMailDraft(subject, text)
-    return "shared"
+    return "draft"
   } finally {
     document.title = previousTitle
   }
@@ -202,7 +240,7 @@ function downloadNamedImage(file: File, subject: string) {
 
 function openMailDraft(subject: string, text: string) {
   const link = document.createElement("a")
-  link.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`
+  link.href = walkMailDraftHref(text, subject)
   document.body.appendChild(link)
   link.click()
   link.remove()
