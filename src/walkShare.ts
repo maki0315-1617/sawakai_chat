@@ -81,17 +81,25 @@ export async function sharePreparedWalk(
   text: string,
   file: File | null,
 ): Promise<
-  "shared" | "shared-and-saved" | "cancelled" | "copied" | "saved-only"
+  "shared" | "shared-file" | "cancelled" | "copied" | "saved-only"
 > {
+  const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
   try {
-    if (file && canShareFile(file, text)) {
+    if (file && phone && canShareFile(file, text)) {
       await navigator.share({ files: [file], text, title: "おさんぽの記録" })
       return "shared"
     }
-    if (typeof navigator.share === "function") {
+    if (file && canShareFile(file)) {
+      const pictured = await fileWithMessage(file, text)
+      await navigator.share({
+        files: [pictured],
+        title: "おさんぽの記録",
+      })
+      return "shared-file"
+    }
+    if (!file && typeof navigator.share === "function") {
       await navigator.share({ text, title: "おさんぽの記録" })
-      if (file) downloadFile(file)
-      return file ? "shared-and-saved" : "shared"
+      return "shared"
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -107,13 +115,75 @@ export async function sharePreparedWalk(
   )
 }
 
-function canShareFile(file: File, text: string) {
+function canShareFile(file: File, text?: string) {
   if (typeof navigator.canShare !== "function") return false
   try {
-    return navigator.canShare({ files: [file], text })
+    return navigator.canShare(text ? { files: [file], text } : { files: [file] })
   } catch {
     return false
   }
+}
+
+async function fileWithMessage(file: File, text: string) {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const width = bitmap.width
+    const height = bitmap.height
+    const canvas = document.createElement("canvas")
+    const context = canvas.getContext("2d")
+    if (!context) {
+      bitmap.close()
+      return file
+    }
+    context.font = `700 28px ${fontFamily}`
+    const maxWidth = width - 64
+    const lines = wrapLines(context, text, maxWidth).slice(0, 12)
+    const lineHeight = 40
+    const extra = 36 + lines.length * lineHeight
+    canvas.width = width
+    canvas.height = height + extra
+    context.fillStyle = "#fffefa"
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    context.fillStyle = "#203d35"
+    context.textBaseline = "top"
+    context.font = `700 28px ${fontFamily}`
+    lines.forEach((line, index) => {
+      context.fillText(line, 32, height + 24 + index * lineHeight, maxWidth)
+    })
+    const blob = await canvasToJpeg(canvas)
+    return new File([blob], "osanpo.jpg", { type: "image/jpeg" })
+  } catch (error) {
+    console.error("文章を道の図へ重ねられませんでした", error)
+    return file
+  }
+}
+
+function wrapLines(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+) {
+  const lines: string[] = []
+  text.split("\n").forEach((paragraph) => {
+    if (!paragraph) {
+      lines.push("")
+      return
+    }
+    let current = ""
+    for (const character of paragraph) {
+      const next = current + character
+      if (context.measureText(next).width > maxWidth && current) {
+        lines.push(current)
+        current = character
+      } else {
+        current = next
+      }
+    }
+    if (current) lines.push(current)
+  })
+  return lines
 }
 
 async function copyText(text: string) {

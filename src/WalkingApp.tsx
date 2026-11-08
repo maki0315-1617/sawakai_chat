@@ -1981,17 +1981,17 @@ export default function WalkingApp({
         }
         if (outcome === "saved-only") {
           setShareError(
-            "道の図は写真として保存しました。文章はコピーできなかったので、上の文章を長押ししてコピーしてください。",
+            "道の図は写真として保存しました。文章はコピーできなかったので、上の文章を長押ししてコピーし、保存した画像を添付してください。",
           )
           return
         }
         setShareNotice(
           outcome === "shared"
             ? "送り先の画面を開きました。"
-            : outcome === "shared-and-saved"
-              ? "文章の送り先を開きました。道の図は写真として保存したので、そこに添付してください。"
+            : outcome === "shared-file"
+              ? "送り先の画面を開きました。道の図を添付しています。文章は図の下に入っています。"
               : imageFile
-                ? "文章をコピーし、道の図を写真として保存しました。LINEやメールに貼り付けてください。"
+                ? "道の図を保存し、文章をコピーしました。メールには自動で添付できないため、保存した画像を添付してください。"
                 : "文章をコピーしました。LINEやメールに貼り付けてください。",
         )
         closeShare()
@@ -2001,13 +2001,23 @@ export default function WalkingApp({
         setShareError("茶話会に入ってから送れます。")
         return
       }
+      const imageFile = shareImageFile.current
+      const needsMap =
+        shareRequest.record.kind === "walk" &&
+        shareRequest.record.route.length > 0
+      if (needsMap && !imageFile) {
+        setShareError(
+          "道の図を添付できませんでした。確認画面を開き直して、もう一度送ってください。",
+        )
+        return
+      }
       await onShareToGroup({
         groupId: selectedShareGroup.id,
         text,
-        image: shareImageFile.current ?? undefined,
+        image: imageFile ?? undefined,
       })
       setShareNotice(
-        shareImageFile.current
+        imageFile
           ? `「${selectedShareGroup.name}」に、文章と道の図を送りました。`
           : `「${selectedShareGroup.name}」に、文章を送りました。`,
       )

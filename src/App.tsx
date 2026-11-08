@@ -6385,10 +6385,16 @@ export default function App() {
       );
     };
     if (image) {
-      const file =
+      const source =
         image instanceof File
           ? image
           : new File([image], "osanpo.jpg", { type: "image/jpeg" });
+      if (source.size <= 0) {
+        throw new Error(
+          "道の図を読み取れませんでした。もう一度送ってください。",
+        );
+      }
+      const file = await compressImage(source);
       const formData = new FormData();
       formData.append("file", file, file.name);
       formData.append("text", text);
@@ -6415,8 +6421,13 @@ export default function App() {
             "茶話会に送れませんでした。通信を確認してもう一度お試しください。",
         );
       }
+      if (!result.message.attachment?.signedUrl) {
+        throw new Error(
+          "道の図を茶話会に表示できませんでした。もう一度送ってください。",
+        );
+      }
       appendIfActive(result.message);
-      if (result.message.text === text) return;
+      if (result.message.text.trim() === text.trim()) return;
     }
     const response = await fetch(`${apiRoot}/messages`, {
       method: "POST",
