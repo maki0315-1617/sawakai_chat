@@ -145,6 +145,32 @@ export function sendWalkByMail(text: string, subject: string, file: File | null)
   window.setTimeout(() => openMailDraft(subject, text), 700)
 }
 
+export async function sendWalkByPhoneMail(
+  text: string,
+  subject: string,
+  file: File | null,
+): Promise<"shared" | "cancelled"> {
+  const namedFile = file
+    ? new File([file], `${subject}.jpg`, { type: file.type || "image/jpeg" })
+    : null
+  if (typeof navigator.share !== "function") {
+    throw new Error("この端末ではメールの送信画面を開けません。")
+  }
+  try {
+    if (namedFile) {
+      await navigator.share({ files: [namedFile], text, title: subject })
+    } else {
+      await navigator.share({ text, title: subject })
+    }
+    return "shared"
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return "cancelled"
+    }
+    throw new Error("メールの送信画面を開けませんでした。もう一度押してください。")
+  }
+}
+
 export async function saveWalkForDesktopLine(
   text: string,
   subject: string,

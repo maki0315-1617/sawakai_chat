@@ -7,6 +7,7 @@ import {
   downloadWalkImage,
   saveWalkForDesktopLine,
   sendWalkByMail,
+  sendWalkByPhoneMail,
   sharePreparedWalk,
   usesDesktopMail,
   walkShareSubject,
@@ -2047,6 +2048,16 @@ export default function WalkingApp({
         }
         const subject = walkShareSubject(walkWhenLabel(shareRequest.record))
         if (target === "mail") {
+          if (!usesDesktopMail()) {
+            const outcome = await sendWalkByPhoneMail(text, subject, imageFile)
+            if (outcome === "cancelled") {
+              setShareError("送信を中止しました。もう一度送れます。")
+              return
+            }
+            setShareNotice("送信が完了しました。")
+            closeShare()
+            return
+          }
           sendWalkByMail(text, subject, imageFile)
           if (imageFile) {
             setDesktopGuide("mail")
@@ -2999,7 +3010,7 @@ export default function WalkingApp({
               <p>
                 {usesDesktopMail()
                   ? "パソコンでは、下のボタンを押したあと、画面の案内に従って送ってください。"
-                  : "LINEは次の画面で送り先を選びます。メールは、件名に「おさんぽ日和」と日時が入って開きます。"}
+                  : "LINEは次の画面で送り先を選びます。メールは、次の画面でメールを選ぶと、件名と文章が入った送信画面が開き、経路図も添付されます。"}
               </p>
             )}
             {desktopGuide === "mail" && (
