@@ -15,6 +15,7 @@ import {
   Track,
   VideoPresets,
 } from "livekit-client";
+import { SheetHandle, useSheetDrag } from "./sheetDrag";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -822,6 +823,8 @@ export default function DirectCall({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerName]);
 
+  const sheetDrag = useSheetDrag(onClosePanel);
+
   if (controlRef) {
     controlRef.current = {
       startCall: (to) => void startCall(to),
@@ -838,7 +841,9 @@ export default function DirectCall({
             aria-modal="true"
             className="group-panel voice-panel"
             role="dialog"
+            style={sheetDrag.panelStyle}
           >
+            <SheetHandle {...sheetDrag.handleProps} />
             <button
               aria-label="1対1通話を閉じる"
               className="dialog-close"

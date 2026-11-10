@@ -22,6 +22,7 @@ import DocumentsViewer from "./DocumentsViewer";
 import PicturePuzzle from "./PicturePuzzle";
 import WalkingApp from "./WalkingApp";
 import LocationSharingPanel, { useLocationSharing } from "./LocationSharing";
+import { SheetHandle, useSheetDrag } from "./sheetDrag";
 
 type AvatarColor = "mint" | "peach" | "sand";
 
@@ -4766,6 +4767,10 @@ export default function App() {
   const [groupNameDraft, setGroupNameDraft] = useState(appName);
   const [groupImageUrl, setGroupImageUrl] = useState("");
   const [showGroup, setShowGroup] = useState(false);
+  const groupsSheet = useSheetDrag(() => {
+    if (activeGroupId) setShowGroups(false);
+  });
+  const groupSheet = useSheetDrag(() => setShowGroup(false));
   const locationSharing = useLocationSharing(token, activeGroupId, showGroup);
   const [leavingError, setLeavingError] = useState("");
   const [isLeaving, setIsLeaving] = useState(false);
@@ -7483,7 +7488,9 @@ export default function App() {
             aria-modal="true"
             className="group-panel group-switcher"
             role="dialog"
+            style={groupsSheet.panelStyle}
           >
+            <SheetHandle {...groupsSheet.handleProps} />
             {activeGroupId && (
               <button
                 aria-label="茶話会一覧を閉じる"
@@ -7632,7 +7639,9 @@ export default function App() {
             aria-modal="true"
             className="group-panel"
             role="dialog"
+            style={groupSheet.panelStyle}
           >
+            <SheetHandle {...groupSheet.handleProps} />
             <button
               aria-label="参加者画面を閉じる"
               className="dialog-close"

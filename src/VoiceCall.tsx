@@ -3,6 +3,7 @@ import { Room, RoomEvent, Track } from "livekit-client";
 import VoiceGame from "./VoiceGame";
 import VoiceWordGame from "./VoiceWordGame";
 import VoiceTurnGame from "./VoiceTurnGame";
+import { SheetHandle, useSheetDrag } from "./sheetDrag";
 
 type VoiceCallProps = {
   apiRoot: string;
@@ -166,6 +167,7 @@ export default function VoiceCall({
     leave();
     onClose();
   };
+  const sheetDrag = useSheetDrag(close);
 
   const leaveFromTop = () => {
     leave();
@@ -193,7 +195,9 @@ export default function VoiceCall({
         aria-modal="true"
         className="group-panel voice-panel"
         role="dialog"
+        style={sheetDrag.panelStyle}
       >
+        <SheetHandle {...sheetDrag.handleProps} />
         <button
           aria-label="音声通話を閉じる"
           className="dialog-close"
