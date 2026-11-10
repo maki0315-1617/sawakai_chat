@@ -5419,7 +5419,7 @@ export default function App() {
     if (showVoiceRef.current || dmInCallRef.current || dmIncoming) return;
     setVoiceAutoJoin(true);
     setShowVoice(true);
-    speakJapanese("グループ通話に参加します。つながると、3分で終わります。");
+    speakJapanese("グループ通話に参加します。");
   };
 
   const prepareMessage = (message: string) => {
@@ -6568,7 +6568,6 @@ export default function App() {
       <header className="group-header">
         {visualSupportEnabled && !showVoice && (
           <div className="voice-join-banner" role="region" aria-label="グループ通話に参加">
-            <p>一番上のボタンを一度押すと、参加します。3分で終わります。</p>
             <button
               className="voice-join-banner__button"
               disabled={dmInCall || dmIncoming}
@@ -7103,7 +7102,7 @@ export default function App() {
           announce={
             visualSupportEnabled && voiceAutoJoin ? speakJapanese : undefined
           }
-          leaveAfterSec={visualSupportEnabled ? 180 : undefined}
+          assisted={visualSupportEnabled}
           speak={visualSupportEnabled ? speakJapanese : undefined}
         />
       )}

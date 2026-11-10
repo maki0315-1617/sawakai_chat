@@ -11,8 +11,8 @@ type VoiceCallProps = {
   onClose: () => void;
   autoJoin?: boolean;
   announce?: (text: string) => void;
-  /** 視覚サポートがオンの端末だけ、この秒数で自分だけ抜けます。 */
-  leaveAfterSec?: number;
+  /** 視覚サポートがオンのとき、大きな退出ボタンと案内を出します。 */
+  assisted?: boolean;
   speak?: (text: string) => void;
 };
 
@@ -25,7 +25,7 @@ export default function VoiceCall({
   onClose,
   autoJoin = false,
   announce,
-  leaveAfterSec,
+  assisted = false,
   speak,
 }: VoiceCallProps) {
   const [status, setStatus] = useState<Status>("idle");
@@ -34,7 +34,6 @@ export default function VoiceCall({
   const [gameTab, setGameTab] = useState<"quiz" | "word" | "turn">("quiz");
   const [names, setNames] = useState<string[]>([]);
   const [speaking, setSpeaking] = useState<string[]>([]);
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [leaveNotice, setLeaveNotice] = useState("");
   const roomRef = useRef<Room | null>(null);
   const audioRef = useRef<HTMLDivElement>(null);
@@ -43,8 +42,8 @@ export default function VoiceCall({
   announceRef.current = announce;
   const speakRef = useRef(speak);
   speakRef.current = speak;
-  const leaveAfterSecRef = useRef(leaveAfterSec);
-  leaveAfterSecRef.current = leaveAfterSec;
+  const assistedRef = useRef(assisted);
+  assistedRef.current = assisted;
 
   const refreshParticipants = (room: Room) => {
     setNames([
@@ -108,19 +107,20 @@ export default function VoiceCall({
       await room.localParticipant.setMicrophoneEnabled(true);
       refreshParticipants(room);
       setStatus("connected");
-      if (announceRef.current && !announcedJoinRef.current) {
+      if (!announcedJoinRef.current && (announceRef.current || assistedRef.current)) {
         announcedJoinRef.current = true;
         const others = [...room.remoteParticipants.values()]
           .map((participant) => participant.name || participant.identity)
           .filter((name) => name && name !== myName);
-        const limitNote = leaveAfterSecRef.current
-          ? "3分で、あなただけ終わります。早く終わるときは、一番上の、通話から抜ける、を押してください。"
+        const leaveNote = assistedRef.current
+          ? "終わるときは、一番上の、通話から抜ける、を押してください。"
           : "";
-        announceRef.current(
+        const message =
           others.length > 0
-            ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。${limitNote}`
-            : `通話に入りました。まだほかの人はいません。${limitNote}`,
-        );
+            ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。${leaveNote}`
+            : `通話に入りました。まだほかの人はいません。${leaveNote}`;
+        if (announceRef.current) announceRef.current(message);
+        else speakRef.current?.(message);
       }
     } catch (reason) {
       roomRef.current?.disconnect();
@@ -146,46 +146,6 @@ export default function VoiceCall({
     // 声で参加を選んだときだけ、開いた直後に一度つなぐ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (status !== "connected" || !leaveAfterSec) {
-      setSecondsLeft(null);
-      return;
-    }
-    let cancelled = false;
-    const started = Date.now();
-    const limitMs = leaveAfterSec * 1000;
-    const warnMs = Math.max(0, limitMs - 30_000);
-    setSecondsLeft(leaveAfterSec);
-    if (!announcedJoinRef.current) {
-      speakRef.current?.(
-        "3分間の通話となります。3分で、あなただけ終わります。早く終わるときは、一番上の、通話から抜ける、を押してください。",
-      );
-    }
-    const tick = window.setInterval(() => {
-      const left = Math.max(0, Math.ceil((limitMs - (Date.now() - started)) / 1000));
-      setSecondsLeft(left);
-    }, 1000);
-    const warning = window.setTimeout(() => {
-      if (!cancelled) speakRef.current?.("まもなく通話が終わります。");
-    }, warnMs);
-    const end = window.setTimeout(() => {
-      if (cancelled) return;
-      leave();
-      const message =
-        "3分になったので、通話から抜けました。ほかの人の通話は続きます。";
-      setLeaveNotice(message);
-      speakRef.current?.(message);
-    }, limitMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(tick);
-      window.clearTimeout(warning);
-      window.clearTimeout(end);
-    };
-    // leave はその時点の通話だけを切る
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, leaveAfterSec]);
 
   const toggleMute = async () => {
     const room = roomRef.current;
@@ -217,6 +177,17 @@ export default function VoiceCall({
 
   return (
     <div className="dialog-backdrop">
+      {assisted && (status === "connected" || status === "connecting") && (
+        <div className="voice-join-banner voice-leave-banner">
+          <button
+            className="voice-join-banner__button voice-leave-top"
+            onClick={leaveFromTop}
+            type="button"
+          >
+            通話から抜ける
+          </button>
+        </div>
+      )}
       <section
         aria-labelledby="voice-title"
         aria-modal="true"
@@ -230,36 +201,16 @@ export default function VoiceCall({
         >
           ×
         </button>
-        {leaveAfterSec && (status === "connected" || status === "connecting") && (
-          <button
-            className="voice-leave-top"
-            onClick={leaveFromTop}
-            type="button"
-          >
-            通話から抜ける
-          </button>
-        )}
         <p className="dialog-eyebrow">グループの音声通話</p>
         <h2 id="voice-title">みんなで通話</h2>
 
         {status === "connected" ? (
           <>
             <p className="voice-status">通話中（{names.length}人）</p>
-            {leaveAfterSec ? (
+            {announce && !assisted && (
               <p className="voice-leave-hint">
-                {secondsLeft === null
-                  ? "3分で、あなただけ通話から抜けます。"
-                  : secondsLeft >= 60
-                    ? `残り${Math.floor(secondsLeft / 60)}分${secondsLeft % 60}秒で、あなただけ通話から抜けます。`
-                    : `残り${secondsLeft}秒で、あなただけ通話から抜けます。`}
-                ほかの人の通話は続きます。早く抜けるときは、一番上の「通話から抜ける」を押してください。
+                抜けるときは、下の「通話から抜ける」を押してください。声では抜けられません。
               </p>
-            ) : (
-              announce && (
-                <p className="voice-leave-hint">
-                  抜けるときは、下の「通話から抜ける」を押してください。声では抜けられません。
-                </p>
-              )
             )}
             <ul className="voice-members">
               {names.map((name, index) => (
@@ -280,12 +231,11 @@ export default function VoiceCall({
               >
                 {muted ? "マイクをオンにする" : "マイクをオフにする"}
               </button>
-              <button
-                className="voice-button voice-button--leave"
-                onClick={leaveAfterSec ? leaveFromTop : leave}
-              >
-                通話から抜ける
-              </button>
+              {!assisted && (
+                <button className="voice-button voice-button--leave" onClick={leave}>
+                  通話から抜ける
+                </button>
+              )}
             </div>
             <div className="voice-tabs" role="tablist">
               <button
