@@ -7229,6 +7229,8 @@ export default function App() {
           announce={
             visualSupportEnabled && voiceAutoJoin ? speakJapanese : undefined
           }
+          leaveAfterSec={visualSupportEnabled ? 180 : undefined}
+          speak={visualSupportEnabled ? speakJapanese : undefined}
         />
       )}
 

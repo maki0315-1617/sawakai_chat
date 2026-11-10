@@ -739,7 +739,7 @@ export default function DirectCall({
             );
           },
         },
-          6000,
+          11000,
         );
         incomingListenRef.current = session;
       }, 800);
