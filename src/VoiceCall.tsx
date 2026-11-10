@@ -114,12 +114,12 @@ export default function VoiceCall({
           .map((participant) => participant.name || participant.identity)
           .filter((name) => name && name !== myName);
         const limitNote = leaveAfterSecRef.current
-          ? "3分間の通話となります。"
+          ? "3分で、あなただけ終わります。早く終わるときは、一番上の、通話から抜ける、を押してください。"
           : "";
         announceRef.current(
           others.length > 0
-            ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。抜けるときは、画面の、通話から抜ける、を押してください。${limitNote}`
-            : `通話に入りました。まだほかの人はいません。抜けるときは、画面の、通話から抜ける、を押してください。${limitNote}`,
+            ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。${limitNote}`
+            : `通話に入りました。まだほかの人はいません。${limitNote}`,
         );
       }
     } catch (reason) {
@@ -158,7 +158,9 @@ export default function VoiceCall({
     const warnMs = Math.max(0, limitMs - 30_000);
     setSecondsLeft(leaveAfterSec);
     if (!announcedJoinRef.current) {
-      speakRef.current?.("3分間の通話となります。");
+      speakRef.current?.(
+        "3分間の通話となります。3分で、あなただけ終わります。早く終わるときは、一番上の、通話から抜ける、を押してください。",
+      );
     }
     const tick = window.setInterval(() => {
       const left = Math.max(0, Math.ceil((limitMs - (Date.now() - started)) / 1000));
@@ -205,6 +207,14 @@ export default function VoiceCall({
     onClose();
   };
 
+  const leaveFromTop = () => {
+    leave();
+    const message = "通話から抜けました。ほかの人の通話は続きます。";
+    setLeaveNotice(message);
+    speakRef.current?.(message);
+    onClose();
+  };
+
   return (
     <div className="dialog-backdrop">
       <section
@@ -220,6 +230,15 @@ export default function VoiceCall({
         >
           ×
         </button>
+        {leaveAfterSec && (status === "connected" || status === "connecting") && (
+          <button
+            className="voice-leave-top"
+            onClick={leaveFromTop}
+            type="button"
+          >
+            通話から抜ける
+          </button>
+        )}
         <p className="dialog-eyebrow">グループの音声通話</p>
         <h2 id="voice-title">みんなで通話</h2>
 
@@ -233,7 +252,7 @@ export default function VoiceCall({
                   : secondsLeft >= 60
                     ? `残り${Math.floor(secondsLeft / 60)}分${secondsLeft % 60}秒で、あなただけ通話から抜けます。`
                     : `残り${secondsLeft}秒で、あなただけ通話から抜けます。`}
-                ほかの人の通話は続きます。早く抜けるときは、下の「通話から抜ける」を押してください。
+                ほかの人の通話は続きます。早く抜けるときは、一番上の「通話から抜ける」を押してください。
               </p>
             ) : (
               announce && (
@@ -261,7 +280,10 @@ export default function VoiceCall({
               >
                 {muted ? "マイクをオンにする" : "マイクをオフにする"}
               </button>
-              <button className="voice-button voice-button--leave" onClick={leave}>
+              <button
+                className="voice-button voice-button--leave"
+                onClick={leaveAfterSec ? leaveFromTop : leave}
+              >
                 通話から抜ける
               </button>
             </div>

@@ -15,7 +15,6 @@ import {
   Track,
   VideoPresets,
 } from "livekit-client";
-import { isVoiceSupported, listenOnce, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -43,7 +42,7 @@ type DirectCallProps = {
   controlRef?: MutableRefObject<DirectCallControl | null>;
   notify: (title: string, body: string, tag: string) => void;
   visualSupportEnabled: boolean;
-  announce: (text: string) => void;
+  announce: (text: string, onEnd?: () => void) => void;
 };
 export type DirectCallControl = {
   startCall: (to: string) => void;
@@ -208,7 +207,6 @@ export default function DirectCall({
   const notifiedRef = useRef(new Set<string>());
   const announcedIncomingRef = useRef(new Set<string>());
   const incomingChoiceRef = useRef(false);
-  const incomingListenRef = useRef<VoiceSession | null>(null);
   const answerRef = useRef<() => void>(() => undefined);
   const hangUpRef = useRef<(message?: string) => void>(() => undefined);
   const dismissedRef = useRef(new Set<string>());
@@ -681,8 +679,7 @@ export default function DirectCall({
     if (!current) return;
     const callId = current.id;
     let stopped = false;
-    let session: VoiceSession | null = null;
-    let speakTimer = 0;
+    let releaseTimer = 0;
     incomingChoiceRef.current = false;
     const timer = window.setTimeout(() => {
       if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
@@ -691,65 +688,24 @@ export default function DirectCall({
       const peer = callRef.current?.peer ?? current.peer;
       beep([880], 0.25, 0.3);
       beep([660], 0.25, 0.3, 0.3);
-      if (!isVoiceSupported()) {
-        announceRef.current(
-          `${peer}さんから電話です。画面の、出る、または、出ない、を押してください。`,
-        );
-        setVoiceRingHeld(false);
-        return;
-      }
-      speakTimer = window.setTimeout(() => {
-        if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
-        session = listenOnce(
-        `${peer}さんから電話です。出る、と言ってください。出ない、と言ってください。`,
-        {
-          onListening: () => undefined,
-          onResult: (text) => {
-            if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) {
-              return;
-            }
-            const said = text.normalize("NFKC").replace(/\s/g, "");
-            const decline =
-              said.includes("出ない") ||
-              said.includes("でない") ||
-              said.includes("出ません") ||
-              said.includes("でません");
-            const accept = said.includes("出る") || said.includes("でる");
-            if (!decline && !accept) {
-              setVoiceRingHeld(false);
-              return;
-            }
-            incomingChoiceRef.current = true;
-            session?.cancel();
-            if (decline) void hangUpRef.current();
-            else void answerRef.current();
-          },
-          onError: (reason) => {
-            if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) {
-              return;
-            }
-            if (reason === "no-speech") {
-              incomingChoiceRef.current = true;
-              void hangUpRef.current();
-              return;
-            }
-            setVoiceRingHeld(false);
-            announceRef.current(
-              "声で聞き取れませんでした。画面の、出る、または、出ない、を押してください。",
-            );
-          },
+      const resumeRing = () => {
+        if (!stopped && phaseRef.current === "incoming" && !incomingChoiceRef.current) {
+          setVoiceRingHeld(false);
+        }
+      };
+      releaseTimer = window.setTimeout(resumeRing, 9000);
+      announceRef.current(
+        `${peer}さんから電話です。右を押すと出ます。左を押すと出ません。`,
+        () => {
+          window.clearTimeout(releaseTimer);
+          resumeRing();
         },
-          11000,
-        );
-        incomingListenRef.current = session;
-      }, 800);
+      );
     }, 700);
     return () => {
       stopped = true;
       window.clearTimeout(timer);
-      window.clearTimeout(speakTimer);
-      session?.cancel();
-      if (incomingListenRef.current === session) incomingListenRef.current = null;
+      window.clearTimeout(releaseTimer);
     };
   }, [phase, visualSupportEnabled, call?.id]);
 
@@ -1009,7 +965,7 @@ export default function DirectCall({
 
       {call && phase && (
         <div
-          className={`dm-screen ${videoMode ? "dm-screen--video" : ""}`}
+          className={`dm-screen ${videoMode ? "dm-screen--video" : ""} ${phase === "incoming" && visualSupportEnabled ? "dm-screen--sides" : ""}`}
           role="alertdialog"
           aria-label="1対1通話"
         >
@@ -1071,29 +1027,50 @@ export default function DirectCall({
           {phase === "incoming" && (
             <p className="dm-screen__hint">
               {visualSupportEnabled
-                ? "「出る」か「出ない」と言ってください。言えないときは、下のボタンを押してください。1回の通話は3分までです。"
+                ? "右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
                 : "1回の通話は3分までです"}
             </p>
           )}
-          {phase === "incoming" ? (
+          {phase === "incoming" && visualSupportEnabled ? (
+            <div className="dm-screen__sides">
+              <button
+                className="dm-side dm-side--decline"
+                onClick={() => {
+                  incomingChoiceRef.current = true;
+                  announceRef.current("出ません。");
+                  void hangUp();
+                }}
+                type="button"
+              >
+                <small>左</small>
+                出ない
+              </button>
+              <button
+                className="dm-side dm-side--answer"
+                onClick={() => {
+                  incomingChoiceRef.current = true;
+                  announceRef.current("出ます。この通話は3分です。");
+                  void answer();
+                }}
+                type="button"
+              >
+                <small>右</small>
+                出る
+              </button>
+            </div>
+          ) : phase === "incoming" ? (
             <div className="dm-screen__actions dm-screen__actions--two">
               <button
                 className="dm-big-button dm-big-button--end"
-                onClick={() => {
-                  incomingChoiceRef.current = true;
-                  incomingListenRef.current?.cancel();
-                  void hangUp();
-                }}
+                onClick={() => void hangUp()}
+                type="button"
               >
                 出ない
               </button>
               <button
                 className="dm-big-button dm-big-button--answer"
-                onClick={() => {
-                  incomingChoiceRef.current = true;
-                  incomingListenRef.current?.cancel();
-                  void answer();
-                }}
+                onClick={() => void answer()}
+                type="button"
               >
                 出る
               </button>
