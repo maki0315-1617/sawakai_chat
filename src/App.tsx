@@ -516,21 +516,125 @@ type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
 const fallbackSuggestions = ["土曜でいいね", "何時ごろにしますか？"];
 
+let blockedSpeech = "";
+let speechKeepAlive = 0;
+const speechQueue: {
+  text: string;
+  onEnd?: () => void;
+  onError?: () => void;
+}[] = [];
+let speechPlaying = false;
+
+function japaneseVoice() {
+  if (!("speechSynthesis" in window)) return undefined;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((voice) => voice.lang === "ja-JP") ??
+    voices.find((voice) => voice.lang.toLowerCase().startsWith("ja"))
+  );
+}
+
+function keepSpeechAlive() {
+  window.clearInterval(speechKeepAlive);
+  if (!("speechSynthesis" in window)) return;
+  const synth = window.speechSynthesis;
+  speechKeepAlive = window.setInterval(() => {
+    if (!synth.speaking && !synth.pending) {
+      window.clearInterval(speechKeepAlive);
+      return;
+    }
+    synth.resume();
+  }, 4000);
+}
+
+function playNextSpeech() {
+  if (speechPlaying || speechQueue.length === 0) return;
+  if (!("speechSynthesis" in window)) {
+    const dropped = speechQueue.shift();
+    dropped?.onEnd?.();
+    return;
+  }
+  const job = speechQueue.shift();
+  if (!job) return;
+  speechPlaying = true;
+  const synth = window.speechSynthesis;
+  const utterance = new SpeechSynthesisUtterance(job.text);
+  utterance.lang = "ja-JP";
+  utterance.rate = 0.9;
+  const voice = japaneseVoice();
+  if (voice) utterance.voice = voice;
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    window.clearTimeout(safety);
+    speechPlaying = false;
+    playNextSpeech();
+  };
+  const safety = window.setTimeout(
+    finish,
+    Math.min(30000, Math.max(4000, job.text.length * 180)),
+  );
+  utterance.onend = () => {
+    job.onEnd?.();
+    finish();
+  };
+  utterance.onerror = (event) => {
+    if (event.error === "not-allowed") blockedSpeech = job.text;
+    else if (event.error !== "interrupted" && event.error !== "canceled") {
+      job.onError?.();
+    }
+    finish();
+  };
+  synth.resume();
+  synth.speak(utterance);
+  keepSpeechAlive();
+  window.setTimeout(() => {
+    if (!finished && !synth.speaking && !synth.pending) finish();
+  }, 350);
+}
+
 function speakJapanese(text: string, onEnd?: () => void, onError?: () => void) {
   if (!("speechSynthesis" in window)) {
     onEnd?.();
     return false;
   }
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "ja-JP";
-  utterance.rate = 0.9;
-  utterance.onend = () => onEnd?.();
-  utterance.onerror = (event) => {
-    if (event.error !== "interrupted" && event.error !== "canceled") onError?.();
-  };
-  window.speechSynthesis.speak(utterance);
+  const combined = blockedSpeech ? `${blockedSpeech}${text}` : text;
+  blockedSpeech = "";
+  speechQueue.push({ text: combined, onEnd, onError });
+  playNextSpeech();
   return true;
+}
+
+function speakOrRetry(text: string) {
+  speakJapanese(text);
+  window.setTimeout(() => {
+    if (!("speechSynthesis" in window)) return;
+    const synth = window.speechSynthesis;
+    if (synth.speaking || synth.pending) return;
+    blockedSpeech = text;
+  }, 700);
+}
+
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.getVoices();
+  document.addEventListener(
+    "pointerup",
+    (event) => {
+      if (!blockedSpeech) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("button, a, input, textarea, [role='button']")
+      ) {
+        return;
+      }
+      const pending = blockedSpeech;
+      blockedSpeech = "";
+      speakJapanese(pending);
+    },
+    true,
+  );
 }
 
 function loadStoredProfile(): Profile | null {
@@ -5378,7 +5482,7 @@ export default function App() {
     const timer = window.setTimeout(() => {
       shouldAnnounceStartupRef.current = false;
       if (localStorage.getItem(visualSupportStorageKey) === "enabled") {
-        speakJapanese(`茶話会アプリが起動しました。${visualCallGuide}`);
+        speakOrRetry(`茶話会アプリが起動しました。${visualCallGuide}`);
       }
     }, 600);
     return () => window.clearTimeout(timer);
