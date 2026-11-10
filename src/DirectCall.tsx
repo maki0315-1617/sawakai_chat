@@ -15,6 +15,7 @@ import {
   Track,
   VideoPresets,
 } from "livekit-client";
+import { isVoiceSupported, listenOnce, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -37,6 +38,7 @@ type DirectCallProps = {
   onClosePanel: () => void;
   onListeningChange: (listening: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
+  onIncomingChange?: (incoming: boolean) => void;
   onCallPeerChange?: (peer: string | null) => void;
   controlRef?: MutableRefObject<DirectCallControl | null>;
   notify: (title: string, body: string, tag: string) => void;
@@ -155,6 +157,7 @@ export default function DirectCall({
   onClosePanel,
   onListeningChange,
   onBusyChange,
+  onIncomingChange,
   onCallPeerChange,
   controlRef,
   notify,
@@ -181,6 +184,7 @@ export default function DirectCall({
   const [showListenNotice, setShowListenNotice] = useState(
     () => localStorage.getItem(listenNoticeKey) !== "seen",
   );
+  const [voiceRingHeld, setVoiceRingHeld] = useState(false);
 
   const headersRef = useRef(headers);
   headersRef.current = headers;
@@ -203,6 +207,10 @@ export default function DirectCall({
   const listeningRef = useRef<boolean | null>(null);
   const notifiedRef = useRef(new Set<string>());
   const announcedIncomingRef = useRef(new Set<string>());
+  const incomingChoiceRef = useRef(false);
+  const incomingListenRef = useRef<VoiceSession | null>(null);
+  const answerRef = useRef<() => void>(() => undefined);
+  const hangUpRef = useRef<(message?: string) => void>(() => undefined);
   const dismissedRef = useRef(new Set<string>());
   const hangingUpRef = useRef(false);
 
@@ -211,6 +219,13 @@ export default function DirectCall({
     phaseRef.current = nextPhase;
     setCall(next);
     setPhase(nextPhase);
+    if (
+      nextPhase === "incoming" &&
+      visualSupportRef.current &&
+      !document.hidden
+    ) {
+      setVoiceRingHeld(true);
+    }
   };
 
   const request = useCallback(
@@ -411,6 +426,12 @@ export default function DirectCall({
       finishCall("電話に出られませんでした。通信状態を確認してください。");
     }
   };
+  answerRef.current = () => {
+    void answer();
+  };
+  hangUpRef.current = (message) => {
+    void hangUp(message);
+  };
 
   const cameraErrorMessage = (reason: unknown) => {
     const name = reason instanceof DOMException ? reason.name : "";
@@ -604,16 +625,6 @@ export default function DirectCall({
         } else if (!current && result.incoming) {
           const incoming = result.incoming as DmCallView;
           changeCall(incoming, "incoming");
-          if (
-            visualSupportRef.current &&
-            !document.hidden &&
-            !announcedIncomingRef.current.has(incoming.id)
-          ) {
-            announcedIncomingRef.current.add(incoming.id);
-            announceRef.current(
-              `${incoming.peer}さんから電話です。出る場合は「出る」、断る場合は「出ない」を選んでください。`,
-            );
-          }
           if (document.hidden && !notifiedRef.current.has(incoming.id)) {
             notifiedRef.current.add(incoming.id);
             notify(
@@ -655,8 +666,92 @@ export default function DirectCall({
 
   useEffect(() => {
     if (phase !== "incoming" && phase !== "calling") return;
+    if (voiceRingHeld) return;
     return startRinging(phase);
+  }, [phase, voiceRingHeld]);
+
+  useEffect(() => {
+    if (phase === "incoming") return;
+    setVoiceRingHeld(false);
   }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "incoming" || !visualSupportEnabled || document.hidden) return;
+    const current = callRef.current;
+    if (!current) return;
+    const callId = current.id;
+    let stopped = false;
+    let session: VoiceSession | null = null;
+    let speakTimer = 0;
+    incomingChoiceRef.current = false;
+    const timer = window.setTimeout(() => {
+      if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
+      if (announcedIncomingRef.current.has(callId)) return;
+      announcedIncomingRef.current.add(callId);
+      const peer = callRef.current?.peer ?? current.peer;
+      beep([880], 0.25, 0.3);
+      beep([660], 0.25, 0.3, 0.3);
+      if (!isVoiceSupported()) {
+        announceRef.current(
+          `${peer}さんから電話です。画面の、出る、または、出ない、を押してください。`,
+        );
+        setVoiceRingHeld(false);
+        return;
+      }
+      speakTimer = window.setTimeout(() => {
+        if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
+        session = listenOnce(
+        `${peer}さんから電話です。出る、と言ってください。出ない、と言ってください。`,
+        {
+          onListening: () => undefined,
+          onResult: (text) => {
+            if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) {
+              return;
+            }
+            const said = text.normalize("NFKC").replace(/\s/g, "");
+            const decline =
+              said.includes("出ない") ||
+              said.includes("でない") ||
+              said.includes("出ません") ||
+              said.includes("でません");
+            const accept = said.includes("出る") || said.includes("でる");
+            if (!decline && !accept) {
+              setVoiceRingHeld(false);
+              return;
+            }
+            incomingChoiceRef.current = true;
+            session?.cancel();
+            if (decline) void hangUpRef.current();
+            else void answerRef.current();
+          },
+          onError: (reason) => {
+            if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) {
+              return;
+            }
+            if (reason === "no-speech") {
+              incomingChoiceRef.current = true;
+              void hangUpRef.current();
+              return;
+            }
+            setVoiceRingHeld(false);
+            announceRef.current(
+              "声で聞き取れませんでした。画面の、出る、または、出ない、を押してください。",
+            );
+          },
+        },
+          6000,
+        );
+        incomingListenRef.current = session;
+      }, 800);
+    }, 700);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      window.clearTimeout(speakTimer);
+      session?.cancel();
+      if (incomingListenRef.current === session) incomingListenRef.current = null;
+    };
+  }, [phase, visualSupportEnabled, call?.id]);
 
   useEffect(() => {
     if (phase !== "incall") return;
@@ -761,6 +856,7 @@ export default function DirectCall({
 
   useEffect(() => {
     onBusyChange?.(phase === "connecting" || phase === "incall");
+    onIncomingChange?.(phase === "incoming");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
@@ -973,19 +1069,31 @@ export default function DirectCall({
             <p className="dm-screen__hint">相手が出るまでお待ちください</p>
           )}
           {phase === "incoming" && (
-            <p className="dm-screen__hint">1回の通話は3分までです</p>
+            <p className="dm-screen__hint">
+              {visualSupportEnabled
+                ? "「出る」か「出ない」と言ってください。言えないときは、下のボタンを押してください。1回の通話は3分までです。"
+                : "1回の通話は3分までです"}
+            </p>
           )}
           {phase === "incoming" ? (
             <div className="dm-screen__actions dm-screen__actions--two">
               <button
                 className="dm-big-button dm-big-button--end"
-                onClick={() => void hangUp()}
+                onClick={() => {
+                  incomingChoiceRef.current = true;
+                  incomingListenRef.current?.cancel();
+                  void hangUp();
+                }}
               >
                 出ない
               </button>
               <button
                 className="dm-big-button dm-big-button--answer"
-                onClick={() => void answer()}
+                onClick={() => {
+                  incomingChoiceRef.current = true;
+                  incomingListenRef.current?.cancel();
+                  void answer();
+                }}
               >
                 出る
               </button>

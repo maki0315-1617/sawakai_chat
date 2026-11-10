@@ -14,6 +14,7 @@ import {
   failureMessage,
   isVoiceSupported,
   listenOnce,
+  listenQuiet,
   normalizeInviteCode,
   normalizeName,
   type VoiceSession,
@@ -4667,12 +4668,18 @@ export default function App() {
   const [showVoice, setShowVoice] = useState(false);
   const showVoiceRef = useRef(showVoice);
   showVoiceRef.current = showVoice;
+  const [voiceAutoJoin, setVoiceAutoJoin] = useState(false);
+  const [voiceJoinActive, setVoiceJoinActive] = useState(false);
+  const [voiceJoinStatus, setVoiceJoinStatus] = useState("");
+  const voiceJoinSessionRef = useRef<VoiceSession | null>(null);
+  const quietListenRef = useRef<VoiceSession | null>(null);
   const [showDirectCall, setShowDirectCall] = useState(false);
   const [showDocuments, setShowDocuments] = useState(false);
   const [dmListening, setDmListening] = useState(true);
   const [dmInCall, setDmInCall] = useState(false);
   const dmInCallRef = useRef(dmInCall);
   dmInCallRef.current = dmInCall;
+  const [dmIncoming, setDmIncoming] = useState(false);
   const [dmPeer, setDmPeer] = useState<string | null>(null);
   const dmControlRef = useRef<DirectCallControl | null>(null);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
@@ -5410,6 +5417,132 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [showConfirmation, visualSupportEnabled, pendingMessage]);
+
+  const beginGroupVoiceJoin = () => {
+    if (showVoiceRef.current || dmInCallRef.current || dmIncoming) return;
+    quietListenRef.current?.cancel();
+    quietListenRef.current = null;
+    voiceJoinSessionRef.current?.cancel();
+    setVoiceJoinActive(true);
+    setVoiceJoinStatus("聞いています。参加、と言ってください。");
+    voiceJoinSessionRef.current = listenOnce(
+      "グループ通話に参加します。参加、と言ってください。",
+      {
+        onListening: () =>
+          setVoiceJoinStatus("聞いています。参加、と言ってください。"),
+        onResult: (text) => {
+          voiceJoinSessionRef.current?.cancel();
+          setVoiceJoinActive(false);
+          const said = text.normalize("NFKC").replace(/\s/g, "");
+          const decline =
+            said.includes("参加しない") ||
+            said.includes("さんかしない") ||
+            said.includes("参加しません") ||
+            said.includes("さんかしません") ||
+            said.includes("いいえ");
+          const accept =
+            !decline && (said.includes("参加") || said.includes("さんか"));
+          if (accept) {
+            setVoiceJoinStatus("");
+            setVoiceAutoJoin(true);
+            setShowVoice(true);
+            return;
+          }
+          const message = decline
+            ? "参加しませんでした。"
+            : "聞き取れませんでした。もう一度、グループ通話、と言うか、下のボタンを押してください。";
+          setVoiceJoinStatus(message);
+          speakJapanese(message);
+        },
+        onError: (reason) => {
+          setVoiceJoinActive(false);
+          const message =
+            reason === "denied"
+              ? "マイクが許可されていません。ブラウザの設定で許可してください。"
+              : reason === "unsupported"
+                ? "この端末では声の操作が使えません。画面のグループ通話を押してください。"
+                : "聞き取れませんでした。もう一度、グループ通話、と言うか、下のボタンを押してください。";
+          setVoiceJoinStatus(message);
+          speakJapanese(message);
+        },
+      },
+      8000,
+    );
+  };
+
+  useEffect(() => {
+    if (!dmIncoming) return;
+    quietListenRef.current?.cancel();
+    voiceJoinSessionRef.current?.cancel();
+    setVoiceJoinActive(false);
+  }, [dmIncoming]);
+
+  useEffect(() => {
+    const idle =
+      visualSupportEnabled &&
+      Boolean(token) &&
+      !showWalking &&
+      !showVoice &&
+      !showBrain &&
+      !showDirectCall &&
+      !showDocuments &&
+      !showGroup &&
+      !showGroups &&
+      !showConfirmation &&
+      !isReplyPanelOpen &&
+      !dmInCall &&
+      !dmIncoming &&
+      !voiceJoinActive;
+    if (!idle || !isVoiceSupported()) return;
+    let stopped = false;
+    let restartTimer = 0;
+    const arm = () => {
+      if (stopped) return;
+      quietListenRef.current = listenQuiet({
+        onResult: (text) => {
+          if (stopped) return;
+          const said = text.normalize("NFKC").replace(/\s/g, "");
+          if (said.includes("グループ通話")) {
+            stopped = true;
+            quietListenRef.current?.cancel();
+            quietListenRef.current = null;
+            beginGroupVoiceJoin();
+            return;
+          }
+          restartTimer = window.setTimeout(arm, 600);
+        },
+        onError: (reason) => {
+          if (stopped || reason === "unsupported" || reason === "denied") return;
+          restartTimer = window.setTimeout(arm, 900);
+        },
+      });
+    };
+    const startTimer = window.setTimeout(arm, 2500);
+    return () => {
+      stopped = true;
+      window.clearTimeout(startTimer);
+      window.clearTimeout(restartTimer);
+      quietListenRef.current?.cancel();
+      quietListenRef.current = null;
+    };
+    // beginGroupVoiceJoin は最新の読み上げを使う
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    visualSupportEnabled,
+    token,
+    showWalking,
+    showVoice,
+    showBrain,
+    showDirectCall,
+    showDocuments,
+    showGroup,
+    showGroups,
+    showConfirmation,
+    isReplyPanelOpen,
+    dmInCall,
+    dmIncoming,
+    voiceJoinActive,
+  ]);
 
   const prepareMessage = (message: string) => {
     if (!message.trim()) return;
@@ -6654,6 +6787,23 @@ export default function App() {
         </nav>
       </header>
 
+      {visualSupportEnabled && !showVoice && (
+        <div className="voice-join-banner" role="region" aria-label="声でグループ通話">
+          <p aria-live="polite">
+            {voiceJoinStatus ||
+              "「グループ通話」と言うか、下のボタンを押すと、参加の確認が始まります。"}
+          </p>
+          <button
+            className="voice-join-banner__button"
+            disabled={voiceJoinActive || dmInCall || dmIncoming}
+            onClick={beginGroupVoiceJoin}
+            type="button"
+          >
+            声でグループ通話に参加
+          </button>
+        </div>
+      )}
+
       <main className="chat-area">
         {loadError && (
           <button className="load-error" onClick={() => void loadMessages()}>
@@ -7071,7 +7221,14 @@ export default function App() {
           apiRoot={apiRoot}
           headers={apiHeaders(token, activeGroupId)}
           myName={profile.name}
-          onClose={() => setShowVoice(false)}
+          onClose={() => {
+            setShowVoice(false);
+            setVoiceAutoJoin(false);
+          }}
+          autoJoin={voiceAutoJoin}
+          announce={
+            visualSupportEnabled && voiceAutoJoin ? speakJapanese : undefined
+          }
         />
       )}
 
@@ -7093,6 +7250,7 @@ export default function App() {
         }}
         onClosePanel={() => setShowDirectCall(false)}
         onBusyChange={setDmInCall}
+        onIncomingChange={setDmIncoming}
         onCallPeerChange={setDmPeer}
         controlRef={dmControlRef}
         onListeningChange={setDmListening}

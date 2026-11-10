@@ -90,6 +90,7 @@ export function listenOnce(
     onResult: (text: string) => void;
     onError: (reason: VoiceFailure) => void;
   },
+  listenMs = 10000,
 ): VoiceSession {
   let cancelled = false;
   let recognition: Recognition | null = null;
@@ -108,7 +109,7 @@ export function listenOnce(
     recognition.interimResults = false;
     let got = false;
     let failure: VoiceFailure | null = null;
-    const silenceTimer = window.setTimeout(() => recognition?.stop(), 10000);
+    const silenceTimer = window.setTimeout(() => recognition?.stop(), listenMs);
 
     recognition.onresult = (event) => {
       const text = event.results[0]?.[0]?.transcript ?? "";
@@ -147,6 +148,73 @@ export function listenOnce(
       window.speechSynthesis?.cancel();
       try {
         recognition?.abort();
+      } catch {
+        // already stopped
+      }
+    },
+  };
+}
+
+/** 読み上げなしで短時間だけ聞きます。グループ通話の合い言葉用です。 */
+export function listenQuiet(
+  handlers: {
+    onResult: (text: string) => void;
+    onError: (reason: VoiceFailure) => void;
+  },
+  listenMs = 8000,
+): VoiceSession {
+  const Recognition = getRecognitionClass();
+  if (!Recognition) {
+    handlers.onError("unsupported");
+    return { cancel() {} };
+  }
+  let cancelled = false;
+  const recognition = new Recognition();
+  recognition.lang = "ja-JP";
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  let got = false;
+  let failure: VoiceFailure | null = null;
+  const silenceTimer = window.setTimeout(() => {
+    try {
+      recognition.stop();
+    } catch {
+      // already stopped
+    }
+  }, listenMs);
+  recognition.onresult = (event) => {
+    const text = event.results[0]?.[0]?.transcript ?? "";
+    if (text.trim()) {
+      got = true;
+      handlers.onResult(text);
+    }
+  };
+  recognition.onerror = (event) => {
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+      failure = "denied";
+    } else if (event.error === "no-speech" || event.error === "aborted") {
+      failure = "no-speech";
+    } else {
+      failure = "failed";
+    }
+  };
+  recognition.onend = () => {
+    window.clearTimeout(silenceTimer);
+    if (cancelled || got) return;
+    handlers.onError(failure ?? "no-speech");
+  };
+  try {
+    recognition.start();
+  } catch {
+    window.clearTimeout(silenceTimer);
+    handlers.onError("failed");
+  }
+  return {
+    cancel() {
+      cancelled = true;
+      window.clearTimeout(silenceTimer);
+      try {
+        recognition.abort();
       } catch {
         // already stopped
       }

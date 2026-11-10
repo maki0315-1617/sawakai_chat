@@ -9,6 +9,8 @@ type VoiceCallProps = {
   headers: Record<string, string>;
   myName: string;
   onClose: () => void;
+  autoJoin?: boolean;
+  announce?: (text: string) => void;
 };
 
 type Status = "idle" | "connecting" | "connected" | "error";
@@ -18,6 +20,8 @@ export default function VoiceCall({
   headers,
   myName,
   onClose,
+  autoJoin = false,
+  announce,
 }: VoiceCallProps) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
@@ -27,6 +31,9 @@ export default function VoiceCall({
   const [speaking, setSpeaking] = useState<string[]>([]);
   const roomRef = useRef<Room | null>(null);
   const audioRef = useRef<HTMLDivElement>(null);
+  const announcedJoinRef = useRef(false);
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
 
   const refreshParticipants = (room: Room) => {
     setNames([
@@ -88,19 +95,41 @@ export default function VoiceCall({
       await room.localParticipant.setMicrophoneEnabled(true);
       refreshParticipants(room);
       setStatus("connected");
+      if (announceRef.current && !announcedJoinRef.current) {
+        announcedJoinRef.current = true;
+        const others = [...room.remoteParticipants.values()]
+          .map((participant) => participant.name || participant.identity)
+          .filter((name) => name && name !== myName);
+        announceRef.current(
+          others.length > 0
+            ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。抜けるときは、画面の、通話から抜ける、を押してください。`
+            : "通話に入りました。まだほかの人はいません。抜けるときは、画面の、通話から抜ける、を押してください。",
+        );
+      }
     } catch (reason) {
       roomRef.current?.disconnect();
       roomRef.current = null;
       setStatus("error");
-      setError(
+      const message =
         reason instanceof DOMException && reason.name === "NotAllowedError"
           ? "マイクが許可されていません。ブラウザの設定で許可してください。"
           : reason instanceof Error
             ? reason.message
-            : "通話を開始できませんでした。",
-      );
+            : "通話を開始できませんでした。";
+      setError(message);
+      announceRef.current?.(message);
     }
   };
+
+  useEffect(() => {
+    if (!autoJoin) return;
+    const timer = window.setTimeout(() => {
+      void join();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // 声で参加を選んだときだけ、開いた直後に一度つなぐ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleMute = async () => {
     const room = roomRef.current;
@@ -143,6 +172,11 @@ export default function VoiceCall({
         {status === "connected" ? (
           <>
             <p className="voice-status">通話中（{names.length}人）</p>
+            {announce && (
+              <p className="voice-leave-hint">
+                抜けるときは、下の「通話から抜ける」を押してください。声では抜けられません。
+              </p>
+            )}
             <ul className="voice-members">
               {names.map((name, index) => (
                 <li
@@ -212,7 +246,9 @@ export default function VoiceCall({
         ) : (
           <>
             <p className="voice-lead">
-              同じグループの参加者と、声で話せます。参加するとマイクを使います。
+              {autoJoin && status === "connecting"
+                ? "グループ通話につないでいます。しばらくお待ちください。"
+                : "同じグループの参加者と、声で話せます。参加するとマイクを使います。"}
             </p>
             {error && (
               <p className="form-error" role="alert">
