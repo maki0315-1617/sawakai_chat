@@ -12,6 +12,7 @@ import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput from "./VoiceInput";
 import {
   failureMessage,
+  isIphoneDevice,
   isVoiceSupported,
   listenOnce,
   normalizeInviteCode,
@@ -4729,6 +4730,7 @@ export default function App() {
   const [visualSupportEnabled, setVisualSupportEnabled] = useState(
     () => localStorage.getItem(visualSupportStorageKey) === "enabled",
   );
+  const [iphoneTapGuide, setIphoneTapGuide] = useState(false);
   const visualSupportEnabledRef = useRef(visualSupportEnabled);
   visualSupportEnabledRef.current = visualSupportEnabled;
   const shouldAnnounceStartupRef = useRef(visualSupportEnabled);
@@ -5546,6 +5548,10 @@ export default function App() {
     shouldAnnounceStartupRef.current = false;
     if (localStorage.getItem(visualSupportStorageKey) !== "enabled") return;
     const text = `茶話会アプリが起動しました。${visualCallGuide}`;
+    if (isIphoneDevice()) {
+      setIphoneTapGuide(true);
+      return;
+    }
     if (!token || !profile) {
       const timer = window.setTimeout(() => speakOrRetry(text), 600);
       return () => window.clearTimeout(timer);
@@ -5564,6 +5570,7 @@ export default function App() {
     const stopOnAction = (event: Event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      if (target.closest(".iphone-tap-guide")) return;
       if (!target.closest("button, a, [role='button']")) return;
       endVisualGuidance();
     };
@@ -5625,7 +5632,7 @@ export default function App() {
       return;
     }
     const interrupted = stopVisualGuidance();
-    dmControlRef.current?.armCallYes();
+    if (!isIphoneDevice()) dmControlRef.current?.armCallYes();
     setDirectAssistedPick(true);
     setShowDirectCall(true);
     const count =
@@ -5634,10 +5641,15 @@ export default function App() {
       peers.length === 1
         ? "左を押すと、やめます。"
         : "左を押すと、次の人です。";
+    const howToCall = isIphoneDevice()
+      ? `右を押すと、電話がかかります。${leftAction}`
+      : `はい、と言うと、電話がかかります。右を押すと、電話がかかります。${leftAction}`;
     const say = () =>
       speakJapanese(
-        `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。はい、と言うと、電話がかかります。右を押すと、電話がかかります。${leftAction}`,
-        () => dmControlRef.current?.releaseCallYes(),
+        `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。${howToCall}`,
+        () => {
+          if (!isIphoneDevice()) dmControlRef.current?.releaseCallYes();
+        },
       );
     if (interrupted) window.setTimeout(say, 100);
     else say();
@@ -6741,6 +6753,19 @@ export default function App() {
     appendIfActive(result.message);
   };
 
+  const iphoneTapGuideLayer = iphoneTapGuide ? (
+    <button
+      className="iphone-tap-guide"
+      type="button"
+      onClick={() => {
+        setIphoneTapGuide(false);
+        speakJapanese(`茶話会アプリが起動しました。${visualCallGuide}`);
+      }}
+    >
+      画面のどこかを、一度タップしてください
+    </button>
+  ) : null;
+
   if (showWalking) {
     const listedGroups = groups.map((group) => ({
       id: group.id,
@@ -6752,27 +6777,33 @@ export default function App() {
         ? listedGroups
         : [{ id: activeGroupId, name: groupName }, ...listedGroups];
     return (
-      <WalkingApp
-        defaultShareGroupId={token ? activeGroupId : ""}
-        onBack={() => setShowWalking(false)}
-        onSentToGroup={() => {
-          setShowWalking(false);
-          setScrollChatToEnd(true);
-        }}
-        onShareToGroup={token ? shareWalkToGroup : undefined}
-        shareGroups={walkShareGroups}
-      />
+      <>
+        {iphoneTapGuideLayer}
+        <WalkingApp
+          defaultShareGroupId={token ? activeGroupId : ""}
+          onBack={() => setShowWalking(false)}
+          onSentToGroup={() => {
+            setShowWalking(false);
+            setScrollChatToEnd(true);
+          }}
+          onShareToGroup={token ? shareWalkToGroup : undefined}
+          shareGroups={walkShareGroups}
+        />
+      </>
     );
   }
 
   if (!token || !profile) {
     return (
-      <JoinScreen
-        onJoined={handleJoined}
-        onOpenWalk={() => setShowWalking(true)}
-        onVisualSupportChange={updateVisualSupport}
-        visualSupportEnabled={visualSupportEnabled}
-      />
+      <>
+        {iphoneTapGuideLayer}
+        <JoinScreen
+          onJoined={handleJoined}
+          onOpenWalk={() => setShowWalking(true)}
+          onVisualSupportChange={updateVisualSupport}
+          visualSupportEnabled={visualSupportEnabled}
+        />
+      </>
     );
   }
 
@@ -6786,6 +6817,7 @@ export default function App() {
             : ""
       }`}
     >
+      {iphoneTapGuideLayer}
       <header className="group-header">
         {visualSupportEnabled && !showVoice && (
           <div className="voice-join-banner" role="region" aria-label="通話">
