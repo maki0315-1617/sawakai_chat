@@ -81,7 +81,7 @@ function getAudioContext() {
 
 function unlockAudio() {
   const context = getAudioContext();
-  if (context && context.state !== "running") void context.resume();
+  if (context && context.state === "suspended") void context.resume();
 }
 
 let callingRingAudio: HTMLAudioElement | null = null;
@@ -177,6 +177,7 @@ function audioSession() {
 }
 
 function playCallingRing() {
+  if (!isIphoneDevice()) return;
   const starting = !callingRingOn;
   try {
     const session = audioSession();
@@ -188,7 +189,12 @@ function playCallingRing() {
   callingRingOn = true;
   audio.muted = false;
   audio.volume = 1;
-  if (starting) beep([425, 480], 0.6, 0.9);
+  if (starting) {
+    const context = getAudioContext();
+    if (context && context.state !== "running") {
+      void context.resume().then(() => beep([425, 480], 0.6, 0.9)).catch(() => undefined);
+    } else beep([425, 480], 0.6, 0.9);
+  }
   if (!audio.paused) return;
   void audio
     .play()
@@ -209,6 +215,7 @@ function stopCallingRing() {
       // not loaded yet
     }
   }
+  if (!isIphoneDevice()) return;
   window.setTimeout(() => {
     if (callingRingOn) return;
     try {
@@ -222,26 +229,21 @@ function stopCallingRing() {
 
 function beep(frequencies: number[], seconds: number, volume: number, delay = 0) {
   const context = getAudioContext();
-  if (!context) return;
-  const play = () => {
-    if (context.state !== "running") return;
-    const start = context.currentTime + delay;
-    const gain = context.createGain();
-    gain.gain.setValueAtTime(0, start);
-    gain.gain.linearRampToValueAtTime(volume, start + 0.03);
-    gain.gain.setValueAtTime(volume, start + seconds - 0.05);
-    gain.gain.linearRampToValueAtTime(0, start + seconds);
-    gain.connect(context.destination);
-    frequencies.forEach((frequency) => {
-      const oscillator = context.createOscillator();
-      oscillator.frequency.value = frequency;
-      oscillator.connect(gain);
-      oscillator.start(start);
-      oscillator.stop(start + seconds);
-    });
-  };
-  if (context.state === "running") play();
-  else void context.resume().then(play).catch(() => undefined);
+  if (!context || context.state !== "running") return;
+  const start = context.currentTime + delay;
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(0, start);
+  gain.gain.linearRampToValueAtTime(volume, start + 0.03);
+  gain.gain.setValueAtTime(volume, start + seconds - 0.05);
+  gain.gain.linearRampToValueAtTime(0, start + seconds);
+  gain.connect(context.destination);
+  frequencies.forEach((frequency) => {
+    const oscillator = context.createOscillator();
+    oscillator.frequency.value = frequency;
+    oscillator.connect(gain);
+    oscillator.start(start);
+    oscillator.stop(start + seconds);
+  });
 }
 
 function startRinging(kind: "incoming" | "calling") {
@@ -475,11 +477,13 @@ export default function DirectCall({
   };
 
   const connectRoom = async (callId: string) => {
-    try {
-      const session = audioSession();
-      if (session) session.type = "play-and-record";
-    } catch {
-      // ignore
+    if (isIphoneDevice()) {
+      try {
+        const session = audioSession();
+        if (session?.type === "playback") session.type = "play-and-record";
+      } catch {
+        // ignore
+      }
     }
     phaseRef.current = "connecting";
     setPhase("connecting");
