@@ -1329,6 +1329,72 @@ input:focus-visible {
   max-height: min(85dvh, 720px);
 }
 
+.assisted-voice {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background: #f8f7f3;
+  overflow: hidden;
+}
+
+.assisted-voice > .voice-input,
+.assisted-voice__close {
+  flex: 0 0 auto;
+}
+
+.assisted-voice .voice-input__button {
+  width: 100%;
+  min-height: 132px;
+  padding: 24px 16px;
+  font-size: 32px;
+  line-height: 1.3;
+  background: #0b6b4f;
+  border: 3px solid #084e3a;
+  border-radius: 16px;
+}
+
+.assisted-voice .voice-input__button.is-listening {
+  background: #b42318;
+  border-color: #7f1d1d;
+}
+
+.assisted-voice__close {
+  width: 100%;
+  min-height: 132px;
+  padding: 24px 16px;
+  color: #ffffff;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.3;
+  background: #1d4e89;
+  border: 3px solid #163a66;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.assisted-voice__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.assisted-voice__body .reply-button,
+.assisted-voice__body .read-aloud-button,
+.assisted-voice__body .media-select-button {
+  min-height: 64px;
+  font-size: 22px;
+}
+
+.dialog-backdrop--front {
+  z-index: 96;
+}
+
 .writing-panel--assisted .writing-panel__lead,
 .writing-panel--assisted .visual-voice-command-help {
   font-size: 18px;

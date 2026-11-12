@@ -6,10 +6,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
-import VoiceInput from "./VoiceInput";
+import VoiceInput, { finishedReply } from "./VoiceInput";
 import {
   failureMessage,
   isIphoneDevice,
@@ -4799,6 +4800,8 @@ export default function App() {
   const [voiceInputStatus, setVoiceInputStatus] = useState("");
   const [voiceInputBusy, setVoiceInputBusy] = useState(false);
   const [voiceCancelSignal, setVoiceCancelSignal] = useState(0);
+  const [assistedVoiceRestart, setAssistedVoiceRestart] = useState(0);
+  const assistedVoiceStartRef = useRef<(() => void) | null>(null);
   const voiceAutoModeRef = useRef(voiceAutoMode);
   voiceAutoModeRef.current = voiceAutoMode;
   const voicePanelRef = useRef(false);
@@ -5584,8 +5587,11 @@ export default function App() {
     setVoiceConfirmationAutoStart(false);
     const timer = window.setTimeout(() => {
       confirmationHeadingRef.current?.focus();
+      const voiceReply = voicePanelRef.current;
       speakJapanese(
-        `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
+        voiceReply
+          ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
+          : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         () => {
           if (
             visualSupportEnabledRef.current &&
@@ -6423,6 +6429,29 @@ export default function App() {
       setVoiceConfirmationAutoStart(false);
       return;
     }
+    const assistedVoice = mode === "voice" && visualSupportEnabledRef.current;
+    if (assistedVoice && (showVoiceRef.current || dmInCallRef.current || dmIncoming)) {
+      setVoiceAutoMode(false);
+      setVoiceConfirmationAutoStart(false);
+      setReplyModeState(mode);
+      localStorage.setItem(replyModeStorageKey, mode);
+      trackEvent(`reply_mode_${mode}`);
+      setIsReplyPanelOpen(true);
+      speakJapanese("通話中は、話して入力を使えません。");
+      return;
+    }
+    if (assistedVoice) {
+      flushSync(() => {
+        setVoiceAutoMode(true);
+        setVoiceConfirmationAutoStart(false);
+        setReplyModeState(mode);
+        setIsReplyPanelOpen(true);
+      });
+      localStorage.setItem(replyModeStorageKey, mode);
+      trackEvent(`reply_mode_${mode}`);
+      assistedVoiceStartRef.current?.();
+      return;
+    }
     setVoiceAutoMode(false);
     setVoiceConfirmationAutoStart(false);
     setReplyModeState(mode);
@@ -6501,19 +6530,31 @@ export default function App() {
 
     if (visualSupportEnabledRef.current && showConfirmation) {
       setVoiceConfirmationAutoStart(false);
-      if (["はい送信", "はい送って"].includes(command)) {
+      if (
+        ["はい送信", "はい送って"].includes(command) ||
+        (command === "送信" && voicePanelRef.current)
+      ) {
         if (sendMessage()) {
           speakJapanese("送信を予約しました。5秒後に送信します。");
         } else {
           speakJapanese("まだ送信できません。画面をご確認ください。");
         }
       } else if (["修正", "訂正", "直す"].includes(command)) {
+        if (!voicePanelRef.current) {
+          setShowConfirmation(false);
+          setPendingMessage("");
+          setDraft("");
+          speakJapanese("修正する内容を、続けてお話しください。", () => {
+            if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+          });
+          return;
+        }
+        setVoiceConfirmationAutoStart(false);
         setShowConfirmation(false);
         setPendingMessage("");
         setDraft("");
-        speakJapanese("修正する内容を、続けてお話しください。", () => {
-          if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
-        });
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+        window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
       } else if (["取り消し", "取消", "キャンセル"].includes(command)) {
         cancelConfirmation();
         setDraft("");
@@ -6521,10 +6562,31 @@ export default function App() {
         setVoiceAutoMode(false);
         speakJapanese("返信を取り消しました。");
       } else {
-        speakJapanese("送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。", () => {
-          if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
-        });
+        speakJapanese(
+          voicePanelRef.current
+            ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。"
+            : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。",
+          () => {
+            if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+          },
+        );
       }
+      return;
+    }
+
+    if (
+      visualSupportEnabledRef.current &&
+      voicePanelRef.current &&
+      !showConfirmation
+    ) {
+      const body = finishedReply(text).body.trim();
+      if (!body) {
+        window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
+        return;
+      }
+      setDraft(body);
+      setVoiceConfirmationAutoStart(false);
+      prepareMessage(body);
       return;
     }
 
@@ -7174,6 +7236,115 @@ export default function App() {
                 写真・動画を送る
               </button>
             </div>
+          ) : isReplyPanelOpen && replyMode === "voice" && visualSupportEnabled ? (
+            createPortal(
+              <div
+                aria-label="話して返事する"
+                aria-modal="true"
+                className="assisted-voice"
+                role="dialog"
+              >
+                <VoiceInput
+                  apiRoot={apiRoot}
+                  cancelSignal={voiceCancelSignal}
+                  holdForEnd={!showConfirmation}
+                  restartSignal={assistedVoiceRestart}
+                  startRef={assistedVoiceStartRef}
+                  onCue={(done) => {
+                    if (isIphoneDevice()) {
+                      if (!speakJapanese("どうぞ", done, done)) done();
+                      return;
+                    }
+                    window.setTimeout(done, 400);
+                  }}
+                  autoStart={
+                    showConfirmation &&
+                    voiceAutoMode &&
+                    voiceConfirmationAutoStart
+                  }
+                  disabled={showVoice || dmInCall}
+                  disabledReason="通話中は、話して入力を使えません。"
+                  headers={apiHeaders(token, activeGroupId)}
+                  onText={handleVoiceReply}
+                  onListeningStart={() => {
+                    setVoiceConfirmationAutoStart(false);
+                    setVoiceAutoMode(true);
+                  }}
+                  onStatusChange={(status, error) => {
+                    setVoiceInputBusy(status !== "idle");
+                    setVoiceInputStatus(
+                      error ||
+                        (status === "starting"
+                          ? "マイクを準備しています。"
+                          : status === "listening"
+                            ? "聞いています。お話しください。"
+                            : status === "sending"
+                              ? "文字にしています。少しお待ちください。"
+                              : ""),
+                    );
+                  }}
+                />
+                <button
+                  className="assisted-voice__close"
+                  onClick={() => {
+                    setVoiceAutoMode(false);
+                    setVoiceConfirmationAutoStart(false);
+                    setIsReplyPanelOpen(false);
+                  }}
+                  type="button"
+                >
+                  閉じる
+                </button>
+                <div className="assisted-voice__body">
+                  <p className="writing-panel__lead" role="status">
+                    {isIphoneDevice()
+                      ? "「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"
+                      : "ピー音のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"}
+                  </p>
+                  {voiceInputStatus && (
+                    <p className="voice-input__status" role="status">
+                      {voiceInputStatus}
+                    </p>
+                  )}
+                  <textarea
+                    id="voice-message"
+                    maxLength={500}
+                    onChange={(event) => setDraft(event.target.value)}
+                    placeholder="話した内容がここに表示されます。"
+                    rows={3}
+                    value={draft}
+                  />
+                  <button
+                    className="read-aloud-button"
+                    disabled={!draft.trim()}
+                    onClick={readDraftAloud}
+                    type="button"
+                  >
+                    {isSpeakingDraft ? "読み上げを止める" : "もう一度読み上げる"}
+                  </button>
+                  <button
+                    className="reply-button reply-button--primary"
+                    disabled={!draft.trim()}
+                    onClick={() => prepareMessage(draft)}
+                  >
+                    内容を確認する
+                  </button>
+                  {draft && (
+                    <button
+                      className="media-select-button"
+                      onClick={() => {
+                        stopSpeakingDraft();
+                        setDraft("");
+                      }}
+                      type="button"
+                    >
+                      消して話し直す
+                    </button>
+                  )}
+                </div>
+              </div>,
+              document.body,
+            )
           ) : isReplyPanelOpen && replyMode === "voice" ? (
             <>
               <button
@@ -7556,7 +7727,7 @@ export default function App() {
       )}
 
       {showConfirmation && (
-        <div className="dialog-backdrop">
+        <div className="dialog-backdrop dialog-backdrop--front">
           <section
             aria-labelledby="confirm-title"
             aria-modal="true"
@@ -7577,7 +7748,7 @@ export default function App() {
             <div className="message-preview">{pendingMessage}</div>
             <p className="dialog-note">
               {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen
-                ? "「はい、送信」と話すか、「送る」を押すと送信します。"
+                ? "「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
                 : "「送る」を押すまで、自動で送信されることはありません。"}
             </p>
             {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen && (

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { MutableRefObject, useEffect, useRef, useState } from "react";
+import { isIphoneDevice } from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -10,6 +11,11 @@ type VoiceInputProps = {
   onListeningStart?: () => void;
   onStatusChange?: (status: State, error: string) => void;
   cancelSignal?: number;
+  /** 視覚サポートの返事だけ。「終わり」まで切らずに聞く */
+  holdForEnd?: boolean;
+  onCue?: (done: () => void) => void;
+  startRef?: MutableRefObject<(() => void) | null>;
+  restartSignal?: number;
 };
 
 type State = "idle" | "starting" | "listening" | "sending";
@@ -51,6 +57,36 @@ function getDeviceRecognition(): (new () => DeviceRecognition) | null {
     webkitSpeechRecognition?: new () => DeviceRecognition;
   };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+export function finishedReply(text: string) {
+  const compact = text.normalize("NFKC").replace(/[\s　]/g, "");
+  const match = compact.match(/^(.*?)(終わりです|おわりです|終わり|おわり)[。.!！]?$/);
+  if (!match) return { done: false, body: text.trim() };
+  return {
+    done: true,
+    body: match[1].replace(/[。、．.!！?？]+$/g, "").trim(),
+  };
+}
+
+function playCueBeep() {
+  const Context = getAudioContextClass();
+  if (!Context) return;
+  const context = new Context();
+  const play = () => {
+    if (context.state !== "running") return;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.25;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.18);
+    oscillator.onended = () => void context.close().catch(() => undefined);
+  };
+  if (context.state === "running") play();
+  else void context.resume().then(play).catch(() => undefined);
 }
 
 function getAudioContextClass(): typeof AudioContext | null {
@@ -114,6 +150,10 @@ export default function VoiceInput({
   onListeningStart,
   onStatusChange,
   cancelSignal = 0,
+  holdForEnd = false,
+  onCue,
+  startRef,
+  restartSignal = 0,
 }: VoiceInputProps) {
   const [state, setState] = useState<State>("idle");
   const [seconds, setSeconds] = useState(0);
@@ -140,6 +180,13 @@ export default function VoiceInput({
   const lastCancelSignalRef = useRef(cancelSignal);
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
+  const onCueRef = useRef(onCue);
+  onCueRef.current = onCue;
+  const holdForEndRef = useRef(holdForEnd);
+  holdForEndRef.current = holdForEnd;
+  const heardRef = useRef("");
+  const deliveredRef = useRef(false);
+  const lastRestartRef = useRef(0);
 
   useEffect(() => {
     onStatusChangeRef.current?.(state, error);
@@ -325,8 +372,10 @@ export default function VoiceInput({
         const heardVoice = lastVoiceAt > 0;
         if (
           elapsed >= maxSeconds * 1000 ||
-          (heardVoice && now - lastVoiceAt > silenceStopMs) ||
-          (!heardVoice && elapsed > noSpeechStopMs)
+          (!holdForEndRef.current &&
+            heardVoice &&
+            now - lastVoiceAt > silenceStopMs) ||
+          (!holdForEndRef.current && !heardVoice && elapsed > noSpeechStopMs)
         ) {
           finishRef.current?.();
         }
@@ -406,6 +455,183 @@ export default function VoiceInput({
     }, 250);
   };
 
+  const deliverHeld = (body: string) => {
+    if (deliveredRef.current) return;
+    deliveredRef.current = true;
+    stoppedRef.current = true;
+    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    timerRef.current = null;
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try {
+      recognition?.stop();
+    } catch {
+      recognition?.abort();
+    }
+    setState("idle");
+    onTextRef.current(body);
+  };
+
+  const beginUntilEnd = () => {
+    const Recognition = getDeviceRecognition();
+    if (!Recognition) {
+      void begin();
+      return;
+    }
+    setError("");
+    cancelledRef.current = false;
+    stoppedRef.current = false;
+    deliveredRef.current = false;
+    heardRef.current = "";
+    const recognition = new Recognition();
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognitionRef.current = recognition;
+    const startedAt = Date.now();
+    let restarts = 0;
+    let carried = "";
+    recognition.onresult = (event) => {
+      const text = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join("")
+        .trim();
+      if (cancelledRef.current || deliveredRef.current) return;
+      const combined = `${carried}${text}`.trim();
+      if (!combined) return;
+      heardRef.current = combined;
+      const finished = finishedReply(combined);
+      if (finished.done) deliverHeld(finished.body);
+    };
+    recognition.onerror = (event) => {
+      if (cancelledRef.current || deliveredRef.current) return;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        deliveredRef.current = true;
+        setState("idle");
+        setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
+      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+        deliveredRef.current = true;
+        setState("idle");
+        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+      }
+    };
+    recognition.onend = () => {
+      if (deliveredRef.current || cancelledRef.current || !holdForEndRef.current) {
+        if (timerRef.current !== null) window.clearInterval(timerRef.current);
+        timerRef.current = null;
+        recognitionRef.current = null;
+        if (!deliveredRef.current) setState("idle");
+        return;
+      }
+      if (restarts < 12) {
+        restarts += 1;
+        carried = heardRef.current;
+        try {
+          recognition.start();
+          return;
+        } catch {
+          recognitionRef.current = null;
+        }
+      }
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      recognitionRef.current = null;
+      setState("idle");
+      if (!heardRef.current && !deliveredRef.current) {
+        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+      }
+    };
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      void begin();
+      return;
+    }
+    setSeconds(0);
+    setState("listening");
+    timerRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      setSeconds(Math.floor(elapsed / 1000));
+      if (elapsed < maxSeconds * 1000 || deliveredRef.current) return;
+      const finished = finishedReply(heardRef.current);
+      if (heardRef.current.trim()) deliverHeld(finished.body);
+      else {
+        deliveredRef.current = true;
+        recognition.stop();
+        setState("idle");
+        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+      }
+    }, 250);
+  };
+
+  const sessionRef = useRef(0);
+  const startAssisted = (force = false) => {
+    if (disabled) return;
+    if (
+      !force &&
+      (state === "listening" || state === "starting" || state === "sending")
+    ) {
+      return;
+    }
+    if (localStorage.getItem(consentKey) !== "agreed") {
+      setNeedsConsent(true);
+      return;
+    }
+    const session = ++sessionRef.current;
+    cancelledRef.current = false;
+    deliveredRef.current = false;
+    heardRef.current = "";
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    cleanup();
+    onListeningStartRef.current?.();
+    setError("");
+    setState("starting");
+    const prime = navigator.mediaDevices
+      ?.getUserMedia?.({ audio: true })
+      .then((stream) => {
+        stream.getTracks().forEach((track) => track.stop());
+        return true;
+      })
+      .catch(() => false);
+    const beginAfterCue = () => {
+      if (session !== sessionRef.current || cancelledRef.current) return;
+      void Promise.resolve(prime).then((ok) => {
+        if (session !== sessionRef.current || cancelledRef.current) return;
+        if (!ok) {
+          setState("idle");
+          setError("マイクを使えませんでした。他のアプリで使っていないか確認してください。");
+          return;
+        }
+        beginUntilEnd();
+      });
+    };
+    if (!isIphoneDevice()) playCueBeep();
+    if (onCueRef.current) onCueRef.current(beginAfterCue);
+    else beginAfterCue();
+  };
+
+  const finishHeld = () => {
+    if (recognitionRef.current) {
+      const finished = finishedReply(heardRef.current);
+      if (!heardRef.current.trim()) {
+        deliveredRef.current = true;
+        sessionRef.current += 1;
+        if (timerRef.current !== null) window.clearInterval(timerRef.current);
+        timerRef.current = null;
+        recognitionRef.current.abort();
+        recognitionRef.current = null;
+        setState("idle");
+        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+        return;
+      }
+      deliverHeld(finished.body);
+      return;
+    }
+    finishRef.current?.();
+  };
+
   const startListening = () => {
     onListeningStartRef.current?.();
     if (Date.now() < deviceModeUntil || !canRecord) beginDevice();
@@ -413,7 +639,7 @@ export default function VoiceInput({
   };
 
   useEffect(() => {
-    if (!autoStart) {
+    if (!autoStart || holdForEnd) {
       autoStartConsumedRef.current = false;
       return;
     }
@@ -424,24 +650,53 @@ export default function VoiceInput({
       return;
     }
     startListening();
-  }, [autoStart, disabled, state]);
+  }, [autoStart, disabled, state, holdForEnd]);
 
   const press = () => {
     if (disabled) return;
     if (state === "listening") {
-      stop();
+      if (holdForEndRef.current) finishHeld();
+      else stop();
       return;
     }
     if (state === "sending") return;
+    if (
+      holdForEndRef.current &&
+      heardRef.current.trim() &&
+      !deliveredRef.current
+    ) {
+      deliverHeld(finishedReply(heardRef.current).body);
+      return;
+    }
     if (localStorage.getItem(consentKey) !== "agreed") {
       setNeedsConsent(true);
       return;
     }
-    startListening();
+    if (holdForEndRef.current) startAssisted();
+    else startListening();
   };
+  if (startRef) {
+    startRef.current = () => {
+      if (holdForEndRef.current) startAssisted(true);
+    };
+  }
+
+  useEffect(() => {
+    if (!holdForEnd || restartSignal === 0) return;
+    if (lastRestartRef.current === restartSignal) return;
+    lastRestartRef.current = restartSignal;
+    startAssisted(true);
+  }, [restartSignal, holdForEnd]);
+
+  useEffect(() => {
+    return () => {
+      if (startRef) startRef.current = null;
+    };
+  }, [startRef]);
 
   const cancel = () => {
     cancelledRef.current = true;
+    sessionRef.current += 1;
     if (abortRef.current) abortRef.current.abort();
     if (recognitionRef.current) recognitionRef.current.abort();
     else finishRef.current?.();
@@ -480,14 +735,22 @@ export default function VoiceInput({
   return (
     <div className="voice-input">
       <button
-        aria-label={state === "listening" ? "話し終わったら押してください" : "話して入力する"}
+        aria-label={
+          state === "listening"
+            ? holdForEnd
+              ? "終わりと言うか、もう一度押してください"
+              : "話し終わったら押してください"
+            : "話して入力する"
+        }
         className={`voice-input__button ${state === "listening" ? "is-listening" : ""}`}
         disabled={disabled || state === "sending" || state === "starting"}
         onClick={press}
         type="button"
       >
         {state === "listening"
-          ? `⏹ 話し終わったら押す（${seconds}秒）`
+          ? holdForEnd
+            ? `終わり、と言う（${seconds}秒）`
+            : `⏹ 話し終わったら押す（${seconds}秒）`
           : state === "starting"
             ? "🎤 マイクを準備しています…"
           : state === "sending"
@@ -496,7 +759,11 @@ export default function VoiceInput({
       </button>
       {(state === "starting" || state === "listening") && (
         <p className="voice-input__status" role="status">
-          {state === "starting" ? "マイクの準備をしています。" : "🔴 聞いています。ゆっくり話してください。"}
+          {state === "starting"
+            ? "マイクの準備をしています。"
+            : holdForEnd
+              ? "聞いています。終わったら、終わり、と言ってください。"
+              : "🔴 聞いています。ゆっくり話してください。"}
           <button className="voice-input__cancel" onClick={cancel} type="button">
             やめる
           </button>
@@ -547,7 +814,8 @@ export default function VoiceInput({
                 onClick={() => {
                   localStorage.setItem(consentKey, "agreed");
                   setNeedsConsent(false);
-                  startListening();
+                  if (holdForEnd) startAssisted(true);
+                  else startListening();
                 }}
               >
                 同意して使う
