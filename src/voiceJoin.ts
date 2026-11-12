@@ -222,6 +222,119 @@ export function listenQuiet(
   };
 }
 
+function normalizeSpeech(text: string) {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u30a1-\u30f6]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60))
+    .replace(/[\s。、.,！!？?]/g, "")
+    .toLowerCase();
+}
+
+/** 「はい」「ハイ」などを、電話に出る・かける返事として扱います。 */
+export function isSpokenYes(text: string) {
+  const value = normalizeSpeech(text);
+  if (/いいえ|いえ|やめる|やめ|出ない|出ません|かけない|かけません/.test(value)) return false;
+  return /はい|ええ|うん|yes|hai/.test(value);
+}
+
+/** 不在着信の「かけ直しますか」で、はい・かける、を受けます。 */
+export function isSpokenCallYes(text: string) {
+  if (isSpokenYes(text)) return true;
+  const value = normalizeSpeech(text);
+  if (/いいえ|いえ|やめる|やめ|かけない|かけません/.test(value)) return false;
+  return /かける|かけます|かけ直|かけなお/.test(value);
+}
+
+/**
+ * 「はい」を聞き続けます。一度止まっても、キャンセルするまで聞き直します。
+ * ボタン操作はそのまま使えます。
+ */
+export function listenForAnswer(handlers: {
+  onYes: () => void;
+  onOther?: () => void;
+  accept?: (text: string) => boolean;
+  gate?: () => boolean;
+}): VoiceSession {
+  const accept = handlers.accept ?? isSpokenYes;
+  let cancelled = false;
+  let decided = false;
+  let current: Recognition | null = null;
+  let failedStarts = 0;
+
+  const finish = (kind: "yes" | "other") => {
+    if (cancelled || decided) return;
+    decided = true;
+    cancelled = true;
+    try {
+      current?.abort();
+    } catch {
+      // already stopped
+    }
+    if (kind === "yes") handlers.onYes();
+    else handlers.onOther?.();
+  };
+
+  const start = () => {
+    if (cancelled || decided) return;
+    const RecognitionClass = getRecognitionClass();
+    if (!RecognitionClass) return;
+    const recognition = new RecognitionClass();
+    current = recognition;
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      const rich = event as unknown as {
+        resultIndex?: number;
+        results: ArrayLike<
+          ArrayLike<{ transcript: string }> & { isFinal?: boolean }
+        >;
+      };
+      const from = rich.resultIndex ?? 0;
+      for (let index = from; index < rich.results.length; index += 1) {
+        const row = rich.results[index];
+        const text = row?.[0]?.transcript ?? "";
+        if (!text.trim()) continue;
+        if (handlers.gate && !handlers.gate()) continue;
+        if (accept(text)) {
+          finish("yes");
+          return;
+        }
+        if (handlers.onOther && row?.isFinal) finish("other");
+      }
+    };
+    recognition.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        failedStarts += 1;
+        if (failedStarts >= 4) cancelled = true;
+      }
+    };
+    recognition.onend = () => {
+      if (cancelled || decided) return;
+      window.setTimeout(start, 400);
+    };
+    try {
+      recognition.start();
+      failedStarts = 0;
+    } catch {
+      failedStarts += 1;
+      if (!cancelled && failedStarts < 8) window.setTimeout(start, 700);
+    }
+  };
+
+  start();
+  return {
+    cancel() {
+      cancelled = true;
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+    },
+  };
+}
+
 export function failureMessage(reason: VoiceFailure) {
   switch (reason) {
     case "unsupported":

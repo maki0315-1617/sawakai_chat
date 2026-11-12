@@ -16,7 +16,7 @@ import {
   VideoPresets,
 } from "livekit-client";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
-import { listenQuiet, type VoiceSession } from "./voiceJoin";
+import { isSpokenCallYes, listenForAnswer, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -54,6 +54,8 @@ type DirectCallProps = {
 export type DirectCallControl = {
   startCall: (to: string) => void;
   hangUp: () => void;
+  armCallYes: () => void;
+  releaseCallYes: () => void;
 };
 
 const pollIntervalMs = 2000;
@@ -154,12 +156,6 @@ function historyLabel(call: DmCallView) {
   return outgoing ? "発信・通話中" : "着信・通話中";
 }
 
-function isCallbackYes(text: string) {
-  const value = text.normalize("NFKC").replace(/[\s。、.,！!？?]/g, "");
-  if (/いいえ|いえ|やめる|やめ|かけない|かけません/.test(value)) return false;
-  return /はい|ええ|うん|かける|かけ直|かけなお/.test(value);
-}
-
 export default function DirectCall({
   apiRoot,
   headers,
@@ -232,6 +228,13 @@ export default function DirectCall({
   const incomingChoiceRef = useRef(false);
   const answerRef = useRef<() => void>(() => undefined);
   const hangUpRef = useRef<(message?: string) => void>(() => undefined);
+  const assistedCallRef = useRef<() => void>(() => undefined);
+  const callYesRef = useRef<VoiceSession | null>(null);
+  const callYesReadyRef = useRef(false);
+  const callYesTokenRef = useRef(0);
+  const answerYesRef = useRef<VoiceSession | null>(null);
+  const answerYesReadyRef = useRef(false);
+  const beginCallYesRef = useRef<() => void>(() => undefined);
   const dismissedRef = useRef(new Set<string>());
   const askedMissedRef = useRef(new Set<string>());
   const missedRef = useRef<DmCallView[]>([]);
@@ -750,9 +753,24 @@ export default function DirectCall({
     let stopped = false;
     let releaseTimer = 0;
     incomingChoiceRef.current = false;
+    answerYesReadyRef.current = false;
+    answerYesRef.current?.cancel();
+    const answerListen = listenForAnswer({
+      gate: () => answerYesReadyRef.current,
+      onYes: () => {
+        if (stopped || incomingChoiceRef.current || phaseRef.current !== "incoming") return;
+        incomingChoiceRef.current = true;
+        announceRef.current("出ます。この通話は3分です。");
+        answerRef.current();
+      },
+    });
+    answerYesRef.current = answerListen;
     const timer = window.setTimeout(() => {
       if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
-      if (announcedIncomingRef.current.has(callId)) return;
+      if (announcedIncomingRef.current.has(callId)) {
+        answerYesReadyRef.current = true;
+        return;
+      }
       announcedIncomingRef.current.add(callId);
       const peer = callRef.current?.peer ?? current.peer;
       beep([880], 0.25, 0.3);
@@ -764,17 +782,26 @@ export default function DirectCall({
       };
       releaseTimer = window.setTimeout(resumeRing, 9000);
       announceRef.current(
-        `${peer}さんから電話です。右を押すと出ます。左を押すと出ません。`,
+        `${peer}さんから電話です。はい、と言うと出ます。右を押すと出ます。左を押すと出ません。`,
         () => {
+          window.setTimeout(() => {
+            answerYesReadyRef.current = true;
+          }, 700);
           window.clearTimeout(releaseTimer);
           resumeRing();
         },
       );
     }, 700);
+    const readyTimer = window.setTimeout(() => {
+      if (!stopped) answerYesReadyRef.current = true;
+    }, 20000);
     return () => {
       stopped = true;
       window.clearTimeout(timer);
+      window.clearTimeout(readyTimer);
       window.clearTimeout(releaseTimer);
+      answerListen.cancel();
+      if (answerYesRef.current === answerListen) answerYesRef.current = null;
     };
   }, [phase, visualSupportEnabled, call?.id]);
 
@@ -832,19 +859,11 @@ export default function DirectCall({
     const startListen = () => {
       if (stopped || session) return;
       beep([880], 0.12, 0.2);
-      session = listenQuiet(
-        {
-          onResult: (text) => {
-            if (isCallbackYes(text)) finishYes();
-            else finishNo();
-          },
-          onError: (reason) => {
-            if (reason === "unsupported" || reason === "denied") return;
-            finishNo();
-          },
-        },
-        10000,
-      );
+      session = listenForAnswer({
+        accept: isSpokenCallYes,
+        onYes: () => finishYes(),
+        onOther: () => finishNo(),
+      });
     };
     announceRef.current(
       `${item.peer}さんから着信がありました。かけ直しますか。`,
@@ -1039,9 +1058,19 @@ export default function DirectCall({
       index >= names.length - 1
         ? "左を押すと、やめます。"
         : "左を押すと、次の人です。";
+    callYesReadyRef.current = false;
+    const token = ++callYesTokenRef.current;
     announceRef.current(
-      `${name}さんに電話します。右を押すと、電話がかかります。${left}`,
+      `${name}さんに電話します。はい、と言うと、電話がかかります。右を押すと、電話がかかります。${left}`,
+      () => {
+        window.setTimeout(() => {
+          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
+        }, 1000);
+      },
     );
+    window.setTimeout(() => {
+      if (callYesTokenRef.current === token) callYesReadyRef.current = true;
+    }, 20000);
   }, [assistedChooser, showPanel, callsLeft, assistedNames, pickIndex, onClosePanel]);
 
   const assistedIndex =
@@ -1061,15 +1090,27 @@ export default function DirectCall({
     if (!next) return;
     const last = nextIndex >= others.length - 1;
     assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
+    callYesReadyRef.current = false;
+    const token = ++callYesTokenRef.current;
     announce(
-      `${next.name}さんに電話します。右を押すと、電話がかかります。${
+      `${next.name}さんに電話します。はい、と言うと、電話がかかります。右を押すと、電話がかかります。${
         last ? "左を押すと、やめます。" : "左を押すと、次の人です。"
       }`,
+      () => {
+        window.setTimeout(() => {
+          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
+        }, 1000);
+      },
     );
+    window.setTimeout(() => {
+      if (callYesTokenRef.current === token) callYesReadyRef.current = true;
+    }, 20000);
     setPickIndex(nextIndex);
   };
   const assistedCall = () => {
     if (!assistedPerson) return;
+    callYesRef.current?.cancel();
+    callYesRef.current = null;
     const say = () =>
       announce(
         `${assistedPerson.name}さんを呼び出します。相手が出るまで、このままお待ちください。`,
@@ -1078,6 +1119,27 @@ export default function DirectCall({
     else say();
     void startCall(assistedPerson.name);
   };
+  assistedCallRef.current = assistedCall;
+  beginCallYesRef.current = () => {
+    if (callYesRef.current) return;
+    callYesRef.current = listenForAnswer({
+      gate: () => callYesReadyRef.current,
+      onYes: () => {
+        callYesRef.current = null;
+        assistedCallRef.current();
+      },
+    });
+  };
+
+  useEffect(() => {
+    const open = assistedChooser && showPanel && !call && callsLeft !== 0;
+    if (!open) {
+      callYesRef.current?.cancel();
+      callYesRef.current = null;
+      return;
+    }
+    beginCallYesRef.current();
+  }, [assistedChooser, showPanel, call, callsLeft]);
 
   const sheetDrag = useSheetDrag(onClosePanel);
 
@@ -1085,6 +1147,20 @@ export default function DirectCall({
     controlRef.current = {
       startCall: (to) => void startCall(to),
       hangUp: () => void hangUp(),
+      armCallYes: () => {
+        callYesReadyRef.current = false;
+        const token = ++callYesTokenRef.current;
+        beginCallYesRef.current();
+        window.setTimeout(() => {
+          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
+        }, 20000);
+      },
+      releaseCallYes: () => {
+        const token = callYesTokenRef.current;
+        window.setTimeout(() => {
+          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
+        }, 1000);
+      },
     };
   }
 
@@ -1104,8 +1180,8 @@ export default function DirectCall({
             <h2 className="dm-screen__name">{assistedPerson.name}さん</h2>
             <p className="dm-screen__hint">
               {assistedLast
-                ? "右を押すと電話がかかります。左を押すとやめます。"
-                : "右を押すと電話がかかります。左を押すと次の人です。"}
+                ? "はいと言うと電話がかかります。右を押すと電話がかかります。左を押すとやめます。"
+                : "はいと言うと電話がかかります。右を押すと電話がかかります。左を押すと次の人です。"}
             </p>
             <div className="dm-screen__sides">
               <button
@@ -1358,7 +1434,7 @@ export default function DirectCall({
           {phase === "incoming" && (
             <p className="dm-screen__hint">
               {visualSupportEnabled
-                ? "右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
+                ? "はいと言うと出ます。右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
                 : "1回の通話は3分までです"}
             </p>
           )}
@@ -1367,6 +1443,8 @@ export default function DirectCall({
               <button
                 className="dm-side dm-side--decline"
                 onClick={() => {
+                  answerYesRef.current?.cancel();
+                  answerYesRef.current = null;
                   incomingChoiceRef.current = true;
                   announceRef.current("出ません。");
                   void hangUp();
@@ -1379,6 +1457,8 @@ export default function DirectCall({
               <button
                 className="dm-side dm-side--answer"
                 onClick={() => {
+                  answerYesRef.current?.cancel();
+                  answerYesRef.current = null;
                   incomingChoiceRef.current = true;
                   announceRef.current("出ます。この通話は3分です。");
                   void answer();

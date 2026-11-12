@@ -5625,6 +5625,7 @@ export default function App() {
       return;
     }
     const interrupted = stopVisualGuidance();
+    dmControlRef.current?.armCallYes();
     setDirectAssistedPick(true);
     setShowDirectCall(true);
     const count =
@@ -5635,7 +5636,8 @@ export default function App() {
         : "左を押すと、次の人です。";
     const say = () =>
       speakJapanese(
-        `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。右を押すと、電話がかかります。${leftAction}`,
+        `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。はい、と言うと、電話がかかります。右を押すと、電話がかかります。${leftAction}`,
+        () => dmControlRef.current?.releaseCallYes(),
       );
     if (interrupted) window.setTimeout(say, 100);
     else say();
