@@ -511,7 +511,7 @@ const analyticsStorageKey = "sawakai-analytics";
 const themeStorageKey = "sawakai-theme";
 const visualSupportStorageKey = "sawakai-visual-support";
 const visualCallGuide =
-  "グループ通話は、画面の一番上のボタンを一度押します。電話が来たら、右を押すと出て、左を押すと出ません。";
+  "グループ通話は、画面の一番上の緑のボタンを一度押します。その下の青いボタンで、1対1の電話をします。電話が来たら、右を押すと出て、左を押すと出ません。";
 const replyModeStorageKey = "sawakai-reply-mode";
 type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
@@ -4786,6 +4786,7 @@ export default function App() {
   const dmInCallRef = useRef(dmInCall);
   dmInCallRef.current = dmInCall;
   const [dmIncoming, setDmIncoming] = useState(false);
+  const [dmCallsLeft, setDmCallsLeft] = useState<number | null>(null);
   const [dmPeer, setDmPeer] = useState<string | null>(null);
   const dmControlRef = useRef<DirectCallControl | null>(null);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
@@ -5529,6 +5530,18 @@ export default function App() {
     setVoiceAutoJoin(true);
     setShowVoice(true);
     speakJapanese("グループ通話に参加します。");
+  };
+
+  const openDirectCall = () => {
+    if (showVoiceRef.current || dmInCallRef.current || dmIncoming) return;
+    setShowDirectCall(true);
+    if (dmCallsLeft === 0) {
+      speakJapanese("今日の1対1の電話は、3回まで使いました。また明日おかけください。");
+      return;
+    }
+    const left =
+      dmCallsLeft === null ? "" : `今日はあと${dmCallsLeft}回かけられます。`;
+    speakJapanese(`1対1の電話です。1回は3分まで、1日3回までです。${left}`);
   };
 
   const prepareMessage = (message: string) => {
@@ -6676,7 +6689,7 @@ export default function App() {
     >
       <header className="group-header">
         {visualSupportEnabled && !showVoice && (
-          <div className="voice-join-banner" role="region" aria-label="グループ通話に参加">
+          <div className="voice-join-banner" role="region" aria-label="通話">
             <button
               className="voice-join-banner__button"
               disabled={dmInCall || dmIncoming}
@@ -6684,6 +6697,14 @@ export default function App() {
               type="button"
             >
               グループ通話に参加する
+            </button>
+            <button
+              className="voice-join-banner__button voice-direct-button"
+              disabled={dmInCall || dmIncoming}
+              onClick={openDirectCall}
+              type="button"
+            >
+              1対1で電話する
             </button>
           </div>
         )}
@@ -7235,6 +7256,7 @@ export default function App() {
         onClosePanel={() => setShowDirectCall(false)}
         onBusyChange={setDmInCall}
         onIncomingChange={setDmIncoming}
+        onCallsLeftChange={setDmCallsLeft}
         onCallPeerChange={setDmPeer}
         controlRef={dmControlRef}
         onListeningChange={setDmListening}

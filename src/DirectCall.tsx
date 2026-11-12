@@ -39,6 +39,7 @@ type DirectCallProps = {
   onListeningChange: (listening: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
   onIncomingChange?: (incoming: boolean) => void;
+  onCallsLeftChange?: (left: number) => void;
   onCallPeerChange?: (peer: string | null) => void;
   controlRef?: MutableRefObject<DirectCallControl | null>;
   notify: (title: string, body: string, tag: string) => void;
@@ -158,6 +159,7 @@ export default function DirectCall({
   onListeningChange,
   onBusyChange,
   onIncomingChange,
+  onCallsLeftChange,
   onCallPeerChange,
   controlRef,
   notify,
@@ -810,6 +812,10 @@ export default function DirectCall({
   const others = members.filter((member) => member.name !== myName);
   const busy = call !== null;
   const videoMode = phase === "incall" && (cameraOn || remoteCamOn);
+
+  useEffect(() => {
+    if (callsLeft !== null) onCallsLeftChange?.(callsLeft);
+  }, [callsLeft, onCallsLeftChange]);
 
   useEffect(() => {
     onBusyChange?.(phase === "connecting" || phase === "incall");
