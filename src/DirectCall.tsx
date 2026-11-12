@@ -47,6 +47,7 @@ type DirectCallProps = {
   notify: (title: string, body: string, tag: string) => void;
   visualSupportEnabled: boolean;
   announce: (text: string, onEnd?: () => void) => void;
+  endGuidance?: () => boolean;
   onMissedCount?: (count: number) => void;
   onVisualGuideReady?: (ready: boolean) => void;
 };
@@ -176,6 +177,7 @@ export default function DirectCall({
   notify,
   visualSupportEnabled,
   announce,
+  endGuidance,
   onMissedCount,
   onVisualGuideReady,
 }: DirectCallProps) {
@@ -209,6 +211,8 @@ export default function DirectCall({
   visualSupportRef.current = visualSupportEnabled;
   const announceRef = useRef(announce);
   announceRef.current = announce;
+  const endGuidanceRef = useRef(endGuidance);
+  endGuidanceRef.current = endGuidance;
   const assistedSpokenRef = useRef("");
   const callRef = useRef<DmCallView | null>(null);
   const phaseRef = useRef<Phase | null>(null);
@@ -818,7 +822,10 @@ export default function DirectCall({
       guideSawCallRef.current = false;
       dismissMissed([item]);
       setMissedPrompt(null);
-      announceRef.current(`${item.peer}さんにかけ直します。`);
+      const say = () =>
+        announceRef.current(`${item.peer}さんにかけ直します。`);
+      if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
+      else say();
       void startCall(item.peer);
     };
     missedChoiceRef.current = { yes: finishYes, no: finishNo };
@@ -854,6 +861,11 @@ export default function DirectCall({
     // dismissMissed と startCall は、この着信のあいだだけ使う
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missedPrompt]);
+
+  useEffect(() => {
+    if (phase !== "incall" || !visualSupportEnabled) return;
+    endGuidanceRef.current?.();
+  }, [phase, visualSupportEnabled]);
 
   useEffect(() => {
     if (!guideAfterCallRef.current) return;
@@ -1058,9 +1070,12 @@ export default function DirectCall({
   };
   const assistedCall = () => {
     if (!assistedPerson) return;
-    announce(
-      `${assistedPerson.name}さんを呼び出します。相手が出るまで、このままお待ちください。`,
-    );
+    const say = () =>
+      announce(
+        `${assistedPerson.name}さんを呼び出します。相手が出るまで、このままお待ちください。`,
+      );
+    if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
+    else say();
     void startCall(assistedPerson.name);
   };
 

@@ -519,6 +519,7 @@ const fallbackSuggestions = ["土曜でいいね", "何時ごろにしますか�
 
 let blockedSpeech = "";
 let speechKeepAlive = 0;
+let speechEpoch = 0;
 const speechQueue: {
   text: string;
   onEnd?: () => void;
@@ -548,6 +549,22 @@ function keepSpeechAlive() {
   }, 4000);
 }
 
+function endVisualGuidance() {
+  const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+  const active =
+    speechPlaying ||
+    speechQueue.length > 0 ||
+    blockedSpeech !== "" ||
+    Boolean(synth && (synth.speaking || synth.pending));
+  speechEpoch += 1;
+  blockedSpeech = "";
+  speechQueue.length = 0;
+  speechPlaying = false;
+  window.clearInterval(speechKeepAlive);
+  if (synth && (synth.speaking || synth.pending)) synth.cancel();
+  return active;
+}
+
 function playNextSpeech() {
   if (speechPlaying || speechQueue.length === 0) return;
   if (!("speechSynthesis" in window)) {
@@ -557,6 +574,7 @@ function playNextSpeech() {
   }
   const job = speechQueue.shift();
   if (!job) return;
+  const epoch = speechEpoch;
   speechPlaying = true;
   const synth = window.speechSynthesis;
   const utterance = new SpeechSynthesisUtterance(job.text);
@@ -569,6 +587,7 @@ function playNextSpeech() {
     if (finished) return;
     finished = true;
     window.clearTimeout(safety);
+    if (epoch !== speechEpoch) return;
     speechPlaying = false;
     playNextSpeech();
   };
@@ -577,10 +596,20 @@ function playNextSpeech() {
     Math.min(30000, Math.max(4000, job.text.length * 180)),
   );
   utterance.onend = () => {
+    if (epoch !== speechEpoch) {
+      finished = true;
+      window.clearTimeout(safety);
+      return;
+    }
     job.onEnd?.();
     finish();
   };
   utterance.onerror = (event) => {
+    if (epoch !== speechEpoch) {
+      finished = true;
+      window.clearTimeout(safety);
+      return;
+    }
     if (event.error === "not-allowed") blockedSpeech = job.text;
     else if (event.error !== "interrupted" && event.error !== "canceled") {
       job.onError?.();
@@ -591,7 +620,8 @@ function playNextSpeech() {
   synth.speak(utterance);
   keepSpeechAlive();
   window.setTimeout(() => {
-    if (!finished && !synth.speaking && !synth.pending) finish();
+    if (epoch !== speechEpoch || finished) return;
+    if (!synth.speaking && !synth.pending) finish();
   }, 350);
 }
 
@@ -4718,6 +4748,11 @@ export default function App() {
     guideReadyRef.current = ready;
     if (ready) flushGuide();
   };
+  const stopVisualGuidance = () => {
+    const stopped = endVisualGuidance();
+    pendingGuideRef.current = null;
+    return stopped;
+  };
   const [token, setToken] = useState(
     () => localStorage.getItem(sessionStorageKey) ?? "",
   );
@@ -5525,6 +5560,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!visualSupportEnabled) return;
+    const stopOnAction = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest("button, a, [role='button']")) return;
+      endVisualGuidance();
+    };
+    document.addEventListener("pointerdown", stopOnAction, true);
+    return () => document.removeEventListener("pointerdown", stopOnAction, true);
+  }, [visualSupportEnabled]);
+
+  useEffect(() => {
     if (!showConfirmation || !visualSupportEnabled) return;
     let active = true;
     setVoiceConfirmationAutoStart(false);
@@ -5557,9 +5604,12 @@ export default function App() {
 
   const joinGroupCallByButton = () => {
     if (showVoiceRef.current || dmInCallRef.current || dmIncoming) return;
+    const interrupted = stopVisualGuidance();
     setVoiceAutoJoin(true);
     setShowVoice(true);
-    speakJapanese("グループ通話に参加します。");
+    const say = () => speakJapanese("グループ通話に参加します。");
+    if (interrupted) window.setTimeout(say, 100);
+    else say();
   };
 
   const openDirectCall = () => {
@@ -5574,6 +5624,7 @@ export default function App() {
       speakJapanese("電話できる相手はいません。");
       return;
     }
+    const interrupted = stopVisualGuidance();
     setDirectAssistedPick(true);
     setShowDirectCall(true);
     const count =
@@ -5582,9 +5633,12 @@ export default function App() {
       peers.length === 1
         ? "左を押すと、やめます。"
         : "左を押すと、次の人です。";
-    speakJapanese(
-      `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。右を押すと、電話がかかります。${leftAction}`,
-    );
+    const say = () =>
+      speakJapanese(
+        `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。右を押すと、電話がかかります。${leftAction}`,
+      );
+    if (interrupted) window.setTimeout(say, 100);
+    else say();
   };
 
   const prepareMessage = (message: string) => {
@@ -7280,6 +7334,7 @@ export default function App() {
           }
           assisted={visualSupportEnabled}
           speak={visualSupportEnabled ? speakJapanese : undefined}
+          endGuidance={visualSupportEnabled ? stopVisualGuidance : undefined}
         />
       )}
 
@@ -7315,6 +7370,7 @@ export default function App() {
           missedCountRef.current = count;
         }}
         onVisualGuideReady={handleGuideReady}
+        endGuidance={visualSupportEnabled ? stopVisualGuidance : undefined}
         showPanel={showDirectCall}
       />
 

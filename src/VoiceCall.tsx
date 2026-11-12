@@ -15,6 +15,7 @@ type VoiceCallProps = {
   /** 視覚サポートがオンのとき、大きな退出ボタンと案内を出します。 */
   assisted?: boolean;
   speak?: (text: string) => void;
+  endGuidance?: () => boolean;
 };
 
 type Status = "idle" | "connecting" | "connected" | "error";
@@ -28,6 +29,7 @@ export default function VoiceCall({
   announce,
   assisted = false,
   speak,
+  endGuidance,
 }: VoiceCallProps) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
@@ -43,6 +45,8 @@ export default function VoiceCall({
   announceRef.current = announce;
   const speakRef = useRef(speak);
   speakRef.current = speak;
+  const endGuidanceRef = useRef(endGuidance);
+  endGuidanceRef.current = endGuidance;
   const assistedRef = useRef(assisted);
   assistedRef.current = assisted;
 
@@ -120,8 +124,12 @@ export default function VoiceCall({
           others.length > 0
             ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。${leaveNote}`
             : `通話に入りました。まだほかの人はいません。${leaveNote}`;
-        if (announceRef.current) announceRef.current(message);
-        else speakRef.current?.(message);
+        const say = () => {
+          if (announceRef.current) announceRef.current(message);
+          else speakRef.current?.(message);
+        };
+        if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
+        else say();
       }
     } catch (reason) {
       roomRef.current?.disconnect();
