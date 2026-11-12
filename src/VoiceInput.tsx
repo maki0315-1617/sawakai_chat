@@ -180,6 +180,7 @@ export default function VoiceInput({
   const heardRef = useRef("");
   const deliveredRef = useRef(false);
   const lastRestartRef = useRef(0);
+  const generationRef = useRef(0);
 
   useEffect(() => {
     onStatusChangeRef.current?.(state, error);
@@ -276,6 +277,7 @@ export default function VoiceInput({
 
   // iPhoneでは、ボタンを押した直後（同じ操作の中）で音声を準備する必要がある
   const begin = async () => {
+    const generation = ++generationRef.current;
     setError("");
     const Context = getAudioContextClass();
     if (!Context) return;
@@ -344,7 +346,7 @@ export default function VoiceInput({
         const chunks = chunksRef.current;
         cleanup();
         finishRef.current = null;
-        if (cancelledRef.current) {
+        if (cancelledRef.current || generation !== generationRef.current) {
           setState("idle");
           return;
         }
@@ -394,6 +396,7 @@ export default function VoiceInput({
       return;
     }
     setError("");
+    const generation = ++generationRef.current;
     const recognition = new Recognition();
     recognition.lang = "ja-JP";
     recognition.continuous = false;
@@ -404,14 +407,15 @@ export default function VoiceInput({
     let failed = false;
     const startedAt = Date.now();
     recognition.onresult = (event) => {
+      if (generation !== generationRef.current || cancelledRef.current) return;
       const text = Array.from(event.results)
         .map((result) => result[0]?.transcript ?? "")
         .join("")
         .trim();
-      if (text && !cancelledRef.current) recognizedText = text;
+      if (text) recognizedText = text;
     };
     recognition.onerror = (event) => {
-      if (cancelledRef.current) return;
+      if (generation !== generationRef.current || cancelledRef.current) return;
       failed = true;
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
@@ -422,6 +426,7 @@ export default function VoiceInput({
       }
     };
     recognition.onend = () => {
+      if (generation !== generationRef.current) return;
       if (timerRef.current !== null) window.clearInterval(timerRef.current);
       timerRef.current = null;
       recognitionRef.current = null;
@@ -465,7 +470,7 @@ export default function VoiceInput({
     onTextRef.current(body);
   };
 
-  const beginUntilEnd = (session: number) => {
+  const beginUntilEnd = (session: number, deferMic = false) => {
     const Recognition = getDeviceRecognition();
     if (!Recognition) {
       void begin();
@@ -476,6 +481,7 @@ export default function VoiceInput({
     stoppedRef.current = false;
     deliveredRef.current = false;
     heardRef.current = "";
+    const generation = ++generationRef.current;
     const recognition = new Recognition();
     recognition.lang = "ja-JP";
     recognition.continuous = false;
@@ -500,7 +506,7 @@ export default function VoiceInput({
       return { finals: finals.trim(), interim: interim.trim() };
     };
     recognition.onresult = (event) => {
-      if (!ready || cancelledRef.current || deliveredRef.current) return;
+      if (!ready || generation !== generationRef.current || cancelledRef.current || deliveredRef.current) return;
       const spoken = readResults(event.results);
       utterance = `${spoken.finals}${spoken.interim}`.trim();
       const combined = `${carried}${utterance}`.trim();
@@ -545,6 +551,7 @@ export default function VoiceInput({
       }
       window.setTimeout(() => {
         if (
+          generation !== generationRef.current ||
           cancelledRef.current ||
           deliveredRef.current ||
           !holdForEndRef.current ||
@@ -564,7 +571,7 @@ export default function VoiceInput({
       }, 250);
     };
     recognition.onend = () => {
-      if (rearming) return;
+      if (generation !== generationRef.current || rearming) return;
       if (!ready) return;
       if (deliveredRef.current || cancelledRef.current || !holdForEndRef.current) {
         if (timerRef.current !== null) window.clearInterval(timerRef.current);
@@ -576,7 +583,13 @@ export default function VoiceInput({
       restart();
     };
     const arm = () => {
-      if (session !== sessionRef.current || cancelledRef.current) return;
+      if (
+        session !== sessionRef.current ||
+        generation !== generationRef.current ||
+        cancelledRef.current
+      ) {
+        return;
+      }
       ready = true;
       carried = "";
       utterance = "";
@@ -591,6 +604,7 @@ export default function VoiceInput({
         rearming = false;
         if (
           session !== sessionRef.current ||
+          generation !== generationRef.current ||
           cancelledRef.current ||
           deliveredRef.current ||
           !holdForEndRef.current
@@ -608,12 +622,12 @@ export default function VoiceInput({
       }, 300);
     };
     try {
-      recognition.start();
+      if (!deferMic) recognition.start();
     } catch {
       // 「どうぞ」のあとで開始する
     }
     setSeconds(0);
-    setState("listening");
+    setState(deferMic ? "starting" : "listening");
     if (onCueRef.current) onCueRef.current(arm);
     else arm();
     timerRef.current = window.setInterval(() => {
@@ -632,7 +646,7 @@ export default function VoiceInput({
   };
 
   const sessionRef = useRef(0);
-  const startAssisted = (force = false) => {
+  const startAssisted = (force = false, deferMic = false) => {
     if (disabled) return;
     if (
       !force &&
@@ -645,16 +659,23 @@ export default function VoiceInput({
       return;
     }
     const session = ++sessionRef.current;
-    cancelledRef.current = false;
+    generationRef.current += 1;
+    cancelledRef.current = true;
     deliveredRef.current = false;
     heardRef.current = "";
-    recognitionRef.current?.abort();
+    const previous = recognitionRef.current;
     recognitionRef.current = null;
+    try {
+      previous?.abort();
+    } catch {
+      // already stopped
+    }
     cleanup();
+    cancelledRef.current = false;
     onListeningStartRef.current?.();
     setError("");
     setState("starting");
-    beginUntilEnd(session);
+    beginUntilEnd(session, deferMic);
   };
 
   const finishHeld = () => {
@@ -730,7 +751,7 @@ export default function VoiceInput({
     if (!holdForEnd || restartSignal === 0) return;
     if (lastRestartRef.current === restartSignal) return;
     lastRestartRef.current = restartSignal;
-    startAssisted(true);
+    startAssisted(true, true);
   }, [restartSignal, holdForEnd]);
 
   useEffect(() => {

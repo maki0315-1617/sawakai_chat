@@ -4803,6 +4803,7 @@ export default function App() {
   const [voiceCancelSignal, setVoiceCancelSignal] = useState(0);
   const [assistedVoiceRestart, setAssistedVoiceRestart] = useState(0);
   const assistedVoiceStartRef = useRef<(() => void) | null>(null);
+  const assistedShortCueRef = useRef(false);
   const voiceAutoModeRef = useRef(voiceAutoMode);
   voiceAutoModeRef.current = voiceAutoMode;
   const voicePanelRef = useRef(false);
@@ -6554,8 +6555,8 @@ export default function App() {
         setShowConfirmation(false);
         setPendingMessage("");
         setDraft("");
-        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-        window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
+        assistedShortCueRef.current = true;
+        setAssistedVoiceRestart((value) => value + 1);
       } else if (["取り消し", "取消", "キャンセル"].includes(command)) {
         cancelConfirmation();
         setDraft("");
@@ -6582,6 +6583,7 @@ export default function App() {
     ) {
       const body = finishedReply(text).body.trim();
       if (!body) {
+        assistedShortCueRef.current = true;
         window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
         return;
       }
@@ -7252,10 +7254,20 @@ export default function App() {
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
                   onCue={(done) => {
-                    const cue = isAndroidDevice()
-                      ? "どうぞ。ピーッと鳴ってから、返事を話してください。もう一度ピーッと鳴ってから、終わり、と言ってください。"
-                      : "どうぞ";
-                    if (!speakJapanese(cue, done, done)) done();
+                    const short = assistedShortCueRef.current;
+                    assistedShortCueRef.current = false;
+                    const cue =
+                      !short && isAndroidDevice()
+                        ? "どうぞ。ピーッと鳴ってから、返事を話してください。もう一度ピーッと鳴ってから、終わり、と言ってください。"
+                        : "どうぞ";
+                    let armed = false;
+                    const finish = () => {
+                      if (armed) return;
+                      armed = true;
+                      done();
+                    };
+                    if (!speakJapanese(cue, finish, finish)) finish();
+                    if (short) window.setTimeout(finish, 2500);
                   }}
                   autoStart={
                     showConfirmation &&
