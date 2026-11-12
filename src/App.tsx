@@ -14,6 +14,7 @@ import VoiceInput, { finishedReply } from "./VoiceInput";
 import {
   failureMessage,
   isAndroidDevice,
+  isDesktopDevice,
   isIphoneDevice,
   isVoiceSupported,
   listenOnce,
@@ -5583,6 +5584,21 @@ export default function App() {
     return () => document.removeEventListener("pointerdown", stopOnAction, true);
   }, [visualSupportEnabled]);
 
+  const startSendListening = (start: () => void) => {
+    if (!isDesktopDevice() || !voicePanelRef.current) {
+      start();
+      return;
+    }
+    let started = false;
+    const go = () => {
+      if (started) return;
+      started = true;
+      start();
+    };
+    if (!speakJapanese("どうぞ", go, go)) go();
+    window.setTimeout(go, 2500);
+  };
+
   useEffect(() => {
     if (!showConfirmation || !visualSupportEnabled) return;
     let active = true;
@@ -5592,17 +5608,23 @@ export default function App() {
       const voiceReply = voicePanelRef.current;
       speakJapanese(
         voiceReply
-          ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
+          ? isDesktopDevice()
+            ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」と、このあと「どうぞ」と言ってからお話しください。`
+            : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
           : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         () => {
           if (
-            visualSupportEnabledRef.current &&
-            active &&
-            voiceAutoModeRef.current &&
-            voicePanelRef.current
+            !visualSupportEnabledRef.current ||
+            !active ||
+            !voiceAutoModeRef.current ||
+            !voicePanelRef.current
           ) {
-            setVoiceConfirmationAutoStart(true);
+            return;
           }
+          startSendListening(() => {
+            if (!active) return;
+            setVoiceConfirmationAutoStart(true);
+          });
         },
         () => {
           if (active) {
@@ -6566,10 +6588,13 @@ export default function App() {
       } else {
         speakJapanese(
           voicePanelRef.current
-            ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。"
+            ? isDesktopDevice()
+              ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」と、このあと「どうぞ」と言ってからお話しください。"
+              : "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。"
             : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。",
           () => {
-            if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+            if (!voiceAutoMode) return;
+            startSendListening(() => setVoiceConfirmationAutoStart(true));
           },
         );
       }
@@ -7289,9 +7314,11 @@ export default function App() {
                         (status === "starting"
                           ? "マイクを準備しています。"
                           : status === "listening"
-                            ? isAndroidDevice()
-                              ? "聞いています。ピーッと鳴ってから、終わり、と言ってください。"
-                              : "聞いています。終わったら、終わり、と言ってください。"
+                            ? showConfirmation
+                              ? "聞いています。「送信」「修正」「取り消し」とお話しください。"
+                              : isAndroidDevice()
+                                ? "聞いています。ピーッと鳴ってから、終わり、と言ってください。"
+                                : "聞いています。終わったら、終わり、と言ってください。"
                             : status === "sending"
                               ? "文字にしています。少しお待ちください。"
                               : ""),
@@ -7762,7 +7789,9 @@ export default function App() {
             <div className="message-preview">{pendingMessage}</div>
             <p className="dialog-note">
               {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen
-                ? "「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
+                ? isDesktopDevice()
+                  ? "「どうぞ」のあとで、「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
+                  : "「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
                 : "「送る」を押すまで、自動で送信されることはありません。"}
             </p>
             {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen && (
@@ -7772,8 +7801,12 @@ export default function App() {
                   className="read-aloud-button"
                   disabled={showVoice || dmInCall || voiceInputBusy}
                   onClick={() => {
-                    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
                     setVoiceAutoMode(true);
+                    if (isDesktopDevice()) {
+                      startSendListening(() => setVoiceConfirmationAutoStart(true));
+                      return;
+                    }
+                    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
                     setVoiceConfirmationAutoStart(true);
                   }}
                   type="button"
