@@ -4702,6 +4702,22 @@ export default function App() {
   const visualSupportEnabledRef = useRef(visualSupportEnabled);
   visualSupportEnabledRef.current = visualSupportEnabled;
   const shouldAnnounceStartupRef = useRef(visualSupportEnabled);
+  const pendingGuideRef = useRef<string | null>(null);
+  const guideReadyRef = useRef(false);
+  const guideSignalRef = useRef(false);
+  const missedCountRef = useRef(0);
+  const flushGuide = () => {
+    const text = pendingGuideRef.current;
+    if (!text || !guideReadyRef.current) return;
+    pendingGuideRef.current = null;
+    if (text.startsWith("茶話会アプリが起動しました。")) speakOrRetry(text);
+    else speakJapanese(text);
+  };
+  const handleGuideReady = (ready: boolean) => {
+    guideSignalRef.current = true;
+    guideReadyRef.current = ready;
+    if (ready) flushGuide();
+  };
   const [token, setToken] = useState(
     () => localStorage.getItem(sessionStorageKey) ?? "",
   );
@@ -5478,7 +5494,13 @@ export default function App() {
     setVoiceAutoMode(false);
     setVoiceConfirmationAutoStart(false);
     if (enabled) {
-      speakJapanese(`視覚サポートを有効にしました。${visualCallGuide}`);
+      const text = `視覚サポートを有効にしました。${visualCallGuide}`;
+      if (missedCountRef.current > 0) {
+        pendingGuideRef.current = text;
+        guideReadyRef.current = false;
+      } else {
+        speakJapanese(text);
+      }
     } else if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
@@ -5486,12 +5508,19 @@ export default function App() {
 
   useEffect(() => {
     if (!shouldAnnounceStartupRef.current) return;
+    shouldAnnounceStartupRef.current = false;
+    if (localStorage.getItem(visualSupportStorageKey) !== "enabled") return;
+    const text = `茶話会アプリが起動しました。${visualCallGuide}`;
+    if (!token || !profile) {
+      const timer = window.setTimeout(() => speakOrRetry(text), 600);
+      return () => window.clearTimeout(timer);
+    }
+    pendingGuideRef.current = text;
     const timer = window.setTimeout(() => {
-      shouldAnnounceStartupRef.current = false;
-      if (localStorage.getItem(visualSupportStorageKey) === "enabled") {
-        speakOrRetry(`茶話会アプリが起動しました。${visualCallGuide}`);
-      }
-    }, 600);
+      if (guideSignalRef.current) return;
+      guideReadyRef.current = true;
+      flushGuide();
+    }, 8000);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -7282,6 +7311,10 @@ export default function App() {
         controlRef={dmControlRef}
         onListeningChange={setDmListening}
         visualSupportEnabled={visualSupportEnabled}
+        onMissedCount={(count) => {
+          missedCountRef.current = count;
+        }}
+        onVisualGuideReady={handleGuideReady}
         showPanel={showDirectCall}
       />
 

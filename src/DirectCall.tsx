@@ -16,6 +16,7 @@ import {
   VideoPresets,
 } from "livekit-client";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
+import { listenQuiet, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -46,6 +47,8 @@ type DirectCallProps = {
   notify: (title: string, body: string, tag: string) => void;
   visualSupportEnabled: boolean;
   announce: (text: string, onEnd?: () => void) => void;
+  onMissedCount?: (count: number) => void;
+  onVisualGuideReady?: (ready: boolean) => void;
 };
 export type DirectCallControl = {
   startCall: (to: string) => void;
@@ -150,6 +153,12 @@ function historyLabel(call: DmCallView) {
   return outgoing ? "発信・通話中" : "着信・通話中";
 }
 
+function isCallbackYes(text: string) {
+  const value = text.normalize("NFKC").replace(/[\s。、.,！!？?]/g, "");
+  if (/いいえ|いえ|やめる|やめ|かけない|かけません/.test(value)) return false;
+  return /はい|ええ|うん|かける|かけ直|かけなお/.test(value);
+}
+
 export default function DirectCall({
   apiRoot,
   headers,
@@ -167,6 +176,8 @@ export default function DirectCall({
   notify,
   visualSupportEnabled,
   announce,
+  onMissedCount,
+  onVisualGuideReady,
 }: DirectCallProps) {
   const [call, setCall] = useState<DmCallView | null>(null);
   const [phase, setPhase] = useState<Phase | null>(null);
@@ -186,6 +197,7 @@ export default function DirectCall({
   const [history, setHistory] = useState<DmCallView[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [missed, setMissed] = useState<DmCallView[]>([]);
+  const [missedPrompt, setMissedPrompt] = useState<DmCallView | null>(null);
   const [showListenNotice, setShowListenNotice] = useState(
     () => localStorage.getItem(listenNoticeKey) !== "seen",
   );
@@ -217,6 +229,20 @@ export default function DirectCall({
   const answerRef = useRef<() => void>(() => undefined);
   const hangUpRef = useRef<(message?: string) => void>(() => undefined);
   const dismissedRef = useRef(new Set<string>());
+  const askedMissedRef = useRef(new Set<string>());
+  const missedRef = useRef<DmCallView[]>([]);
+  const guideCheckedRef = useRef(false);
+  const guideAfterCallRef = useRef(false);
+  const guideSawCallRef = useRef(false);
+  const onVisualGuideReadyRef = useRef(onVisualGuideReady);
+  const onMissedCountRef = useRef(onMissedCount);
+  const missedChoiceRef = useRef<{ yes: () => void; no: () => void }>({
+    yes: () => undefined,
+    no: () => undefined,
+  });
+  onVisualGuideReadyRef.current = onVisualGuideReady;
+  onMissedCountRef.current = onMissedCount;
+  missedRef.current = missed;
   const hangingUpRef = useRef(false);
 
   const changeCall = (next: DmCallView | null, nextPhase: Phase | null) => {
@@ -406,6 +432,14 @@ export default function DirectCall({
         const message = result.error ?? "電話をかけられませんでした。";
         setNotice(message);
         if (assistedPick && visualSupportEnabled) announce(message);
+        if (guideAfterCallRef.current) {
+          guideAfterCallRef.current = false;
+          if (visualSupportRef.current) announce(message);
+          const more = missedRef.current.some(
+            (item) => !askedMissedRef.current.has(item.id),
+          );
+          if (!more) onVisualGuideReadyRef.current?.(true);
+        }
         return;
       }
       onClosePanel();
@@ -414,6 +448,14 @@ export default function DirectCall({
       const message = "電話をかけられませんでした。通信状態を確認してください。";
       setNotice(message);
       if (assistedPick && visualSupportEnabled) announce(message);
+      if (guideAfterCallRef.current) {
+        guideAfterCallRef.current = false;
+        if (visualSupportRef.current) announce(message);
+        const more = missedRef.current.some(
+          (item) => !askedMissedRef.current.has(item.id),
+        );
+        if (!more) onVisualGuideReadyRef.current?.(true);
+      }
     }
   };
 
@@ -648,6 +690,14 @@ export default function DirectCall({
           (item) => !dismissedRef.current.has(item.id),
         );
         setMissed(missedCalls);
+        if (!guideCheckedRef.current) {
+          guideCheckedRef.current = true;
+          const waiting =
+            visualSupportRef.current &&
+            missedCalls.length > 0 &&
+            !callRef.current;
+          if (!waiting) onVisualGuideReadyRef.current?.(true);
+        }
         missedCalls.forEach((item) => {
           if (document.hidden && !notifiedRef.current.has(item.id)) {
             notifiedRef.current.add(item.id);
@@ -659,6 +709,10 @@ export default function DirectCall({
           }
         });
       } catch {
+        if (!guideCheckedRef.current) {
+          guideCheckedRef.current = true;
+          onVisualGuideReadyRef.current?.(true);
+        }
         if (listeningRef.current !== false) {
           listeningRef.current = false;
           onListeningChange(false);
@@ -719,6 +773,102 @@ export default function DirectCall({
       window.clearTimeout(releaseTimer);
     };
   }, [phase, visualSupportEnabled, call?.id]);
+
+  useEffect(() => {
+    if (!visualSupportEnabled || call || missedPrompt) return;
+    const next = missed.find((item) => !askedMissedRef.current.has(item.id));
+    if (!next) return;
+    askedMissedRef.current.add(next.id);
+    setMissedPrompt(next);
+  }, [visualSupportEnabled, call, missed, missedPrompt]);
+
+  useEffect(() => {
+    onMissedCountRef.current?.(missed.length);
+  }, [missed.length]);
+
+  useEffect(() => {
+    if (!missedPrompt) return;
+    const item = missedPrompt;
+    let stopped = false;
+    let session: VoiceSession | null = null;
+    onVisualGuideReadyRef.current?.(false);
+    const stopListening = () => {
+      try {
+        session?.cancel();
+      } catch {
+        // already stopped
+      }
+      session = null;
+    };
+    const finishNo = () => {
+      if (stopped) return;
+      stopped = true;
+      stopListening();
+      const current = missedRef.current;
+      current.forEach((entry) => askedMissedRef.current.add(entry.id));
+      dismissMissed(current.length > 0 ? current : [item]);
+      setMissedPrompt(null);
+      onVisualGuideReadyRef.current?.(true);
+    };
+    const finishYes = () => {
+      if (stopped) return;
+      stopped = true;
+      stopListening();
+      guideAfterCallRef.current = true;
+      guideSawCallRef.current = false;
+      dismissMissed([item]);
+      setMissedPrompt(null);
+      announceRef.current(`${item.peer}さんにかけ直します。`);
+      void startCall(item.peer);
+    };
+    missedChoiceRef.current = { yes: finishYes, no: finishNo };
+    const startListen = () => {
+      if (stopped || session) return;
+      beep([880], 0.12, 0.2);
+      session = listenQuiet(
+        {
+          onResult: (text) => {
+            if (isCallbackYes(text)) finishYes();
+            else finishNo();
+          },
+          onError: (reason) => {
+            if (reason === "unsupported" || reason === "denied") return;
+            finishNo();
+          },
+        },
+        10000,
+      );
+    };
+    announceRef.current(
+      `${item.peer}さんから着信がありました。かけ直しますか。`,
+      () => startListen(),
+    );
+    const lateListen = window.setTimeout(startListen, 12000);
+    const giveUp = window.setTimeout(finishNo, 25000);
+    return () => {
+      stopped = true;
+      window.clearTimeout(lateListen);
+      window.clearTimeout(giveUp);
+      stopListening();
+    };
+    // dismissMissed と startCall は、この着信のあいだだけ使う
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missedPrompt]);
+
+  useEffect(() => {
+    if (!guideAfterCallRef.current) return;
+    if (phase) {
+      guideSawCallRef.current = true;
+      return;
+    }
+    if (!guideSawCallRef.current) return;
+    guideAfterCallRef.current = false;
+    guideSawCallRef.current = false;
+    const more = missedRef.current.some(
+      (item) => !askedMissedRef.current.has(item.id),
+    );
+    if (!more) onVisualGuideReadyRef.current?.(true);
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== "incall") return;
@@ -1069,7 +1219,39 @@ export default function DirectCall({
         </div>
       )}
 
-      {missed.length > 0 && !call && (
+      {missedPrompt && !call && (
+        <div
+          aria-label="かけ直すかの確認"
+          className="dm-screen dm-screen--sides"
+          role="alertdialog"
+        >
+          <p className="dm-screen__label">着信がありました</p>
+          <h2 className="dm-screen__name">{missedPrompt.peer}さん</h2>
+          <p className="dm-screen__hint">
+            かけ直しますか。はいと言うとかけ直します。いいえと言うと消します。
+          </p>
+          <div className="dm-screen__sides">
+            <button
+              className="dm-side dm-side--decline"
+              onClick={() => missedChoiceRef.current.no()}
+              type="button"
+            >
+              <small>左</small>
+              いいえ
+            </button>
+            <button
+              className="dm-side dm-side--answer"
+              onClick={() => missedChoiceRef.current.yes()}
+              type="button"
+            >
+              <small>右</small>
+              はい
+            </button>
+          </div>
+        </div>
+      )}
+
+      {missed.length > 0 && !call && !visualSupportEnabled && (
         <div className="dm-missed" role="alert">
           {missed.map((item) => (
             <div className="dm-missed__item" key={item.id}>
