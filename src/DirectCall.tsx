@@ -81,26 +81,31 @@ function getAudioContext() {
 
 function unlockAudio() {
   const context = getAudioContext();
-  if (context && context.state === "suspended") void context.resume();
+  if (context && context.state !== "running") void context.resume();
 }
 
 function beep(frequencies: number[], seconds: number, volume: number, delay = 0) {
   const context = getAudioContext();
-  if (!context || context.state !== "running") return;
-  const start = context.currentTime + delay;
-  const gain = context.createGain();
-  gain.gain.setValueAtTime(0, start);
-  gain.gain.linearRampToValueAtTime(volume, start + 0.03);
-  gain.gain.setValueAtTime(volume, start + seconds - 0.05);
-  gain.gain.linearRampToValueAtTime(0, start + seconds);
-  gain.connect(context.destination);
-  frequencies.forEach((frequency) => {
-    const oscillator = context.createOscillator();
-    oscillator.frequency.value = frequency;
-    oscillator.connect(gain);
-    oscillator.start(start);
-    oscillator.stop(start + seconds);
-  });
+  if (!context) return;
+  const play = () => {
+    if (context.state !== "running") return;
+    const start = context.currentTime + delay;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(volume, start + 0.03);
+    gain.gain.setValueAtTime(volume, start + seconds - 0.05);
+    gain.gain.linearRampToValueAtTime(0, start + seconds);
+    gain.connect(context.destination);
+    frequencies.forEach((frequency) => {
+      const oscillator = context.createOscillator();
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gain);
+      oscillator.start(start);
+      oscillator.stop(start + seconds);
+    });
+  };
+  if (context.state === "running") play();
+  else void context.resume().then(play).catch(() => undefined);
 }
 
 function startRinging(kind: "incoming" | "calling") {
@@ -113,7 +118,7 @@ function startRinging(kind: "incoming" | "calling") {
           beep([660], 0.25, 0.3, 1);
           if ("vibrate" in navigator) navigator.vibrate([400, 200, 400]);
         }
-      : () => beep([400, 450], 1, 0.15);
+      : () => beep([400, 450], 1, isIphoneDevice() ? 0.5 : 0.15);
   play();
   const timer = window.setInterval(play, kind === "incoming" ? 2500 : 3000);
   return () => {
@@ -300,7 +305,9 @@ export default function DirectCall({
   const finishCall = (message: string) => {
     leaveRoom();
     changeCall(null, null);
-    if (message) setNotice(message);
+    if (!message) return;
+    setNotice(message);
+    if (visualSupportRef.current) announceRef.current(message);
   };
 
   const hangUp = async (message = "通話を終了しました。") => {
@@ -741,7 +748,7 @@ export default function DirectCall({
   }, [phase, voiceRingHeld]);
 
   useEffect(() => {
-    if (phase === "incoming") return;
+    if (phase === "incoming" || phase === "calling") return;
     setVoiceRingHeld(false);
   }, [phase]);
 
@@ -1133,9 +1140,21 @@ export default function DirectCall({
     if (!assistedPerson) return;
     callYesRef.current?.cancel();
     callYesRef.current = null;
+    const iphone = isIphoneDevice();
+    let releaseRing = 0;
+    if (iphone) {
+      setVoiceRingHeld(true);
+      releaseRing = window.setTimeout(() => setVoiceRingHeld(false), 9000);
+    }
     const say = () =>
       announce(
         `${assistedPerson.name}さんを呼び出します。相手が出るまで、このままお待ちください。`,
+        () => {
+          if (!iphone) return;
+          window.clearTimeout(releaseRing);
+          unlockAudio();
+          setVoiceRingHeld(false);
+        },
       );
     if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
     else say();
