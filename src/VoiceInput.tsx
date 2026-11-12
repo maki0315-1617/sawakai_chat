@@ -1,5 +1,4 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
-import { isIphoneDevice } from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -42,7 +41,12 @@ type DeviceRecognition = {
   continuous: boolean;
   interimResults: boolean;
   onresult:
-    | ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void)
+    | ((event: {
+        results: ArrayLike<{
+          isFinal?: boolean;
+          0?: { transcript?: string };
+        }>;
+      }) => void)
     | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
@@ -59,34 +63,22 @@ function getDeviceRecognition(): (new () => DeviceRecognition) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+function foldKana(value: string) {
+  return value.replace(/[\u30a1-\u30f6]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) - 0x60),
+  );
+}
+
 export function finishedReply(text: string) {
-  const compact = text.normalize("NFKC").replace(/[\s　]/g, "");
-  const match = compact.match(/^(.*?)(終わりです|おわりです|終わり|おわり)[。.!！]?$/);
+  const compact = foldKana(text.normalize("NFKC")).replace(/[\s　]/g, "");
+  const match = compact.match(
+    /^(.*?)(終わりです|おわりです|終わり|おわり)[。.!！ねよ]?$/,
+  );
   if (!match) return { done: false, body: text.trim() };
   return {
     done: true,
     body: match[1].replace(/[。、．.!！?？]+$/g, "").trim(),
   };
-}
-
-function playCueBeep() {
-  const Context = getAudioContextClass();
-  if (!Context) return;
-  const context = new Context();
-  const play = () => {
-    if (context.state !== "running") return;
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.frequency.value = 880;
-    gain.gain.value = 0.25;
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.18);
-    oscillator.onended = () => void context.close().catch(() => undefined);
-  };
-  if (context.state === "running") play();
-  else void context.resume().then(play).catch(() => undefined);
 }
 
 function getAudioContextClass(): typeof AudioContext | null {
@@ -472,7 +464,7 @@ export default function VoiceInput({
     onTextRef.current(body);
   };
 
-  const beginUntilEnd = () => {
+  const beginUntilEnd = (session: number) => {
     const Recognition = getDeviceRecognition();
     if (!Recognition) {
       void begin();
@@ -485,19 +477,32 @@ export default function VoiceInput({
     heardRef.current = "";
     const recognition = new Recognition();
     recognition.lang = "ja-JP";
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognitionRef.current = recognition;
     const startedAt = Date.now();
-    let restarts = 0;
     let carried = "";
+    let utterance = "";
+    let captureErrors = 0;
+    let ready = false;
+    let rearming = false;
+    const readResults = (
+      results: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }>,
+    ) => {
+      let finals = "";
+      let interim = "";
+      for (let index = 0; index < results.length; index += 1) {
+        const piece = results[index]?.[0]?.transcript ?? "";
+        if (results[index]?.isFinal) finals += piece;
+        else interim += piece;
+      }
+      return { finals: finals.trim(), interim: interim.trim() };
+    };
     recognition.onresult = (event) => {
-      const text = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? "")
-        .join("")
-        .trim();
-      if (cancelledRef.current || deliveredRef.current) return;
-      const combined = `${carried}${text}`.trim();
+      if (!ready || cancelledRef.current || deliveredRef.current) return;
+      const spoken = readResults(event.results);
+      utterance = `${spoken.finals}${spoken.interim}`.trim();
+      const combined = `${carried}${utterance}`.trim();
       if (!combined) return;
       heardRef.current = combined;
       const finished = finishedReply(combined);
@@ -509,47 +514,107 @@ export default function VoiceInput({
         deliveredRef.current = true;
         setState("idle");
         setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
-      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+        return;
+      }
+      if (event.error === "audio-capture") captureErrors += 1;
+      if (captureErrors >= 3) {
         deliveredRef.current = true;
         setState("idle");
         setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
       }
     };
-    recognition.onend = () => {
-      if (deliveredRef.current || cancelledRef.current || !holdForEndRef.current) {
+    const restart = () => {
+      if (Date.now() - startedAt >= maxSeconds * 1000) {
         if (timerRef.current !== null) window.clearInterval(timerRef.current);
         timerRef.current = null;
         recognitionRef.current = null;
+        const finished = finishedReply(heardRef.current);
+        if (heardRef.current.trim()) deliverHeld(finished.body);
+        else {
+          deliveredRef.current = true;
+          setState("idle");
+          setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+        }
+        return;
+      }
+      if (utterance) {
+        carried = `${carried}${utterance}`.trim();
+        heardRef.current = carried;
+        utterance = "";
+      }
+      window.setTimeout(() => {
+        if (
+          cancelledRef.current ||
+          deliveredRef.current ||
+          !holdForEndRef.current ||
+          recognitionRef.current !== recognition
+        ) {
+          return;
+        }
+        try {
+          recognition.start();
+        } catch {
+          recognitionRef.current = null;
+          setState("idle");
+          if (!heardRef.current) {
+            setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+          }
+        }
+      }, 250);
+    };
+    recognition.onend = () => {
+      if (rearming) return;
+      if (!ready) return;
+      if (deliveredRef.current || cancelledRef.current || !holdForEndRef.current) {
+        if (timerRef.current !== null) window.clearInterval(timerRef.current);
+        timerRef.current = null;
+        if (recognitionRef.current === recognition) recognitionRef.current = null;
         if (!deliveredRef.current) setState("idle");
         return;
       }
-      if (restarts < 12) {
-        restarts += 1;
-        carried = heardRef.current;
+      restart();
+    };
+    const arm = () => {
+      if (session !== sessionRef.current || cancelledRef.current) return;
+      ready = true;
+      carried = "";
+      utterance = "";
+      heardRef.current = "";
+      rearming = true;
+      try {
+        recognition.abort();
+      } catch {
+        rearming = false;
+      }
+      window.setTimeout(() => {
+        rearming = false;
+        if (
+          session !== sessionRef.current ||
+          cancelledRef.current ||
+          deliveredRef.current ||
+          !holdForEndRef.current
+        ) {
+          return;
+        }
         try {
           recognition.start();
-          return;
+          setState("listening");
         } catch {
           recognitionRef.current = null;
+          setState("idle");
+          setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
         }
-      }
-      if (timerRef.current !== null) window.clearInterval(timerRef.current);
-      timerRef.current = null;
-      recognitionRef.current = null;
-      setState("idle");
-      if (!heardRef.current && !deliveredRef.current) {
-        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
-      }
+      }, 300);
     };
     try {
       recognition.start();
     } catch {
-      recognitionRef.current = null;
-      void begin();
-      return;
+      // 「どうぞ」のあとで開始する
     }
     setSeconds(0);
     setState("listening");
+    if (onCueRef.current) onCueRef.current(arm);
+    else arm();
     timerRef.current = window.setInterval(() => {
       const elapsed = Date.now() - startedAt;
       setSeconds(Math.floor(elapsed / 1000));
@@ -588,28 +653,7 @@ export default function VoiceInput({
     onListeningStartRef.current?.();
     setError("");
     setState("starting");
-    const prime = navigator.mediaDevices
-      ?.getUserMedia?.({ audio: true })
-      .then((stream) => {
-        stream.getTracks().forEach((track) => track.stop());
-        return true;
-      })
-      .catch(() => false);
-    const beginAfterCue = () => {
-      if (session !== sessionRef.current || cancelledRef.current) return;
-      void Promise.resolve(prime).then((ok) => {
-        if (session !== sessionRef.current || cancelledRef.current) return;
-        if (!ok) {
-          setState("idle");
-          setError("マイクを使えませんでした。他のアプリで使っていないか確認してください。");
-          return;
-        }
-        beginUntilEnd();
-      });
-    };
-    if (!isIphoneDevice()) playCueBeep();
-    if (onCueRef.current) onCueRef.current(beginAfterCue);
-    else beginAfterCue();
+    beginUntilEnd(session);
   };
 
   const finishHeld = () => {

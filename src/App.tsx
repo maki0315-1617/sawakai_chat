@@ -7251,11 +7251,7 @@ export default function App() {
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
                   onCue={(done) => {
-                    if (isIphoneDevice()) {
-                      if (!speakJapanese("どうぞ", done, done)) done();
-                      return;
-                    }
-                    window.setTimeout(done, 400);
+                    if (!speakJapanese("どうぞ", done, done)) done();
                   }}
                   autoStart={
                     showConfirmation &&
@@ -7297,9 +7293,7 @@ export default function App() {
                 </button>
                 <div className="assisted-voice__body">
                   <p className="writing-panel__lead" role="status">
-                    {isIphoneDevice()
-                      ? "「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"
-                      : "ピー音のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"}
+                    「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。
                   </p>
                   {voiceInputStatus && (
                     <p className="voice-input__status" role="status">
