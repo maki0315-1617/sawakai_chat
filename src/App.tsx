@@ -7175,88 +7175,132 @@ export default function App() {
               </button>
             </div>
           ) : isReplyPanelOpen && replyMode === "voice" ? (
-            <div className="writing-panel voice-panel">
-              <div className="writing-panel__heading">
-                <label htmlFor="voice-message">話して返事する</label>
-                <button
-                  aria-label="話す画面を閉じる"
-                  className="close-button"
-                  onClick={() => setIsReplyPanelOpen(false)}
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-              <VoiceInput
-                apiRoot={apiRoot}
-                cancelSignal={voiceCancelSignal}
-                autoStart={
-                  visualSupportEnabled &&
-                  voiceAutoMode &&
-                  voiceConfirmationAutoStart
-                }
-                disabled={showVoice || dmInCall}
-                disabledReason="通話中は、話して入力を使えません。"
-                headers={apiHeaders(token, activeGroupId)}
-                onText={handleVoiceReply}
-                onListeningStart={() => {
+            <>
+              <button
+                aria-label="話す画面の背景を閉じて戻る"
+                className="writing-panel-backdrop"
+                onClick={() => {
+                  setVoiceAutoMode(false);
                   setVoiceConfirmationAutoStart(false);
-                  setVoiceAutoMode(true);
+                  setIsReplyPanelOpen(false);
                 }}
-                onStatusChange={(status, error) => {
-                  setVoiceInputBusy(status !== "idle");
-                  setVoiceInputStatus(
-                    error ||
-                      (status === "starting"
-                        ? "マイクを準備しています。"
-                        : status === "listening"
-                          ? "聞いています。お話しください。"
-                          : status === "sending"
-                            ? "文字にしています。少しお待ちください。"
-                            : ""),
-                  );
-                }}
-              />
-              {visualSupportEnabled && (
-                <p className="visual-voice-command-help" role="status">
-                  文章を話した後「送信」と言うと確認します。読み上げ後に「はい、送信」で送信、「修正」で言い直し、「取り消し」で中止できます。
-                </p>
-              )}
-              <textarea
-                id="voice-message"
-                maxLength={500}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="話した内容がここに表示されます。直すこともできます。"
-                rows={3}
-                value={draft}
-              />
-              <button
-                className="read-aloud-button"
-                disabled={!draft.trim()}
-                onClick={readDraftAloud}
                 type="button"
+              />
+              <div
+                className={`writing-panel voice-panel writing-panel--sheet${
+                  visualSupportEnabled ? " writing-panel--assisted" : ""
+                }`}
+                role="dialog"
+                aria-modal="true"
+                aria-label="話して返事する"
               >
-                {isSpeakingDraft ? "⏹ 読み上げを止める" : "🔊 もう一度読み上げる"}
-              </button>
-              <button
-                className="reply-button reply-button--primary"
-                disabled={!draft.trim()}
-                onClick={() => prepareMessage(draft)}
-              >
-                内容を確認する
-              </button>
-              {draft && (
+                <div className="writing-panel__heading">
+                  <label htmlFor="voice-message">話して返事する</label>
+                  <button
+                    aria-label="話す画面を閉じる"
+                    className="close-button close-button--labeled"
+                    onClick={() => {
+                      setVoiceAutoMode(false);
+                      setVoiceConfirmationAutoStart(false);
+                      setIsReplyPanelOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <CloseIcon />
+                    <span>閉じる</span>
+                  </button>
+                </div>
+                <p className="writing-panel__lead" role="status">
+                  下の「話して入力」を押して話しかけてください。終わったら「閉じる」で戻れます。
+                </p>
+                <VoiceInput
+                  apiRoot={apiRoot}
+                  cancelSignal={voiceCancelSignal}
+                  autoStart={
+                    visualSupportEnabled &&
+                    voiceAutoMode &&
+                    voiceConfirmationAutoStart
+                  }
+                  disabled={showVoice || dmInCall}
+                  disabledReason="通話中は、話して入力を使えません。"
+                  headers={apiHeaders(token, activeGroupId)}
+                  onText={handleVoiceReply}
+                  onListeningStart={() => {
+                    setVoiceConfirmationAutoStart(false);
+                    setVoiceAutoMode(true);
+                  }}
+                  onStatusChange={(status, error) => {
+                    setVoiceInputBusy(status !== "idle");
+                    setVoiceInputStatus(
+                      error ||
+                        (status === "starting"
+                          ? "マイクを準備しています。"
+                          : status === "listening"
+                            ? "聞いています。お話しください。"
+                            : status === "sending"
+                              ? "文字にしています。少しお待ちください。"
+                              : ""),
+                    );
+                  }}
+                />
+                {visualSupportEnabled && (
+                  <p className="visual-voice-command-help" role="status">
+                    文章を話した後「送信」と言うと確認します。読み上げ後に「はい、送信」で送信、「修正」で言い直し、「取り消し」で中止できます。
+                  </p>
+                )}
+                {voiceInputStatus && (
+                  <p className="voice-input__status" role="status">
+                    {voiceInputStatus}
+                  </p>
+                )}
+                <textarea
+                  id="voice-message"
+                  maxLength={500}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder="話した内容がここに表示されます。直すこともできます。"
+                  rows={3}
+                  value={draft}
+                />
                 <button
-                  className="media-select-button"
+                  className="read-aloud-button"
+                  disabled={!draft.trim()}
+                  onClick={readDraftAloud}
+                  type="button"
+                >
+                  {isSpeakingDraft ? "⏹ 読み上げを止める" : "🔊 もう一度読み上げる"}
+                </button>
+                <button
+                  className="reply-button reply-button--primary"
+                  disabled={!draft.trim()}
+                  onClick={() => prepareMessage(draft)}
+                >
+                  内容を確認する
+                </button>
+                {draft && (
+                  <button
+                    className="media-select-button"
+                    onClick={() => {
+                      stopSpeakingDraft();
+                      setDraft("");
+                    }}
+                    type="button"
+                  >
+                    消して話し直す
+                  </button>
+                )}
+                <button
+                  className="writing-panel__close-bottom"
                   onClick={() => {
-                    stopSpeakingDraft();
-                    setDraft("");
+                    setVoiceAutoMode(false);
+                    setVoiceConfirmationAutoStart(false);
+                    setIsReplyPanelOpen(false);
                   }}
                   type="button"
                 >
-                  消して話し直す
+                  閉じる
                 </button>
-              )}
-            </div>
+              </div>
+            </>
           ) : isReplyPanelOpen ? (
             <div className="expanded-replies">
               <div className="expanded-replies__heading">
