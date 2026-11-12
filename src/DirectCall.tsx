@@ -889,8 +889,9 @@ export default function DirectCall({
   const assistedSkip = () => {
     if (!assistedPerson) return;
     if (assistedLast) {
-      announce("電話をやめます。");
+      announce("やめるが選択されました。");
       onClosePanel();
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       return;
     }
     const nextIndex = assistedIndex + 1;
