@@ -13,6 +13,7 @@ import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput, { finishedReply } from "./VoiceInput";
 import {
   failureMessage,
+  isAndroidDevice,
   isIphoneDevice,
   isVoiceSupported,
   listenOnce,
@@ -7251,7 +7252,10 @@ export default function App() {
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
                   onCue={(done) => {
-                    if (!speakJapanese("どうぞ", done, done)) done();
+                    const cue = isAndroidDevice()
+                      ? "どうぞ。ピーッと鳴ってから、返事を話してください。もう一度ピーッと鳴ってから、終わり、と言ってください。"
+                      : "どうぞ";
+                    if (!speakJapanese(cue, done, done)) done();
                   }}
                   autoStart={
                     showConfirmation &&
@@ -7273,7 +7277,9 @@ export default function App() {
                         (status === "starting"
                           ? "マイクを準備しています。"
                           : status === "listening"
-                            ? "聞いています。お話しください。"
+                            ? isAndroidDevice()
+                              ? "聞いています。ピーッと鳴ってから、終わり、と言ってください。"
+                              : "聞いています。終わったら、終わり、と言ってください。"
                             : status === "sending"
                               ? "文字にしています。少しお待ちください。"
                               : ""),
@@ -7293,7 +7299,9 @@ export default function App() {
                 </button>
                 <div className="assisted-voice__body">
                   <p className="writing-panel__lead" role="status">
-                    「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。
+                    {isAndroidDevice()
+                      ? "ピーッと鳴ってから返事を話します。もう一度ピーッと鳴ってから、「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"
+                      : "「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"}
                   </p>
                   {voiceInputStatus && (
                     <p className="voice-input__status" role="status">

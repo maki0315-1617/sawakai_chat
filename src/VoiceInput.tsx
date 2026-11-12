@@ -1,4 +1,5 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
+import { isAndroidDevice } from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -806,7 +807,9 @@ export default function VoiceInput({
           {state === "starting"
             ? "マイクの準備をしています。"
             : holdForEnd
-              ? "聞いています。終わったら、終わり、と言ってください。"
+              ? isAndroidDevice()
+                ? "聞いています。ピーッと鳴ってから、終わり、と言ってください。"
+                : "聞いています。終わったら、終わり、と言ってください。"
               : "🔴 聞いています。ゆっくり話してください。"}
           <button className="voice-input__cancel" onClick={cancel} type="button">
             やめる

@@ -39,6 +39,10 @@ export function isIphoneDevice() {
   return /iPhone|iPod/i.test(navigator.userAgent);
 }
 
+export function isAndroidDevice() {
+  return /Android/i.test(navigator.userAgent);
+}
+
 function speak(text: string) {
   return new Promise<void>((resolve) => {
     if (!("speechSynthesis" in window)) return resolve();
