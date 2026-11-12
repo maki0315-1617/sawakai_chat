@@ -4780,6 +4780,7 @@ export default function App() {
   showVoiceRef.current = showVoice;
   const [voiceAutoJoin, setVoiceAutoJoin] = useState(false);
   const [showDirectCall, setShowDirectCall] = useState(false);
+  const [directAssistedPick, setDirectAssistedPick] = useState(false);
   const [showDocuments, setShowDocuments] = useState(false);
   const [dmListening, setDmListening] = useState(true);
   const [dmInCall, setDmInCall] = useState(false);
@@ -5534,14 +5535,27 @@ export default function App() {
 
   const openDirectCall = () => {
     if (showVoiceRef.current || dmInCallRef.current || dmIncoming) return;
-    setShowDirectCall(true);
     if (dmCallsLeft === 0) {
       speakJapanese("今日の1対1の電話は、3回まで使いました。また明日おかけください。");
       return;
     }
-    const left =
+    if (!profile) return;
+    const peers = members.filter((member) => member.name !== profile.name);
+    if (peers.length === 0) {
+      speakJapanese("電話できる相手はいません。");
+      return;
+    }
+    setDirectAssistedPick(true);
+    setShowDirectCall(true);
+    const count =
       dmCallsLeft === null ? "" : `今日はあと${dmCallsLeft}回かけられます。`;
-    speakJapanese(`1対1の電話です。1回は3分まで、1日3回までです。${left}`);
+    const leftAction =
+      peers.length === 1
+        ? "左を押すと、やめます。"
+        : "左を押すと、次の人です。";
+    speakJapanese(
+      `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。右を押すと、電話がかかります。${leftAction}`,
+    );
   };
 
   const prepareMessage = (message: string) => {
@@ -6776,7 +6790,10 @@ export default function App() {
           <button
             aria-label="1対1で電話をする"
             className="header-action"
-            onClick={() => setShowDirectCall(true)}
+            onClick={() => {
+              setDirectAssistedPick(false);
+              setShowDirectCall(true);
+            }}
           >
             <span aria-hidden="true" className="header-action__icon">🤙</span>
             <span>1対1</span>
@@ -7253,7 +7270,11 @@ export default function App() {
             void showSystemNotification(title, body, tag);
           }
         }}
-        onClosePanel={() => setShowDirectCall(false)}
+        onClosePanel={() => {
+          setShowDirectCall(false);
+          setDirectAssistedPick(false);
+        }}
+        assistedPick={directAssistedPick}
         onBusyChange={setDmInCall}
         onIncomingChange={setDmIncoming}
         onCallsLeftChange={setDmCallsLeft}

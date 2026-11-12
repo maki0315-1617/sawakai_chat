@@ -35,6 +35,7 @@ type DirectCallProps = {
   myName: string;
   members: { name: string }[];
   showPanel: boolean;
+  assistedPick?: boolean;
   onClosePanel: () => void;
   onListeningChange: (listening: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
@@ -155,6 +156,7 @@ export default function DirectCall({
   myName,
   members,
   showPanel,
+  assistedPick = false,
   onClosePanel,
   onListeningChange,
   onBusyChange,
@@ -179,6 +181,7 @@ export default function DirectCall({
   const [remoteVideo, setRemoteVideo] = useState<RemoteVideoTrack | null>(null);
   const [remoteCamOn, setRemoteCamOn] = useState(false);
   const [callsLeft, setCallsLeft] = useState<number | null>(null);
+  const [pickIndex, setPickIndex] = useState(0);
   const [tab, setTab] = useState<"pick" | "history">("pick");
   const [history, setHistory] = useState<DmCallView[]>([]);
   const [historyError, setHistoryError] = useState("");
@@ -194,6 +197,7 @@ export default function DirectCall({
   visualSupportRef.current = visualSupportEnabled;
   const announceRef = useRef(announce);
   announceRef.current = announce;
+  const assistedSpokenRef = useRef("");
   const callRef = useRef<DmCallView | null>(null);
   const phaseRef = useRef<Phase | null>(null);
   const roomRef = useRef<Room | null>(null);
@@ -399,13 +403,17 @@ export default function DirectCall({
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (typeof result.callsLeft === "number") setCallsLeft(result.callsLeft);
-        setNotice(result.error ?? "電話をかけられませんでした。");
+        const message = result.error ?? "電話をかけられませんでした。";
+        setNotice(message);
+        if (assistedPick && visualSupportEnabled) announce(message);
         return;
       }
       onClosePanel();
       changeCall(result.call as DmCallView, "calling");
     } catch {
-      setNotice("電話をかけられませんでした。通信状態を確認してください。");
+      const message = "電話をかけられませんでした。通信状態を確認してください。";
+      setNotice(message);
+      if (assistedPick && visualSupportEnabled) announce(message);
     }
   };
 
@@ -810,6 +818,8 @@ export default function DirectCall({
   }, [showPanel, tab, request]);
 
   const others = members.filter((member) => member.name !== myName);
+  const assistedChooser = assistedPick && visualSupportEnabled;
+  const assistedNames = others.map((member) => member.name).join("\n");
   const busy = call !== null;
   const videoMode = phase === "incall" && (cameraOn || remoteCamOn);
 
@@ -829,6 +839,80 @@ export default function DirectCall({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerName]);
 
+  useEffect(() => {
+    if (!assistedChooser || !showPanel) {
+      assistedSpokenRef.current = "";
+      setPickIndex(0);
+      return;
+    }
+    if (callsLeft === 0) {
+      if (assistedSpokenRef.current !== "none-left") {
+        assistedSpokenRef.current = "none-left";
+        announceRef.current(
+          "今日の1対1の電話は、3回まで使いました。また明日おかけください。",
+        );
+        onClosePanel();
+      }
+      return;
+    }
+    const names = assistedNames ? assistedNames.split("\n") : [];
+    if (names.length === 0) {
+      if (assistedSpokenRef.current !== "empty") {
+        assistedSpokenRef.current = "empty";
+        announceRef.current("電話できる相手はいません。");
+        onClosePanel();
+      }
+      return;
+    }
+    const index = Math.min(pickIndex, names.length - 1);
+    const name = names[index];
+    const key = `${index}:${names.length}:${name}`;
+    if (assistedSpokenRef.current === key) return;
+    if (assistedSpokenRef.current === "" && index === 0) {
+      assistedSpokenRef.current = key;
+      return;
+    }
+    assistedSpokenRef.current = key;
+    const left =
+      index >= names.length - 1
+        ? "左を押すと、やめます。"
+        : "左を押すと、次の人です。";
+    announceRef.current(
+      `${name}さんに電話します。右を押すと、電話がかかります。${left}`,
+    );
+  }, [assistedChooser, showPanel, callsLeft, assistedNames, pickIndex, onClosePanel]);
+
+  const assistedIndex =
+    others.length === 0 ? 0 : Math.min(pickIndex, others.length - 1);
+  const assistedPerson = others[assistedIndex];
+  const assistedLast = others.length === 0 || assistedIndex >= others.length - 1;
+  const assistedSkip = () => {
+    if (!assistedPerson) return;
+    if (assistedLast) {
+      announce("電話をやめます。");
+      onClosePanel();
+      return;
+    }
+    const nextIndex = assistedIndex + 1;
+    const next = others[nextIndex];
+    if (!next) return;
+    const last = nextIndex >= others.length - 1;
+    assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
+    announce(
+      `${next.name}さんに電話します。右を押すと、電話がかかります。${
+        last ? "左を押すと、やめます。" : "左を押すと、次の人です。"
+      }`,
+    );
+    setPickIndex(nextIndex);
+  };
+  const assistedCall = () => {
+    if (!assistedPerson) return;
+    announce(
+      `${assistedPerson.name}さんを呼び出します。相手が出るまで、このままお待ちください。`,
+    );
+    void startCall(assistedPerson.name);
+  };
+
   const sheetDrag = useSheetDrag(onClosePanel);
 
   if (controlRef) {
@@ -840,7 +924,45 @@ export default function DirectCall({
 
   return (
     <>
-      {showPanel && (
+      {assistedChooser &&
+        showPanel &&
+        !call &&
+        callsLeft !== 0 &&
+        assistedPerson && (
+          <div
+            aria-label="1対1の相手"
+            className="dm-screen dm-screen--sides"
+            role="alertdialog"
+          >
+            <p className="dm-screen__label">1対1の電話</p>
+            <h2 className="dm-screen__name">{assistedPerson.name}さん</h2>
+            <p className="dm-screen__hint">
+              {assistedLast
+                ? "右を押すと電話がかかります。左を押すとやめます。"
+                : "右を押すと電話がかかります。左を押すと次の人です。"}
+            </p>
+            <div className="dm-screen__sides">
+              <button
+                className="dm-side dm-side--decline"
+                onClick={assistedSkip}
+                type="button"
+              >
+                <small>左</small>
+                {assistedLast ? "やめる" : "次の人"}
+              </button>
+              <button
+                className="dm-side dm-side--answer"
+                onClick={assistedCall}
+                type="button"
+              >
+                <small>右</small>
+                かける
+              </button>
+            </div>
+          </div>
+        )}
+
+      {showPanel && !assistedChooser && (
         <div className="dialog-backdrop">
           <section
             aria-labelledby="dm-panel-title"
