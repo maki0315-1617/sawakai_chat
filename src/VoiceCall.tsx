@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Room, RoomEvent, Track } from "livekit-client";
 import VoiceGame from "./VoiceGame";
 import VoiceWordGame from "./VoiceWordGame";
@@ -185,19 +186,25 @@ export default function VoiceCall({
     onClose();
   };
 
+  const leaveBanner =
+    assisted && (status === "connected" || status === "connecting")
+      ? createPortal(
+          <div className="voice-join-banner voice-leave-banner">
+            <button
+              className="voice-join-banner__button voice-leave-top"
+              onClick={leaveFromTop}
+              type="button"
+            >
+              通話から抜ける
+            </button>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div className="dialog-backdrop">
-      {assisted && (status === "connected" || status === "connecting") && (
-        <div className="voice-join-banner voice-leave-banner">
-          <button
-            className="voice-join-banner__button voice-leave-top"
-            onClick={leaveFromTop}
-            type="button"
-          >
-            通話から抜ける
-          </button>
-        </div>
-      )}
+      {leaveBanner}
       <section
         aria-labelledby="voice-title"
         aria-modal="true"
