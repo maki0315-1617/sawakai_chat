@@ -1,5 +1,5 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
-import { isAndroidDevice } from "./voiceJoin";
+import { isAndroidDevice, isDesktopDevice } from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -41,6 +41,7 @@ type DeviceRecognition = {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives?: number;
   onresult:
     | ((event: {
         results: ArrayLike<{
@@ -70,16 +71,99 @@ function foldKana(value: string) {
   );
 }
 
-export function finishedReply(text: string) {
-  const compact = foldKana(text.normalize("NFKC")).replace(/[\s　]/g, "");
+const phraseEndMarkers = [
+  "これで終わりました",
+  "ここで終わりました",
+  "これでおわりました",
+  "ここでおわりました",
+  "これで終わりです",
+  "ここで終わりです",
+  "これでおわりです",
+  "ここでおわりです",
+  "これで終わります",
+  "ここで終わります",
+  "これでおわります",
+  "ここでおわります",
+  "これで終わった",
+  "ここで終わった",
+  "これでおわった",
+  "ここでおわった",
+  "これで終わり",
+  "ここで終わり",
+  "これでおわり",
+  "ここでおわり",
+  "はい終わり",
+  "はいおわり",
+  "終わりました",
+  "おわりました",
+  "終わります",
+  "おわります",
+  "終わった",
+  "おわった",
+];
+
+const mishearEndMarkers = [
+  "おしまいです",
+  "おしまい",
+  "終了です",
+  "終了",
+  "しゅうりょうです",
+  "しゅうりょう",
+  "尾張です",
+  "尾張",
+];
+
+function compactSpeech(text: string) {
+  return foldKana(text.normalize("NFKC"))
+    .replace(/[「」『』"'“”]/g, "")
+    .replace(/[\s　]/g, "");
+}
+
+function phoneEndBody(compact: string) {
   const match = compact.match(
     /^(.*?)(終わりです|おわりです|終わり|おわり)[。.!！ねよ]?$/,
   );
-  if (!match) return { done: false, body: text.trim() };
-  return {
-    done: true,
-    body: match[1].replace(/[。、．.!！?？]+$/g, "").trim(),
-  };
+  if (!match) return null;
+  return match[1].replace(/[。、．.!！?？]+$/g, "").trim();
+}
+
+function markerBody(compact: string, markers: string[]) {
+  const stripped = compact.replace(/[。、．.!！?？]+$/g, "");
+  const softer = stripped.replace(/(にします|にする|でした|だよ|だね|ね|よ)+$/g, "");
+  const forms = softer !== stripped ? [stripped, softer] : [stripped];
+  for (const form of forms) {
+    for (const marker of markers) {
+      if (!form.endsWith(marker)) continue;
+      return form.slice(0, form.length - marker.length).replace(/[。、．.!！?？]+$/g, "").trim();
+    }
+  }
+  return null;
+}
+
+function desktopEndBody(compact: string, loose: boolean) {
+  const phrase = markerBody(compact, phraseEndMarkers);
+  if (phrase !== null) return phrase;
+  const stripped = compact.replace(/[。、．.!！?？]+$/g, "");
+  const softer = stripped.replace(/(にします|にする|でした|だよ|だね)+$/g, "");
+  const forms = softer !== stripped ? [stripped, softer] : [stripped];
+  for (const form of forms) {
+    const phone = phoneEndBody(form);
+    if (phone !== null) return phone;
+  }
+  if (!loose) return null;
+  return markerBody(compact, mishearEndMarkers);
+}
+
+export function finishedReply(text: string, loose = true) {
+  const compact = compactSpeech(text);
+  if (isDesktopDevice()) {
+    const body = desktopEndBody(compact, loose);
+    if (body !== null) return { done: true, body };
+    return { done: false, body: text.trim() };
+  }
+  const phone = phoneEndBody(compact);
+  if (phone !== null) return { done: true, body: phone };
+  return { done: false, body: text.trim() };
 }
 
 function getAudioContextClass(): typeof AudioContext | null {
@@ -483,9 +567,12 @@ export default function VoiceInput({
     heardRef.current = "";
     const generation = ++generationRef.current;
     const recognition = new Recognition();
+    const desktop = isDesktopDevice();
     recognition.lang = "ja-JP";
-    recognition.continuous = false;
+    // PCは区切りで聞き取りが終わると、直後の「終わり」が落ちる。区切らずに聞く。
+    recognition.continuous = desktop;
     recognition.interimResults = true;
+    if (desktop) recognition.maxAlternatives = 5;
     recognitionRef.current = recognition;
     const startedAt = Date.now();
     let carried = "";
@@ -512,8 +599,31 @@ export default function VoiceInput({
       const combined = `${carried}${utterance}`.trim();
       if (!combined) return;
       heardRef.current = combined;
-      const finished = finishedReply(combined);
-      if (finished.done) deliverHeld(finished.body);
+      const last = event.results[event.results.length - 1];
+      const finished = finishedReply(combined, Boolean(last?.isFinal));
+      if (finished.done) {
+        deliverHeld(finished.body);
+        return;
+      }
+      if (!desktop || !last?.isFinal) return;
+      const choice = last as {
+        length?: number;
+        [index: number]: { transcript?: string } | undefined;
+      };
+      const count = Math.min(choice.length ?? 1, 5);
+      const top = choice[0]?.transcript?.trim() ?? "";
+      let previous = "";
+      for (let index = 0; index < event.results.length - 1; index += 1) {
+        previous += event.results[index]?.[0]?.transcript ?? "";
+      }
+      for (let index = 1; index < count; index += 1) {
+        const alt = choice[index]?.transcript?.trim() ?? "";
+        if (!alt || alt.length + 2 < top.length) continue;
+        const attempt = finishedReply(`${previous}${alt}`, true);
+        if (!attempt.done) continue;
+        deliverHeld(attempt.body);
+        return;
+      }
     };
     recognition.onerror = (event) => {
       if (cancelledRef.current || deliveredRef.current) return;
@@ -549,26 +659,33 @@ export default function VoiceInput({
         heardRef.current = carried;
         utterance = "";
       }
-      window.setTimeout(() => {
-        if (
-          generation !== generationRef.current ||
-          cancelledRef.current ||
-          deliveredRef.current ||
-          !holdForEndRef.current ||
-          recognitionRef.current !== recognition
-        ) {
-          return;
-        }
-        try {
-          recognition.start();
-        } catch {
-          recognitionRef.current = null;
-          setState("idle");
-          if (!heardRef.current) {
-            setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+      const resume = (attempt: number) => {
+        window.setTimeout(() => {
+          if (
+            generation !== generationRef.current ||
+            cancelledRef.current ||
+            deliveredRef.current ||
+            !holdForEndRef.current ||
+            recognitionRef.current !== recognition
+          ) {
+            return;
           }
-        }
-      }, 250);
+          try {
+            recognition.start();
+          } catch {
+            if (desktop && attempt < 4) {
+              resume(attempt + 1);
+              return;
+            }
+            recognitionRef.current = null;
+            setState("idle");
+            if (!heardRef.current) {
+              setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+            }
+          }
+        }, desktop ? 40 + attempt * 60 : 250);
+      };
+      resume(0);
     };
     recognition.onend = () => {
       if (generation !== generationRef.current || rearming) return;

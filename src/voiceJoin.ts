@@ -43,6 +43,14 @@ export function isAndroidDevice() {
   return /Android/i.test(navigator.userAgent);
 }
 
+export function isDesktopDevice() {
+  if (typeof navigator === "undefined") return false;
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) return false;
+  const touch = navigator as Navigator & { maxTouchPoints?: number };
+  if (navigator.platform === "MacIntel" && (touch.maxTouchPoints ?? 0) > 1) return false;
+  return true;
+}
+
 function speak(text: string) {
   return new Promise<void>((resolve) => {
     if (!("speechSynthesis" in window)) return resolve();
