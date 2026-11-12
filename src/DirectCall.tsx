@@ -84,6 +84,142 @@ function unlockAudio() {
   if (context && context.state !== "running") void context.resume();
 }
 
+let callingRingAudio: HTMLAudioElement | null = null;
+let callingRingOn = false;
+let callingRingUrl = "";
+let ringFailCount = 0;
+let ringFailSpokenAt = 0;
+let onIphoneRingFailed: (() => void) | null = null;
+
+function ringWavUrl() {
+  if (callingRingUrl) return callingRingUrl;
+  const sampleRate = 22050;
+  const on = Math.floor(sampleRate * 0.5);
+  const gap = Math.floor(sampleRate * 0.2);
+  const tail = Math.floor(sampleRate * 1.4);
+  const total = on * 2 + gap + tail;
+  const data = new Int16Array(total);
+  const writeBurst = (start: number) => {
+    for (let i = 0; i < on; i += 1) {
+      const t = i / sampleRate;
+      const edge = Math.min(1, i / 160, (on - i) / 160);
+      const sample =
+        (Math.sin(2 * Math.PI * 425 * t) + Math.sin(2 * Math.PI * 480 * t)) *
+        0.48 *
+        edge;
+      data[start + i] = Math.round(sample * 32767);
+    }
+  };
+  writeBurst(0);
+  writeBurst(on + gap);
+  const bytes = data.length * 2;
+  const buffer = new ArrayBuffer(44 + bytes);
+  const view = new DataView(buffer);
+  const write = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  write(0, "RIFF");
+  view.setUint32(4, 36 + bytes, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, bytes, true);
+  let offset = 44;
+  for (let i = 0; i < data.length; i += 1, offset += 2) view.setInt16(offset, data[i], true);
+  callingRingUrl = URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+  return callingRingUrl;
+}
+
+function noteRingFailed() {
+  ringFailCount += 1;
+  if (ringFailCount < 3) return;
+  const now = Date.now();
+  if (now - ringFailSpokenAt < 5000) return;
+  ringFailSpokenAt = now;
+  onIphoneRingFailed?.();
+}
+
+function ensureCallingRing() {
+  if (callingRingAudio) return callingRingAudio;
+  const audio = document.createElement("audio");
+  audio.src = ringWavUrl();
+  audio.loop = true;
+  audio.preload = "auto";
+  audio.setAttribute("playsinline", "true");
+  audio.setAttribute("webkit-playsinline", "true");
+  audio.style.display = "none";
+  document.body.appendChild(audio);
+  audio.addEventListener("ended", () => {
+    if (!callingRingOn) return;
+    audio.currentTime = 0;
+    void audio.play().catch(() => noteRingFailed());
+  });
+  audio.addEventListener("pause", () => {
+    if (!callingRingOn) return;
+    window.setTimeout(() => {
+      if (!callingRingOn || !audio.paused) return;
+      void audio.play().catch(() => noteRingFailed());
+    }, 400);
+  });
+  callingRingAudio = audio;
+  return audio;
+}
+
+function audioSession() {
+  return (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+}
+
+function playCallingRing() {
+  const starting = !callingRingOn;
+  try {
+    const session = audioSession();
+    if (session && session.type !== "play-and-record") session.type = "playback";
+  } catch {
+    // older iPhone browsers have no audio session control
+  }
+  const audio = ensureCallingRing();
+  callingRingOn = true;
+  audio.muted = false;
+  audio.volume = 1;
+  if (starting) beep([425, 480], 0.6, 0.9);
+  if (!audio.paused) return;
+  void audio
+    .play()
+    .then(() => {
+      ringFailCount = 0;
+    })
+    .catch(() => noteRingFailed());
+}
+
+function stopCallingRing() {
+  callingRingOn = false;
+  ringFailCount = 0;
+  if (callingRingAudio) {
+    callingRingAudio.pause();
+    try {
+      callingRingAudio.currentTime = 0;
+    } catch {
+      // not loaded yet
+    }
+  }
+  window.setTimeout(() => {
+    if (callingRingOn) return;
+    try {
+      const session = audioSession();
+      if (session?.type === "playback") session.type = "auto";
+    } catch {
+      // ignore
+    }
+  }, 8000);
+}
+
 function beep(frequencies: number[], seconds: number, volume: number, delay = 0) {
   const context = getAudioContext();
   if (!context) return;
@@ -109,6 +245,16 @@ function beep(frequencies: number[], seconds: number, volume: number, delay = 0)
 }
 
 function startRinging(kind: "incoming" | "calling") {
+  if (kind === "calling" && isIphoneDevice()) {
+    playCallingRing();
+    const timer = window.setInterval(playCallingRing, 1200);
+    const spoken = window.setInterval(() => onIphoneRingFailed?.(), 5000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(spoken);
+      stopCallingRing();
+    };
+  }
   const play =
     kind === "incoming"
       ? () => {
@@ -118,7 +264,7 @@ function startRinging(kind: "incoming" | "calling") {
           beep([660], 0.25, 0.3, 1);
           if ("vibrate" in navigator) navigator.vibrate([400, 200, 400]);
         }
-      : () => beep([400, 450], 1, isIphoneDevice() ? 0.5 : 0.15);
+      : () => beep([400, 450], 1, 0.15);
   play();
   const timer = window.setInterval(play, kind === "incoming" ? 2500 : 3000);
   return () => {
@@ -212,6 +358,10 @@ export default function DirectCall({
   visualSupportRef.current = visualSupportEnabled;
   const announceRef = useRef(announce);
   announceRef.current = announce;
+  onIphoneRingFailed = () => {
+    if (phaseRef.current !== "calling" || !visualSupportRef.current) return;
+    announceRef.current("呼び出し中です。");
+  };
   const endGuidanceRef = useRef(endGuidance);
   endGuidanceRef.current = endGuidance;
   const assistedSpokenRef = useRef("");
@@ -325,6 +475,12 @@ export default function DirectCall({
   };
 
   const connectRoom = async (callId: string) => {
+    try {
+      const session = audioSession();
+      if (session) session.type = "play-and-record";
+    } catch {
+      // ignore
+    }
     phaseRef.current = "connecting";
     setPhase("connecting");
     try {
@@ -433,8 +589,12 @@ export default function DirectCall({
   };
 
   const startCall = async (to: string) => {
+    if (isIphoneDevice()) playCallingRing();
     unlockAudio();
-    if (callRef.current) return;
+    if (callRef.current) {
+      stopCallingRing();
+      return;
+    }
     try {
       const response = await request("/dm/call", {
         method: "POST",
@@ -442,6 +602,7 @@ export default function DirectCall({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
+        stopCallingRing();
         if (typeof result.callsLeft === "number") setCallsLeft(result.callsLeft);
         const message = result.error ?? "電話をかけられませんでした。";
         setNotice(message);
@@ -459,6 +620,7 @@ export default function DirectCall({
       onClosePanel();
       changeCall(result.call as DmCallView, "calling");
     } catch {
+      stopCallingRing();
       const message = "電話をかけられませんでした。通信状態を確認してください。";
       setNotice(message);
       if (assistedPick && visualSupportEnabled) announce(message);
@@ -748,7 +910,7 @@ export default function DirectCall({
   }, [phase, voiceRingHeld]);
 
   useEffect(() => {
-    if (phase === "incoming" || phase === "calling") return;
+    if (phase === "incoming") return;
     setVoiceRingHeld(false);
   }, [phase]);
 
@@ -863,9 +1025,14 @@ export default function DirectCall({
       guideSawCallRef.current = false;
       dismissMissed([item]);
       setMissedPrompt(null);
+      const iphone = isIphoneDevice();
+      if (iphone) playCallingRing();
       const say = () =>
-        announceRef.current(`${item.peer}さんにかけ直します。`);
-      if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
+        announceRef.current(`${item.peer}さんにかけ直します。`, () => {
+          if (iphone) playCallingRing();
+        });
+      if (iphone) window.setTimeout(say, 700);
+      else if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
       else say();
       void startCall(item.peer);
     };
@@ -1141,22 +1308,16 @@ export default function DirectCall({
     callYesRef.current?.cancel();
     callYesRef.current = null;
     const iphone = isIphoneDevice();
-    let releaseRing = 0;
-    if (iphone) {
-      setVoiceRingHeld(true);
-      releaseRing = window.setTimeout(() => setVoiceRingHeld(false), 9000);
-    }
+    if (iphone) playCallingRing();
     const say = () =>
       announce(
         `${assistedPerson.name}さんを呼び出します。相手が出るまで、このままお待ちください。`,
         () => {
-          if (!iphone) return;
-          window.clearTimeout(releaseRing);
-          unlockAudio();
-          setVoiceRingHeld(false);
+          if (iphone) playCallingRing();
         },
       );
-    if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
+    if (iphone) window.setTimeout(say, 700);
+    else if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
     else say();
     void startCall(assistedPerson.name);
   };
