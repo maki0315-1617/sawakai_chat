@@ -152,6 +152,7 @@ type GroupActivity = {
   createdBy: string
   prompt: string
   entries: GroupActivityEntry[]
+  closeReason?: "admin-away"
 }
 
 type PuzzleSession = {
@@ -166,6 +167,7 @@ type PuzzleSession = {
   entries: [];
   board: number[];
   moves: number;
+  closeReason?: "admin-away";
 };
 
 type ProverbQuestion = {
@@ -192,6 +194,7 @@ type ProverbPuzzleSession = {
   nextQuestionAt?: string;
   pendingQuestionIndex?: number;
   pendingTurnIndex?: number;
+  closeReason?: "admin-away";
 };
 
 type MemoryCard = { id: string; label: string };
@@ -214,6 +217,7 @@ type MemoryMatchSession = {
   pendingTurnIndex?: number;
   matchesByName: Record<string, number>;
   attempts: number;
+  closeReason?: "admin-away";
 };
 
 type PicturePuzzleSession = {
@@ -229,6 +233,7 @@ type PicturePuzzleSession = {
   photoIndex: number;
   scores: Record<string, number>;
   hints?: Record<string, number>;
+  closeReason?: "admin-away";
 };
 
 type AppSession = {
@@ -2289,7 +2294,7 @@ function publicRound(round: BrainRound, name: string) {
 }
 
 app.get(`${root}/health`, (c) =>
-  c.json({ status: "ok", version: 37, service: "sawakai" }),
+  c.json({ status: "ok", version: 38, service: "sawakai" }),
 );
 
 app.post(`${root}/maintenance/cleanup`, async (c) => {
@@ -3439,15 +3444,24 @@ app.post(`${root}/activities/:activityId/finish`, async (c) => {
     return c.json({ error: "このグループには参加していません。" }, 403)
   }
   const group = await groupWithAdmin(groupId, session.name)
-  if (!group || !isGroupAdmin(group, session.name)) {
-    return c.json({ error: "管理者だけが終了できます。" }, 403)
-  }
   const activities = await getGroupActivities(groupId)
   const index = activities.findIndex(
     (item) => item.id === c.req.param("activityId"),
   )
   if (index < 0) return c.json({ error: "この遊びが見つかりません。" }, 404)
-  activities[index] = { ...activities[index], status: "finished" }
+  const activity = activities[index]
+  const admin = Boolean(group && isGroupAdmin(group, session.name))
+  if (
+    !admin &&
+    !(await participantMayEndPlay(groupId, session.name, activity.participants))
+  ) {
+    return c.json({ error: "管理者だけが終了できます。" }, 403)
+  }
+  activities[index] = {
+    ...activity,
+    status: "finished",
+    ...(admin ? {} : { closeReason: "admin-away" as const }),
+  }
   await kv.set(dataKey(groupId, "activities"), activities)
   return c.json({ activity: activities[index] })
 })
@@ -4398,9 +4412,7 @@ app.post(`${root}/nine-puzzles/:puzzleId/finish`, async (c) => {
   if ("error" in context) {
     return c.json({ error: context.error }, context.status);
   }
-  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
-    return c.json({ error: "管理者だけが終了できます。" }, 403);
-  }
+  const admin = await puzzleIsAdmin(context.groupId, context.session.name);
   const activities = await getPuzzleSessions(context.groupId);
   const index = activities.findIndex(
     (activity) => activity.id === c.req.param("puzzleId"),
@@ -4408,7 +4420,21 @@ app.post(`${root}/nine-puzzles/:puzzleId/finish`, async (c) => {
   if (index < 0) {
     return c.json({ error: "このパズルが見つかりません。" }, 404);
   }
-  activities[index] = { ...activities[index], status: "finished" };
+  if (
+    !admin &&
+    !(await participantMayEndPlay(
+      context.groupId,
+      context.session.name,
+      activities[index].participants,
+    ))
+  ) {
+    return c.json({ error: "管理者だけが終了できます。" }, 403);
+  }
+  activities[index] = {
+    ...activities[index],
+    status: "finished",
+    ...(admin ? {} : { closeReason: "admin-away" as const }),
+  };
   await kv.set(puzzleDataKey(context.groupId), activities);
   return c.json({ activity: activities[index] });
 });
@@ -4663,9 +4689,7 @@ app.post(`${root}/proverb-puzzles/:puzzleId/finish`, async (c) => {
   if ("error" in context) {
     return c.json({ error: context.error }, context.status);
   }
-  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
-    return c.json({ error: "管理者だけが終了できます。" }, 403);
-  }
+  const admin = await puzzleIsAdmin(context.groupId, context.session.name);
   const activities = await getProverbPuzzleSessions(context.groupId);
   const index = activities.findIndex(
     (activity) => activity.id === c.req.param("puzzleId"),
@@ -4673,7 +4697,21 @@ app.post(`${root}/proverb-puzzles/:puzzleId/finish`, async (c) => {
   if (index < 0) {
     return c.json({ error: "この問題が見つかりません。" }, 404);
   }
-  activities[index] = { ...activities[index], status: "finished" };
+  if (
+    !admin &&
+    !(await participantMayEndPlay(
+      context.groupId,
+      context.session.name,
+      activities[index].participants,
+    ))
+  ) {
+    return c.json({ error: "管理者だけが終了できます。" }, 403);
+  }
+  activities[index] = {
+    ...activities[index],
+    status: "finished",
+    ...(admin ? {} : { closeReason: "admin-away" as const }),
+  };
   await kv.set(proverbPuzzleDataKey(context.groupId), activities);
   return c.json({ activity: activities[index] });
 });
@@ -4906,15 +4944,27 @@ app.post(`${root}/memory-matches/:matchId/skip`, async (c) => {
 app.post(`${root}/memory-matches/:matchId/finish`, async (c) => {
   const context = await puzzleRequestContext(c);
   if ("error" in context) return c.json({ error: context.error }, context.status);
-  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
-    return c.json({ error: "管理者だけが終了できます。" }, 403);
-  }
+  const admin = await puzzleIsAdmin(context.groupId, context.session.name);
   const activities = await getMemoryMatchSessions(context.groupId);
   const index = activities.findIndex(
     (activity) => activity.id === c.req.param("matchId"),
   );
   if (index < 0) return c.json({ error: "このゲームが見つかりません。" }, 404);
-  activities[index] = { ...activities[index], status: "finished" };
+  if (
+    !admin &&
+    !(await participantMayEndPlay(
+      context.groupId,
+      context.session.name,
+      activities[index].participants,
+    ))
+  ) {
+    return c.json({ error: "管理者だけが終了できます。" }, 403);
+  }
+  activities[index] = {
+    ...activities[index],
+    status: "finished",
+    ...(admin ? {} : { closeReason: "admin-away" as const }),
+  };
   await kv.set(memoryMatchDataKey(context.groupId), activities);
   return c.json({ activity: activities[index] });
 });
@@ -5091,15 +5141,27 @@ app.post(`${root}/picture-puzzles/:puzzleId/complete`, async (c) => {
 app.post(`${root}/picture-puzzles/:puzzleId/finish`, async (c) => {
   const context = await puzzleRequestContext(c);
   if ("error" in context) return c.json({ error: context.error }, context.status);
-  if (!(await puzzleIsAdmin(context.groupId, context.session.name))) {
-    return c.json({ error: "管理者だけが終了できます。" }, 403);
-  }
+  const admin = await puzzleIsAdmin(context.groupId, context.session.name);
   const activities = await getPicturePuzzleSessions(context.groupId);
   const index = activities.findIndex(
     (activity) => activity.id === c.req.param("puzzleId"),
   );
   if (index < 0) return c.json({ error: "このゲームが見つかりません。" }, 404);
-  activities[index] = { ...activities[index], status: "finished" };
+  if (
+    !admin &&
+    !(await participantMayEndPlay(
+      context.groupId,
+      context.session.name,
+      activities[index].participants,
+    ))
+  ) {
+    return c.json({ error: "管理者だけが終了できます。" }, 403);
+  }
+  activities[index] = {
+    ...activities[index],
+    status: "finished",
+    ...(admin ? {} : { closeReason: "admin-away" as const }),
+  };
   await kv.set(picturePuzzleDataKey(context.groupId), activities);
   return c.json({ activity: activities[index] });
 });
@@ -5396,6 +5458,24 @@ async function getGroupCallStatuses(
     }),
   );
   return new Map(statuses);
+}
+
+async function everyAdminIsOffline(groupId: string): Promise<boolean> {
+  const group = (await getGroups()).find((item) => item.id === groupId);
+  const adminNames = group?.adminNames ?? [];
+  if (!adminNames.length) return false;
+  const statuses = await getGroupCallStatuses(groupId, await getMembers(groupId));
+  return adminNames.every(
+    (name) => (statuses.get(name) ?? "offline") === "offline",
+  );
+}
+
+async function participantMayEndPlay(
+  groupId: string,
+  name: string,
+  participants: string[],
+): Promise<boolean> {
+  return participants.includes(name) && (await everyAdminIsOffline(groupId));
 }
 
 function dmView(call: DmCall, me: string) {

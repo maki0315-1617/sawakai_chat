@@ -245,6 +245,7 @@ type GroupActivity = {
   pendingTurnIndex?: number
   matchesByName?: Record<string, number>
   attempts?: number
+  closeReason?: "admin-away"
 }
 
 function createNinePuzzleBoard(): number[] {
@@ -2102,8 +2103,10 @@ function GroupActivities({
   const [error, setError] = useState("")
   const [isBusy, setIsBusy] = useState(true)
   const [memoryCountdown, setMemoryCountdown] = useState(0)
+  const [confirmAwayEnd, setConfirmAwayEnd] = useState(false)
   const advancingMemoryTurn = useRef(false)
   const selectionTouched = useRef(false)
+  const spokenAwayEndRef = useRef("")
 
   const loadActivity = async (quiet = false) => {
     if (!quiet) setIsBusy(true)
@@ -2173,6 +2176,32 @@ function GroupActivities({
     if (selectionTouched.current) return
     setSelectedNames(members.map((member) => member.name))
   }, [members])
+
+  useEffect(() => {
+    if (activity?.status !== "finished" || activity.closeReason !== "admin-away") return
+    if (spokenAwayEndRef.current === activity.id) return
+    spokenAwayEndRef.current = activity.id
+    if (localStorage.getItem(visualSupportStorageKey) === "enabled") {
+      speakJapanese("管理者が不在のため、遊びを終了しました。")
+    }
+  }, [activity?.id, activity?.status, activity?.closeReason])
+
+  useEffect(() => {
+    const adminMembers = members.filter((member) => member.isAdmin)
+    const away =
+      adminMembers.length > 0 &&
+      adminMembers.every(
+        (member) => (member.callStatus ?? "offline") === "offline",
+      )
+    const canEnd = Boolean(
+      !isAdmin &&
+        activity &&
+        activity.status === "active" &&
+        activity.participants.includes(profile.name) &&
+        away,
+    )
+    if (!canEnd) setConfirmAwayEnd(false)
+  }, [activity, isAdmin, members, profile.name])
 
   useEffect(() => {
     if (
@@ -2598,6 +2627,66 @@ function GroupActivities({
     return <div className="group-play-loading">準備しています…</div>
   }
 
+  const admins = members.filter((member) => member.isAdmin)
+  const adminsAway =
+    admins.length > 0 &&
+    admins.every((member) => (member.callStatus ?? "offline") === "offline")
+  const participantCanEnd = Boolean(
+    !isAdmin &&
+      activity &&
+      activity.status === "active" &&
+      activity.participants.includes(profile.name) &&
+      adminsAway,
+  )
+  const askToEndForAbsentAdmin = () => {
+    setConfirmAwayEnd(true)
+    if (localStorage.getItem(visualSupportStorageKey) === "enabled") {
+      speakJapanese("この遊びを終えますか。ここまでの記録は残ります。")
+    }
+  }
+  const awayEndButton = participantCanEnd ? (
+    <button
+      className="group-play-away-end"
+      onClick={askToEndForAbsentAdmin}
+      type="button"
+    >
+      この遊びを終える
+    </button>
+  ) : null
+  const awayEndDialog = confirmAwayEnd ? (
+    <div className="dialog-backdrop">
+      <section
+        aria-labelledby="away-end-title"
+        aria-modal="true"
+        className="confirm-dialog"
+        role="dialog"
+      >
+        <h2 id="away-end-title">この遊びを終えますか</h2>
+        <p className="dialog-note">ここまでの記録は残ります。</p>
+        <div className="dialog-actions">
+          <button
+            className="dialog-button dialog-button--back"
+            onClick={() => setConfirmAwayEnd(false)}
+            type="button"
+          >
+            戻る
+          </button>
+          <button
+            className="dialog-button dialog-button--send"
+            onClick={() => {
+              setConfirmAwayEnd(false)
+              void activityAction("finish")
+            }}
+            type="button"
+          >
+            終える
+          </button>
+        </div>
+      </section>
+    </div>
+  ) : null
+  const absenceHeadline = "管理者が不在のため、遊びを終了しました"
+
   if (
     activity?.kind === "nine-puzzle" &&
     activity.status === "finished"
@@ -2609,7 +2698,13 @@ function GroupActivities({
           脳活タイムへ戻る
         </button>
         <div className="group-play-review__hero">
-          <span>{complete ? "みんなで完成" : "パズルを終了しました"}</span>
+          <span>
+            {activity.closeReason === "admin-away"
+              ? absenceHeadline
+              : complete
+                ? "みんなで完成"
+                : "パズルを終了しました"}
+          </span>
           <h3>みんなで9マス</h3>
           <strong>{activity.moves ?? 0}回 入れ替えました</strong>
         </div>
@@ -2647,7 +2742,13 @@ function GroupActivities({
           脳活タイムへ戻る
         </button>
         <div className="group-play-review__hero">
-          <span>{allComplete ? "10問完成" : "並べ替えを終了しました"}</span>
+          <span>
+            {activity.closeReason === "admin-away"
+              ? absenceHeadline
+              : allComplete
+                ? "10問完成"
+                : "並べ替えを終了しました"}
+          </span>
           <h3>ことわざ並べ替え</h3>
           <strong>
             {activity.solvedCount ?? 0}問正解・{activity.moves ?? 0}回入れ替え
@@ -2686,9 +2787,11 @@ function GroupActivities({
         </button>
         <div className="group-play-review__hero">
           <span>
-            {(activity.matchedIds?.length ?? 0) === 18
-              ? "9組そろいました"
-              : "ゲームを終了しました"}
+            {activity.closeReason === "admin-away"
+              ? absenceHeadline
+              : (activity.matchedIds?.length ?? 0) === 18
+                ? "9組そろいました"
+                : "ゲームを終了しました"}
           </span>
           <h3>みんなで神経衰弱</h3>
           <strong>{activity.attempts ?? 0}回挑戦しました</strong>
@@ -2728,7 +2831,11 @@ function GroupActivities({
           脳活タイムへ戻る
         </button>
         <div className="group-play-review__hero">
-          <span>おつかれさまでした</span>
+          <span>
+            {activity.closeReason === "admin-away"
+              ? absenceHeadline
+              : "おつかれさまでした"}
+          </span>
           <h3>{gameNames[activity.kind]}の振り返り</h3>
           <strong>{activity.entries.length}回つながりました</strong>
         </div>
@@ -2765,6 +2872,7 @@ function GroupActivities({
 
   if (activity?.kind === "picture-puzzle") {
     return (
+      <>
       <PicturePuzzle
         activity={activity}
         currentName={profile.name}
@@ -2774,12 +2882,15 @@ function GroupActivities({
         key={activity.id}
         onBack={onBack}
         onFinish={() => void activityAction("finish")}
+        onAwayFinish={participantCanEnd ? askToEndForAbsentAdmin : undefined}
         onJoin={() => void joinPicturePuzzle()}
         onNext={() => setActivity(null)}
         onSubmit={(seconds, hints) =>
           void submitPicturePuzzleTime(seconds, hints)
         }
       />
+      {awayEndDialog}
+    </>
     )
   }
 
@@ -3002,6 +3113,8 @@ function GroupActivities({
             </button>
           </div>
         )}
+        {awayEndButton}
+        {awayEndDialog}
       </div>
     )
   }
@@ -3089,6 +3202,8 @@ function GroupActivities({
             </button>
           </div>
         )}
+        {awayEndButton}
+        {awayEndDialog}
       </div>
     )
   }
@@ -3143,6 +3258,8 @@ function GroupActivities({
             </button>
           </div>
         )}
+        {awayEndButton}
+        {awayEndDialog}
       </div>
     )
   }
@@ -3283,6 +3400,8 @@ function GroupActivities({
           </button>
         </div>
       )}
+      {awayEndButton}
+      {awayEndDialog}
     </div>
   )
 }

@@ -2086,6 +2086,19 @@ input:focus-visible {
   border-color: #dfc2be;
 }
 
+.group-play-away-end {
+  width: 100%;
+  min-height: 64px;
+  margin-top: 18px;
+  color: #8a3737;
+  background: #ffffff;
+  border: 2px solid #dfc2be;
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: 20px;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+}
+
 .nine-puzzle-practice-launch {
   display: flex;
   align-items: flex-start;

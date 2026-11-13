@@ -28,6 +28,8 @@ type PicturePuzzleActivity = {
 
   status: "active" | "finished"
 
+  closeReason?: "admin-away"
+
   photoIndex?: number
 
   board?: number[]
@@ -51,6 +53,8 @@ type PicturePuzzleProps = {
   onBack: () => void
 
   onFinish?: () => void
+
+  onAwayFinish?: () => void
 
   onJoin?: () => void
   onNext?: () => void
@@ -307,6 +311,8 @@ export default function PicturePuzzle({
   onBack,
 
   onFinish,
+
+  onAwayFinish,
 
   onJoin,
   onNext,
@@ -586,7 +592,11 @@ export default function PicturePuzzle({
           脳活タイムへ戻る
         </button>
         <div className="group-play-review__hero">
-          <span>タイムアタック終了</span>
+          <span>
+            {game.closeReason === "admin-away"
+              ? "管理者が不在のため、遊びを終了しました"
+              : "タイムアタック終了"}
+          </span>
           <h3>絵合わせ</h3>
           <strong>{solvedCount}人が完成しました</strong>
         </div>
@@ -813,6 +823,11 @@ export default function PicturePuzzle({
             タイム競争を終了
           </button>
         </div>
+      )}
+      {!isPractice && onAwayFinish && (
+        <button className="group-play-away-end" onClick={onAwayFinish} type="button">
+          この遊びを終える
+        </button>
       )}
     </div>
   )
