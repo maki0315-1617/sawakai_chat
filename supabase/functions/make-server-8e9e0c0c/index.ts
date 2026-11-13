@@ -2970,7 +2970,11 @@ function returnCodeKey(groupId: string): string {
 }
 
 function normalizeReturnCode(value: string): string {
-  return value.normalize("NFKC").replace(/[\s-]/g, "").toUpperCase();
+  return value.normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizePersonName(value: string): string {
+  return value.normalize("NFKC").replace(/[\s\u3000\u200B\uFEFF]/g, "");
 }
 
 async function ensureReturnCode(groupId: string): Promise<string> {
@@ -3103,7 +3107,8 @@ app.post(`${root}/groups/create-first`, async (c) => {
 // 管理者が、再入室コードで戻る。
 app.post(`${root}/groups/admin-return`, async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const name =
+    typeof body.name === "string" ? normalizePersonName(body.name) : "";
   const code =
     typeof body.returnCode === "string" ? normalizeReturnCode(body.returnCode) : "";
   if (!name || !code) {
@@ -3115,16 +3120,25 @@ app.post(`${root}/groups/admin-return`, async (c) => {
   }
   let found: Group | undefined;
   for (const group of await getGroups()) {
-    const stored = (await kv.get(returnCodeKey(group.id))) as string | undefined;
+    const stored = normalizeReturnCode(
+      String((await kv.get(returnCodeKey(group.id))) ?? ""),
+    );
     if (stored && stored === code) {
       found = group;
       break;
     }
   }
-  if (!found || !found.adminNames?.includes(name)) {
+  const matchedAdmin = found?.adminNames?.find(
+    (adminName) => normalizePersonName(adminName) === name,
+  );
+  if (!found || !matchedAdmin) {
     recordFailure(failureKey);
     return c.json(
-      { error: "お名前か再入室コードが違います。もう一度ご確認ください。" },
+      {
+        error: found
+          ? `再入室コードは合っています。お名前は「${(found.adminNames ?? []).join("」か「")}」と入力してください。`
+          : "お名前か再入室コードが違います。もう一度ご確認ください。",
+      },
       403,
     );
   }
@@ -3132,12 +3146,12 @@ app.post(`${root}/groups/admin-return`, async (c) => {
 
   const token = crypto.randomUUID();
   await kv.set(`sawakai:session:${token}`, {
-    name,
+    name: matchedAdmin,
     expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
     groupIds: [found.id],
   });
-  await touchMember(found.id, name);
-  return c.json({ token, user: { name }, activeGroupId: found.id });
+  await touchMember(found.id, matchedAdmin);
+  return c.json({ token, user: { name: matchedAdmin }, activeGroupId: found.id });
 });
 
 app.post(`${root}/groups/join`, async (c) => {

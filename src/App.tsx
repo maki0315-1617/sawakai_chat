@@ -4146,15 +4146,27 @@ function JoinScreen({
     }
   };
 
-  const returnAsAdmin = async (event: FormEvent) => {
+  const returnAsAdmin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const form = event.currentTarget;
+    const enteredName = (
+      form.querySelector<HTMLInputElement>("#return-name")?.value ?? name
+    )
+      .normalize("NFKC")
+      .replace(/[\s\u3000\u200B\uFEFF]/g, "");
+    const enteredCode = (
+      form.querySelector<HTMLInputElement>("#return-code")?.value ?? returnCode
+    )
+      .normalize("NFKC")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
     setError("");
     setIsJoining(true);
     try {
       const response = await fetch(`${apiRoot}/groups/admin-return`, {
         method: "POST",
         headers: apiHeaders(),
-        body: JSON.stringify({ name: name.trim(), returnCode }),
+        body: JSON.stringify({ name: enteredName, returnCode: enteredCode }),
       });
       const result = await readJson(response);
       if (!response.ok) {
