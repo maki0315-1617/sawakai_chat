@@ -4957,6 +4957,7 @@ export default function App() {
   const [groupNameDraft, setGroupNameDraft] = useState(appName);
   const [groupImageUrl, setGroupImageUrl] = useState("");
   const [showGroup, setShowGroup] = useState(false);
+  const [groupView, setGroupView] = useState<"settings" | "members">("settings");
   const groupsSheet = useSheetDrag(() => {
     if (activeGroupId) setShowGroups(false);
   });
@@ -7028,6 +7029,129 @@ export default function App() {
     );
   }
 
+  const memberDirectory = (
+    <>
+      <h3>参加者 {members.length}人</h3>
+      <p className="member-participation-help">
+        参加するかどうかを選ぶと、参加者一覧に表示されます。
+      </p>
+      <div className="member-list">
+        {members.map((member) => (
+          <div className="member-row" key={member.name}>
+            <div className="member-row__main">
+              <div className={`avatar avatar--${member.avatar}`}>
+                {member.imageUrl && <img alt="" src={member.imageUrl} />}
+              </div>
+              <div className="member-row__identity">
+                <span>{member.name}</span>
+                <small>
+                  {member.name === profile.name ? "あなた" : ""}
+                  {member.name === profile.name && member.isAdmin ? " · " : ""}
+                  {member.isAdmin ? "管理者" : ""}
+                </small>
+              </div>
+              {member.name !== profile.name &&
+                (dmPeer === member.name ? (
+                  <button
+                    aria-label={`${member.name}さんとの通話を切る`}
+                    className="member-call-button member-call-button--end"
+                    onClick={() => dmControlRef.current?.hangUp()}
+                  >
+                    <PhoneIcon />
+                  </button>
+                ) : (
+                  <button
+                    aria-label={`${member.name}さんに電話をかける`}
+                    className="member-call-button"
+                    disabled={
+                      dmPeer !== null || member.callStatus !== "available"
+                    }
+                    onClick={() => dmControlRef.current?.startCall(member.name)}
+                  >
+                    <PhoneIcon />
+                  </button>
+                ))}
+            </div>
+            <div className="member-row__meta">
+              <span
+                className={`member-participation member-participation--${
+                  member.participation ?? "unanswered"
+                }`}
+              >
+                {member.participation === "participating"
+                  ? "参加中"
+                  : member.participation === "not_participating"
+                    ? "不参加"
+                    : "未回答"}
+              </span>
+              <span
+                className={`member-call-status member-call-status--${
+                  member.callStatus ?? "offline"
+                }`}
+              >
+                {member.callStatus === "available"
+                  ? "通話可能"
+                  : member.callStatus === "busy"
+                    ? "通話中"
+                    : "応答待機なし"}
+              </span>
+              {member.name === profile.name && (
+                <div className="member-participation-actions">
+                  <button
+                    aria-pressed={member.participation === "participating"}
+                    className={
+                      member.participation === "participating" ? "is-selected" : ""
+                    }
+                    disabled={memberActionName === profile.name}
+                    onClick={() => void setParticipation("participating")}
+                  >
+                    参加中
+                  </button>
+                  <button
+                    aria-pressed={member.participation === "not_participating"}
+                    className={
+                      member.participation === "not_participating"
+                        ? "is-selected"
+                        : ""
+                    }
+                    disabled={memberActionName === profile.name}
+                    onClick={() => void setParticipation("not_participating")}
+                  >
+                    不参加
+                  </button>
+                </div>
+              )}
+              {isAdmin && (
+                <div className="member-admin-actions">
+                  <button
+                    disabled={memberActionName === member.name}
+                    onClick={() => void changeMemberRole(member)}
+                  >
+                    {member.isAdmin ? "管理者を解除" : "管理者にする"}
+                  </button>
+                  {member.name !== profile.name && (
+                    <button
+                      className="remove-member-button"
+                      disabled={memberActionName === member.name}
+                      onClick={() => void removeMember(member)}
+                    >
+                      外す
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {groupError && (
+        <button className="group-error" onClick={() => void loadGroup()}>
+          {groupError} もう一度試す
+        </button>
+      )}
+    </>
+  );
+
   return (
     <div
       className={`chat-app theme-${themeColor} ${
@@ -7065,6 +7189,7 @@ export default function App() {
             aria-label="設定を開く"
             className="group-icon"
             onClick={() => {
+              setGroupView("settings");
               setShowGroup(true);
               void loadGroup();
             }}
@@ -7081,6 +7206,7 @@ export default function App() {
           <button
             className="group-details"
             onClick={() => {
+              setGroupView("settings");
               setShowGroup(true);
               void loadGroup();
             }}
@@ -7147,9 +7273,10 @@ export default function App() {
             <span>脳活</span>
           </button>
           <button
-            aria-label={`参加者と招待コードを見る（${members.length || 4}人が参加中）`}
+            aria-label={`参加者と茶話会の切り替え、ご利用ガイドを見る（${members.length || 4}人が参加中）`}
             className="header-action"
             onClick={() => {
+              setGroupView("members");
               setShowGroup(true);
               void loadGroup();
             }}
@@ -8196,7 +8323,9 @@ export default function App() {
           <section
             aria-labelledby="group-panel-title"
             aria-modal="true"
-            className="group-panel"
+            className={`group-panel${
+              groupView === "members" ? " group-panel--members" : ""
+            }`}
             role="dialog"
             style={groupSheet.panelStyle}
           >
@@ -8208,6 +8337,33 @@ export default function App() {
             >
               <CloseIcon />
             </button>
+            {groupView === "members" ? (
+              <>
+                <p className="dialog-eyebrow">選択中の茶話会</p>
+                <h2 id="group-panel-title">{groupName}</h2>
+                <button
+                  className="members-switch"
+                  onClick={() => {
+                    setShowGroup(false);
+                    setShowGroups(true);
+                    void loadGroups();
+                  }}
+                  type="button"
+                >
+                  茶話会を切り替える
+                  {totalGroupUnread > 0 ? `（未読 ${totalGroupUnread}件）` : ""}
+                </button>
+                {memberDirectory}
+                <button
+                  className="members-guide"
+                  onClick={() => setShowDocuments(true)}
+                  type="button"
+                >
+                  ご利用ガイド・PR資料
+                </button>
+              </>
+            ) : (
+              <>
             <p className="dialog-eyebrow">招待された方だけのグループ</p>
             <h2 id="group-panel-title">参加者と招待・設定</h2>
             <button
@@ -8645,132 +8801,7 @@ export default function App() {
               </div>
             </div>}
 
-            <h3>参加者 {members.length}人</h3>
-            <p className="member-participation-help">
-              参加するかどうかを選ぶと、参加者一覧に表示されます。
-            </p>
-            <div className="member-list">
-              {members.map((member) => (
-                <div className="member-row" key={member.name}>
-                  <div className="member-row__main">
-                  <div className={`avatar avatar--${member.avatar}`}>
-                    {member.imageUrl && <img alt="" src={member.imageUrl} />}
-                  </div>
-                  <div className="member-row__identity">
-                    <span>{member.name}</span>
-                    <small>
-                      {member.name === profile.name ? "あなた" : ""}
-                      {member.name === profile.name && member.isAdmin
-                        ? " · "
-                        : ""}
-                      {member.isAdmin ? "管理者" : ""}
-                    </small>
-                  </div>
-                  {member.name !== profile.name &&
-                    (dmPeer === member.name ? (
-                      <button
-                        aria-label={`${member.name}さんとの通話を切る`}
-                        className="member-call-button member-call-button--end"
-                        onClick={() => dmControlRef.current?.hangUp()}
-                      >
-                        <PhoneIcon />
-                      </button>
-                    ) : (
-                      <button
-                        aria-label={`${member.name}さんに電話をかける`}
-                        className="member-call-button"
-                        disabled={
-                          dmPeer !== null || member.callStatus !== "available"
-                        }
-                        onClick={() => dmControlRef.current?.startCall(member.name)}
-                      >
-                        <PhoneIcon />
-                      </button>
-                    ))}
-                  </div>
-                  <div className="member-row__meta">
-                  <span
-                    className={`member-participation member-participation--${
-                      member.participation ?? "unanswered"
-                    }`}
-                  >
-                    {member.participation === "participating"
-                      ? "参加中"
-                      : member.participation === "not_participating"
-                        ? "不参加"
-                        : "未回答"}
-                  </span>
-                  <span
-                    className={`member-call-status member-call-status--${
-                      member.callStatus ?? "offline"
-                    }`}
-                  >
-                    {member.callStatus === "available"
-                      ? "通話可能"
-                      : member.callStatus === "busy"
-                        ? "通話中"
-                        : "応答待機なし"}
-                  </span>
-                  {member.name === profile.name && (
-                    <div className="member-participation-actions">
-                      <button
-                        aria-pressed={member.participation === "participating"}
-                        className={
-                          member.participation === "participating"
-                            ? "is-selected"
-                            : ""
-                        }
-                        disabled={memberActionName === profile.name}
-                        onClick={() => void setParticipation("participating")}
-                      >
-                        参加中
-                      </button>
-                      <button
-                        aria-pressed={
-                          member.participation === "not_participating"
-                        }
-                        className={
-                          member.participation === "not_participating"
-                            ? "is-selected"
-                            : ""
-                        }
-                        disabled={memberActionName === profile.name}
-                        onClick={() =>
-                          void setParticipation("not_participating")
-                        }
-                      >
-                        不参加
-                      </button>
-                    </div>
-                  )}
-                  {isAdmin && (
-                    <div className="member-admin-actions">
-                      <button
-                        disabled={memberActionName === member.name}
-                        onClick={() => void changeMemberRole(member)}
-                      >
-                        {member.isAdmin ? "管理者を解除" : "管理者にする"}
-                      </button>
-                      {member.name !== profile.name && (
-                        <button
-                          className="remove-member-button"
-                          disabled={memberActionName === member.name}
-                          onClick={() => void removeMember(member)}
-                        >
-                          外す
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {groupError && (
-              <button className="group-error" onClick={() => void loadGroup()}>
-                {groupError} もう一度試す
-              </button>
-            )}
+            {memberDirectory}
             <div className="document-downloads">
               <strong>ご利用ガイド・PR資料</strong>
               <button onClick={() => setShowDocuments(true)}>
@@ -8785,6 +8816,8 @@ export default function App() {
                   このグループを削除
                 </button>
               </div>
+            )}
+              </>
             )}
           </section>
         </div>

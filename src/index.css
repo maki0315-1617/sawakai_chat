@@ -3333,6 +3333,75 @@ input:focus-visible {
   font-weight: 700;
 }
 
+.group-panel--members h2 {
+  font-size: 32px;
+  line-height: 1.4;
+}
+
+.members-switch,
+.members-guide {
+  width: 100%;
+  min-height: 72px;
+  margin: 8px 0 18px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  cursor: pointer;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.members-switch {
+  color: #ffffff;
+  background: var(--accent);
+  border: 0;
+}
+
+.members-guide {
+  margin-top: 28px;
+  color: #263b38;
+  background: #ffffff;
+  border: 3px solid var(--accent);
+}
+
+.group-panel--members h3 {
+  font-size: 24px;
+}
+
+.group-panel--members .member-participation-help {
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.group-panel--members .member-row__meta,
+.group-panel--members .member-participation-actions,
+.group-panel--members .member-admin-actions {
+  flex-wrap: wrap;
+}
+
+.group-panel--members .member-call-button {
+  width: 56px;
+  height: 56px;
+}
+
+.group-panel--members .member-participation-actions button,
+.group-panel--members .member-admin-actions button {
+  min-height: 48px;
+  padding: 8px 12px;
+  font-size: 16px;
+}
+
+.group-panel--members .member-row span {
+  font-size: 20px;
+}
+
+.group-panel--members .member-row small,
+.group-panel--members .member-participation,
+.group-panel--members .member-call-status {
+  font-size: 16px;
+}
+
 .group-panel h3 {
   margin: 26px 0 12px;
   color: #263b38;
