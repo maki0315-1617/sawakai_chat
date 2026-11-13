@@ -4982,6 +4982,7 @@ export default function App() {
   const [dmPeer, setDmPeer] = useState<string | null>(null);
   const dmControlRef = useRef<DirectCallControl | null>(null);
   const [isRotatingCode, setIsRotatingCode] = useState(false);
+  const [inviteShareNote, setInviteShareNote] = useState("");
   const [isSavingGroupName, setIsSavingGroupName] = useState(false);
   const [isSavingProfileImage, setIsSavingProfileImage] = useState(false);
   const [isSavingGroupImage, setIsSavingGroupImage] = useState(false);
@@ -5837,10 +5838,50 @@ export default function App() {
     setShowConfirmation(false);
   };
 
+  const appPageUrl = () => {
+    const base = import.meta.env.BASE_URL || "/";
+    return new URL(
+      base.endsWith("/") ? base : `${base}/`,
+      window.location.origin,
+    ).href.replace(/\/$/, "");
+  };
+
+  const inviteShareText = inviteCode
+    ? `茶話会「${groupName}」へのお誘いです。\n次のURLを開いてください。\n${appPageUrl()}\n\nグループ名：${groupName}\n招待コード：${inviteCode}\n\n「初めて参加する」を押して、招待コードを入力してください。`
+    : "";
+
   const copyInviteCode = async () => {
     await navigator.clipboard.writeText(inviteCode);
     setSentNotice(true);
     window.setTimeout(() => setSentNotice(false), 2200);
+  };
+
+  const shareInviteFromGroup = async () => {
+    if (!inviteShareText) return;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: `茶話会「${groupName}」へのお誘い`,
+          text: inviteShareText,
+        });
+        setInviteShareNote("");
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(inviteShareText);
+      setInviteShareNote(
+        "この端末では共有画面を開けないため、案内文をコピーしました。メッセージに貼り付けて送れます。",
+      );
+    } catch {
+      setInviteShareNote(
+        "送れませんでした。下の案内文を長押ししてコピーしてください。",
+      );
+    }
   };
 
   const rotateInviteCode = async () => {
@@ -8494,9 +8535,26 @@ export default function App() {
                 className="copy-code-button"
                 disabled={!inviteCode}
                 onClick={copyInviteCode}
+                type="button"
               >
                 コードをコピー
               </button>
+              {inviteShareText && (
+                <pre className="invite-share-preview">{inviteShareText}</pre>
+              )}
+              <button
+                className="invite-share-button"
+                disabled={!inviteShareText}
+                onClick={() => void shareInviteFromGroup()}
+                type="button"
+              >
+                未参加者に送る
+              </button>
+              {inviteShareNote && (
+                <p className="invite-share-note" role="status">
+                  {inviteShareNote}
+                </p>
+              )}
             </div>
             {isAdmin && adminReturnCode && (
               <div className="invite-card">
