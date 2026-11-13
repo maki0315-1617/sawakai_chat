@@ -2629,44 +2629,42 @@ export default function WalkingApp({
               rows={4}
               value={review}
             />
-            {pendingKind === "walk" && (
-              <div className="walk-voice-controls">
-                <button
-                  className={`walk-voice-button ${
-                    isListening ? "is-listening" : ""
-                  }`}
-                  disabled={isStoppingVoice}
-                  onClick={isListening ? stopVoiceReview : startVoiceReview}
-                  type="button"
-                >
-                  <span aria-hidden="true">{isListening ? "⏹" : "🎙"}</span>
-                  {isStoppingVoice
-                    ? "音声入力を終了しています…"
-                    : isListening
-                      ? "音声入力を止める"
-                      : "声でふりかえる"}
-                </button>
-                <p aria-live="polite">
-                  {voiceStatus ||
-                    "お話し終わったら「音声入力を止める」を押してください。音声はブラウザーで処理され、内容を確認・修正してから保存できます。"}
-                </p>
-                {voiceError && (
-                  <div className="walk-voice-fallback" role="status">
-                    <p className="walk-inline-error">{voiceError}</p>
-                    <button
-                      className="walk-voice-fallback-button"
-                      onClick={() => {
-                        setVoiceStatus("キーボードのマイクを押してお話しください。")
-                        reviewInputRef.current?.focus()
-                      }}
-                      type="button"
-                    >
-                      感想欄を開いてキーボードのマイクを使う
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="walk-voice-controls">
+              <button
+                className={`walk-voice-button ${
+                  isListening ? "is-listening" : ""
+                }`}
+                disabled={isStoppingVoice}
+                onClick={isListening ? stopVoiceReview : startVoiceReview}
+                type="button"
+              >
+                <span aria-hidden="true">{isListening ? "⏹" : "🎙"}</span>
+                {isStoppingVoice
+                  ? "音声入力を終了しています…"
+                  : isListening
+                    ? "音声入力を止める"
+                    : "声でふりかえる"}
+              </button>
+              <p aria-live="polite">
+                {voiceStatus ||
+                  "お話し終わったら「音声入力を止める」を押してください。音声はブラウザーで処理され、内容を確認・修正してから保存できます。"}
+              </p>
+              {voiceError && (
+                <div className="walk-voice-fallback" role="status">
+                  <p className="walk-inline-error">{voiceError}</p>
+                  <button
+                    className="walk-voice-fallback-button"
+                    onClick={() => {
+                      setVoiceStatus("キーボードのマイクを押してお話しください。")
+                      reviewInputRef.current?.focus()
+                    }}
+                    type="button"
+                  >
+                    感想欄を開いてキーボードのマイクを使う
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="walk-review-actions">
               <button
                 className="walk-secondary-button"
