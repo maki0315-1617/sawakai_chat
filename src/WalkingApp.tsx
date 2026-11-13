@@ -1535,10 +1535,6 @@ export default function WalkingApp({
     (record) => record.date === localDateKey() && record.kind === "walk",
   ).length
 
-  const todayHasWalk = records.some(
-    (record) => record.date === localDateKey() && record.kind === "walk",
-  )
-
   const todayHasCharge = records.some(
     (record) => record.date === localDateKey() && record.kind === "charge",
   )
@@ -1828,7 +1824,7 @@ export default function WalkingApp({
   }
 
   const addChargeDay = () => {
-    if (todayHasCharge || todayHasWalk) return
+    if (todayHasCharge) return
 
     setPendingKind("charge")
 
@@ -2502,18 +2498,16 @@ export default function WalkingApp({
               </p>
             </section>
 
-            {!todayHasWalk && (
-              <button
-                className="walk-rest-button"
-                disabled={todayHasCharge}
-                onClick={addChargeDay}
-                type="button"
-              >
-                {todayHasCharge
-                  ? "今日は充電日として記録しました"
-                  : "今日は充電日にする"}
-              </button>
-            )}
+            <button
+              className="walk-rest-button"
+              disabled={todayHasCharge}
+              onClick={addChargeDay}
+              type="button"
+            >
+              {todayHasCharge
+                ? "今日は充電日として記録しました"
+                : "今日は充電日にする"}
+            </button>
 
             <section className="walk-map-card">
               <div className="walk-map-card__heading">
