@@ -15,6 +15,7 @@ import {
   walkShareSubject,
   walkShareText,
 } from "./walkShare"
+import { isDesktopDevice } from "./voiceJoin"
 
 type Weather = "sunny" | "cloudy" | "rain" | "hot" | "windy" | "snow"
 
@@ -1337,7 +1338,14 @@ export default function WalkingApp({
     }
     if (recognitionRef.current) {
       setIsStoppingVoice(true)
-      recognitionRef.current.stop()
+      try {
+        recognitionRef.current.stop()
+      } catch {
+        recognitionRef.current = null
+        setIsListening(false)
+        setIsStoppingVoice(false)
+        setVoiceStatus("音声入力を終了しました。")
+      }
     } else {
       setIsListening(false)
       setIsStoppingVoice(false)
@@ -1848,97 +1856,179 @@ export default function WalkingApp({
       return
     }
 
-    setVoiceError("")
-    setVoiceStatus("お話しください。入力が終わったら「音声入力を止める」を押してください。")
-
     if (voiceActiveRef.current) return
-    voiceActiveRef.current = true
-    let silentEnds = 0
-    let transientErrors = 0
-
-    const begin = () => {
-      if (!voiceActiveRef.current) return
-      const recognition = new RecognitionClass()
-      recognitionRef.current = recognition
-      recognition.lang = "ja-JP"
-      recognition.continuous = true
-      recognition.interimResults = false
-      let heardSpeech = false
-      let fatalError = false
-
-      recognition.onresult = (event) => {
-        const text = Array.from(event.results)
-          .slice(event.resultIndex)
-          .filter((result) => result.isFinal)
-          .map((result) => result[0]?.transcript ?? "")
-          .join("")
-          .trim()
-        if (text) {
-          heardSpeech = true
-          silentEnds = 0
-          transientErrors = 0
-          setVoiceStatus("音声を入力しています。終わったらボタンを押して停止してください。")
-          setReview((current) => [current.trim(), text].filter(Boolean).join(" "))
-        }
-      }
-
-      recognition.onerror = (event) => {
-        if (!voiceActiveRef.current) return
-        if (event.error === "no-speech" || event.error === "aborted") return
-        if (event.error === "network" && transientErrors < 3) {
-          transientErrors += 1
-          setVoiceStatus("音声認識を再接続しています…")
-          return
-        }
-        fatalError = true
-        voiceActiveRef.current = false
-        setIsListening(false)
-        setVoiceError(
-          event.error === "not-allowed" || event.error === "service-not-allowed"
-            ? "マイクの使用が許可されていません。iPhoneの「設定」>「Safari」>「マイク」を確認してください。入力欄からキーボードのマイクも使えます。"
-            : event.error === "audio-capture"
-              ? "マイクを使用できません。ほかのアプリで使用中でないか確認してください。キーボードのマイクからも入力できます。"
-              : event.error === "network"
-                ? "音声認識サービスに接続できません。通信を確認するか、キーボードのマイクから入力してください。"
-                : "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
-        )
-      }
-
-      recognition.onend = () => {
-        if (recognitionRef.current === recognition) recognitionRef.current = null
-        if (!voiceActiveRef.current || fatalError) {
-          setIsListening(false)
-          setIsStoppingVoice(false)
-          if (!fatalError) setVoiceStatus("音声入力を終了しました。")
-          return
-        }
-        if (!heardSpeech) silentEnds += 1
-        if (silentEnds > 0) {
-          setVoiceStatus("音声入力は続いています。話し始めると入力されます。")
-        }
-        voiceRestartTimer.current = window.setTimeout(() => {
-          voiceRestartTimer.current = null
-          begin()
-        }, Math.min(350 + silentEnds * 250, 1500))
-      }
-
-      try {
-        recognition.start()
-        setIsListening(true)
-      } catch (error) {
-        console.error("音声入力を開始できませんでした", error)
-        voiceActiveRef.current = false
-        recognitionRef.current = null
-        setIsListening(false)
-        setVoiceError(
-          error instanceof DOMException && error.name === "NotAllowedError"
-            ? "マイクの使用が許可されていません。Safariのマイク設定を確認してください。入力欄からキーボードのマイクも使えます。"
-            : "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
-        )
-      }
+    const previousRecognition = recognitionRef.current
+    recognitionRef.current = null
+    voiceActiveRef.current = false
+    if (voiceRestartTimer.current !== null) {
+      window.clearTimeout(voiceRestartTimer.current)
+      voiceRestartTimer.current = null
+    }
+    try {
+      previousRecognition?.stop()
+    } catch {
+      // 前の聞き取りはすでに終わっている
     }
 
-    begin()
+    setVoiceError("")
+    setVoiceStatus("お話しください。入力が終わったら「音声入力を止める」を押してください。")
+    voiceActiveRef.current = true
+
+    const desktop = isDesktopDevice()
+    const base = (reviewInputRef.current?.value ?? "").trim()
+    const recognition = new RecognitionClass()
+    recognitionRef.current = recognition
+    recognition.lang = "ja-JP"
+    recognition.continuous = desktop
+    recognition.interimResults = true
+
+    let carried = ""
+    let finals = ""
+    let interim = ""
+    let fatal = false
+    let restarting = false
+    let captureErrors = 0
+
+    const publish = () => {
+      const spoken = [carried, finals, interim]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(" ")
+      setReview([base, spoken].filter(Boolean).join(" "))
+    }
+
+    const takeUtterance = () => {
+      const spoken = `${finals} ${interim}`.replace(/\s+/g, " ").trim()
+      finals = ""
+      interim = ""
+      if (!spoken) return
+      carried = [carried, spoken].filter(Boolean).join(" ")
+      publish()
+    }
+
+    const scheduleRestart = (attempt = 0) => {
+      if (fatal || !voiceActiveRef.current || recognitionRef.current !== recognition) return
+      if (attempt === 0) {
+        if (restarting) return
+        restarting = true
+        takeUtterance()
+      }
+      if (voiceRestartTimer.current !== null) {
+        window.clearTimeout(voiceRestartTimer.current)
+      }
+      voiceRestartTimer.current = window.setTimeout(() => {
+        voiceRestartTimer.current = null
+        if (fatal || !voiceActiveRef.current || recognitionRef.current !== recognition) {
+          restarting = false
+          return
+        }
+        try {
+          recognition.start()
+          restarting = false
+          setIsListening(true)
+        } catch (error) {
+          console.error("音声入力の再開に失敗しました", error)
+          if (attempt < 4) {
+            scheduleRestart(attempt + 1)
+            return
+          }
+          restarting = false
+          fatal = true
+          voiceActiveRef.current = false
+          recognitionRef.current = null
+          setIsListening(false)
+          setIsStoppingVoice(false)
+          if (carried) {
+            setVoiceStatus("音声入力を終了しました。")
+            return
+          }
+          setVoiceError(
+            "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
+          )
+        }
+      }, desktop ? 40 + attempt * 60 : 250 + attempt * 150)
+    }
+
+    recognition.onresult = (event) => {
+      if (recognitionRef.current !== recognition) return
+      let nextFinals = ""
+      let nextInterim = ""
+      for (let index = 0; index < event.results.length; index += 1) {
+        const piece = event.results[index]?.[0]?.transcript ?? ""
+        if (event.results[index]?.isFinal) nextFinals += piece
+        else nextInterim += piece
+      }
+      finals = nextFinals.trim()
+      interim = nextInterim.trim()
+      if (!finals && !interim) return
+      captureErrors = 0
+      setVoiceStatus("音声を入力しています。終わったらボタンを押して停止してください。")
+      publish()
+    }
+
+    recognition.onerror = (event) => {
+      if (recognitionRef.current !== recognition || !voiceActiveRef.current) return
+      if (
+        event.error === "no-speech" ||
+        event.error === "aborted" ||
+        event.error === "network"
+      ) {
+        return
+      }
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        fatal = true
+        voiceActiveRef.current = false
+        setIsListening(false)
+        setVoiceError(
+          "マイクの使用が許可されていません。iPhoneの「設定」>「Safari」>「マイク」を確認してください。入力欄からキーボードのマイクも使えます。",
+        )
+        return
+      }
+      if (event.error === "audio-capture") {
+        captureErrors += 1
+        if (captureErrors < 3) return
+        fatal = true
+        voiceActiveRef.current = false
+        setIsListening(false)
+        setVoiceError(
+          "マイクを使用できません。ほかのアプリで使用中でないか確認してください。キーボードのマイクからも入力できます。",
+        )
+        return
+      }
+      fatal = true
+      voiceActiveRef.current = false
+      setIsListening(false)
+      setVoiceError(
+        "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
+      )
+    }
+
+    recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return
+      if (fatal || !voiceActiveRef.current) {
+        setIsListening(false)
+        setIsStoppingVoice(false)
+        if (!fatal) setVoiceStatus("音声入力を終了しました。")
+        return
+      }
+      scheduleRestart()
+    }
+
+    try {
+      recognition.start()
+      setIsListening(true)
+    } catch (error) {
+      console.error("音声入力を開始できませんでした", error)
+      fatal = true
+      voiceActiveRef.current = false
+      recognitionRef.current = null
+      setIsListening(false)
+      setVoiceError(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "マイクの使用が許可されていません。Safariのマイク設定を確認してください。入力欄からキーボードのマイクも使えます。"
+          : "音声入力を開始できませんでした。入力欄からキーボードのマイクをお試しください。",
+      )
+    }
   }
 
   const canShareToGroup = Boolean(onShareToGroup) && shareGroups.length > 0
