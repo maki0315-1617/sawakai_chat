@@ -5613,6 +5613,40 @@ export default function App() {
   }, [appBadgeEnabled, groupName, totalGroupUnread]);
 
   useEffect(() => {
+    if (!token || !activeGroupId || showWalking) return;
+    let timer = 0;
+    const sendAttendance = () => {
+      if (document.hidden) return;
+      void fetch(`${apiRoot}/group/attendance`, {
+        method: "POST",
+        headers: apiHeaders(token, activeGroupId),
+      }).catch(() => undefined);
+    };
+    const startAttendance = () => {
+      if (document.hidden) return;
+      sendAttendance();
+      window.clearInterval(timer);
+      timer = window.setInterval(sendAttendance, 20_000);
+    };
+    const handleAttendanceVisibility = () => {
+      if (document.hidden) {
+        window.clearInterval(timer);
+        return;
+      }
+      startAttendance();
+    };
+    startAttendance();
+    document.addEventListener("visibilitychange", handleAttendanceVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener(
+        "visibilitychange",
+        handleAttendanceVisibility,
+      );
+    };
+  }, [token, activeGroupId, showWalking]);
+
+  useEffect(() => {
     const handleVisibility = () => {
       if (!document.hidden) {
         void loadGroups();
@@ -6120,38 +6154,6 @@ export default function App() {
     } catch (reason) {
       setGroupError(
         reason instanceof Error ? reason.message : "権限を変更できませんでした。",
-      );
-    } finally {
-      setMemberActionName("");
-    }
-  };
-
-  const setParticipation = async (
-    participation: "participating" | "not_participating",
-  ) => {
-    if (!profile) {
-      setGroupError("参加者情報を確認できません。");
-      return;
-    }
-    setMemberActionName(profile.name);
-    setGroupError("");
-    try {
-      const response = await fetch(
-        `${apiRoot}/group/members/participation`,
-        {
-          method: "POST",
-          headers: apiHeaders(token, activeGroupId),
-          body: JSON.stringify({ participation }),
-        },
-      );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
-      await loadGroup();
-    } catch (reason) {
-      setGroupError(
-        reason instanceof Error
-          ? reason.message
-          : "参加状況を変更できませんでした。",
       );
     } finally {
       setMemberActionName("");
@@ -7139,7 +7141,7 @@ export default function App() {
     <>
       <h3>参加者 {members.length}人</h3>
       <p className="member-participation-help">
-        参加するかどうかを選ぶと、参加者一覧に表示されます。
+        いま茶話会を開いている人は「参加中」、画面を閉じて1分たつと「不参加」、今日まだ開いていない人は「未回答」です。
       </p>
       <div className="member-list">
         {members.map((member) => (
@@ -7201,32 +7203,6 @@ export default function App() {
                     ? "通話中"
                     : "応答待機なし"}
               </span>
-              {member.name === profile.name && (
-                <div className="member-participation-actions">
-                  <button
-                    aria-pressed={member.participation === "participating"}
-                    className={
-                      member.participation === "participating" ? "is-selected" : ""
-                    }
-                    disabled={memberActionName === profile.name}
-                    onClick={() => void setParticipation("participating")}
-                  >
-                    参加中
-                  </button>
-                  <button
-                    aria-pressed={member.participation === "not_participating"}
-                    className={
-                      member.participation === "not_participating"
-                        ? "is-selected"
-                        : ""
-                    }
-                    disabled={memberActionName === profile.name}
-                    onClick={() => void setParticipation("not_participating")}
-                  >
-                    不参加
-                  </button>
-                </div>
-              )}
               {isAdmin && (
                 <div className="member-admin-actions">
                   <button

@@ -2612,6 +2612,8 @@ app.get(`${root}/group`, async (c) => {
   await touchMember(groupId, session.name);
   const members = await getMembersWithImages(groupId);
   const callStatuses = await getGroupCallStatuses(groupId, members);
+  const attendance = await readAttendance(groupId);
+  const attendanceNow = Date.now();
   return c.json({
     id: group.id,
     name: group.name,
@@ -2626,13 +2628,31 @@ app.get(`${root}/group`, async (c) => {
       name: member.name,
       joinedAt: member.joinedAt,
       lastSeenAt: member.lastSeenAt,
-      participation: member.participation ?? null,
+      participation: attendanceParticipation(
+        attendance[member.name],
+        attendanceNow,
+      ),
       callStatus: callStatuses.get(member.name) ?? "offline",
       avatar: member.avatar,
       imageUrl: member.avatarImage?.signedUrl,
       isAdmin: isGroupAdmin(group, member.name),
     })),
   });
+});
+
+app.post(`${root}/group/attendance`, async (c) => {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return c.json({ error: "もう一度参加してください。" }, 401);
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) return c.json({ error: "このグループには参加していません。" }, 403);
+  const members = await getMembers(groupId);
+  if (!members.some((member) => member.name === session.name)) {
+    return c.json({ error: "参加者が見つかりません。" }, 404);
+  }
+  const attendance = await readAttendance(groupId);
+  attendance[session.name] = Date.now();
+  await kv.set(attendanceKey(groupId), attendance);
+  return c.json({ ok: true });
 });
 
 app.post(`${root}/group/image`, async (c) => {
@@ -5418,6 +5438,29 @@ const dmDayKey = (time: number) =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(
     new Date(time),
   );
+const attendanceKey = (groupId: string) => `sawakai:attendance:${groupId}`;
+const attendancePresentMs = 60_000;
+
+async function readAttendance(groupId: string): Promise<Record<string, number>> {
+  const stored = await kv.get(attendanceKey(groupId));
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+  const times: Record<string, number> = {};
+  for (const [name, at] of Object.entries(stored as Record<string, unknown>)) {
+    const time = Number(at);
+    if (Number.isFinite(time)) times[name] = time;
+  }
+  return times;
+}
+
+function attendanceParticipation(
+  at: number | undefined,
+  now: number,
+): "participating" | "not_participating" | null {
+  if (at === undefined || !Number.isFinite(at)) return null;
+  if (now - at <= attendancePresentMs) return "participating";
+  if (dmDayKey(at) === dmDayKey(now)) return "not_participating";
+  return null;
+}
 // 実際に話した発信だけを、日本時間の日付ごとに数える
 const dmCallsLeftToday = (calls: DmCall[], name: string, now: number) => {
   const today = dmDayKey(now);
