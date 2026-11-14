@@ -15,7 +15,7 @@ import {
   walkShareSubject,
   walkShareText,
 } from "./walkShare"
-import { isDesktopDevice } from "./voiceJoin"
+import { isDesktopDevice, isIphoneDevice } from "./voiceJoin"
 
 type Weather = "sunny" | "cloudy" | "rain" | "hot" | "windy" | "snow"
 
@@ -1337,6 +1337,13 @@ export default function WalkingApp({
   const sharePreviewUrl = useRef<string | null>(null)
   const voiceActiveRef = useRef(false)
   const voiceRestartTimer = useRef<number | null>(null)
+  const voiceStatusAfterStop = useRef<string | null>(null)
+
+  const stoppedVoiceStatus = () => {
+    const next = voiceStatusAfterStop.current
+    voiceStatusAfterStop.current = null
+    return next ?? "音声入力を終了しました。"
+  }
 
   const stopVoiceReview = () => {
     voiceActiveRef.current = false
@@ -1353,13 +1360,27 @@ export default function WalkingApp({
         recognitionRef.current = null
         setIsListening(false)
         setIsStoppingVoice(false)
-        setVoiceStatus("音声入力を終了しました。")
+        setVoiceStatus(stoppedVoiceStatus())
       }
     } else {
       setIsListening(false)
       setIsStoppingVoice(false)
-      setVoiceStatus("音声入力を終了しました。")
+      setVoiceStatus(stoppedVoiceStatus())
     }
+  }
+
+  const openKeyboardMicrophone = () => {
+    const guide =
+      "キーボードに出たマイクを押してお話しください。話した文字は、上の欄に入ります。"
+    setVoiceError("")
+    const listening = voiceActiveRef.current || recognitionRef.current !== null
+    if (listening) {
+      voiceStatusAfterStop.current = guide
+      stopVoiceReview()
+    } else {
+      setVoiceStatus(guide)
+    }
+    reviewInputRef.current?.focus()
   }
 
   useEffect(() => {
@@ -1969,6 +1990,7 @@ export default function WalkingApp({
       // 前の聞き取りはすでに終わっている
     }
 
+    voiceStatusAfterStop.current = null
     setVoiceError("")
     setVoiceStatus("お話しください。入力が終わったら「音声入力を止める」を押してください。")
     voiceActiveRef.current = true
@@ -2038,7 +2060,7 @@ export default function WalkingApp({
           setIsListening(false)
           setIsStoppingVoice(false)
           if (carried) {
-            setVoiceStatus("音声入力を終了しました。")
+            setVoiceStatus(stoppedVoiceStatus())
             return
           }
           setVoiceError(
@@ -2107,7 +2129,7 @@ export default function WalkingApp({
       if (fatal || !voiceActiveRef.current) {
         setIsListening(false)
         setIsStoppingVoice(false)
-        if (!fatal) setVoiceStatus("音声入力を終了しました。")
+        if (!fatal) setVoiceStatus(stoppedVoiceStatus())
         return
       }
       scheduleRestart()
@@ -2827,39 +2849,59 @@ export default function WalkingApp({
               rows={4}
               value={review}
             />
-            <div className="walk-voice-controls">
-              <button
-                className={`walk-voice-button ${
-                  isListening ? "is-listening" : ""
-                }`}
-                disabled={isStoppingVoice}
-                onClick={isListening ? stopVoiceReview : startVoiceReview}
-                type="button"
-              >
-                <span aria-hidden="true">{isListening ? "⏹" : "🎙"}</span>
-                {isStoppingVoice
-                  ? "音声入力を終了しています…"
-                  : isListening
-                    ? "音声入力を止める"
-                    : "声でふりかえる"}
-              </button>
+            <div
+              className={`walk-voice-controls${
+                isIphoneDevice() ? " walk-voice-controls--iphone" : ""
+              }`}
+            >
+              <div className={isIphoneDevice() ? "walk-voice-choices" : undefined}>
+                <button
+                  className={`walk-voice-button ${
+                    isListening ? "is-listening" : ""
+                  }`}
+                  disabled={isStoppingVoice}
+                  onClick={isListening ? stopVoiceReview : startVoiceReview}
+                  type="button"
+                >
+                  <span aria-hidden="true">{isListening ? "⏹" : "🎙"}</span>
+                  {isStoppingVoice
+                    ? "音声入力を終了しています…"
+                    : isListening
+                      ? "音声入力を止める"
+                      : "声でふりかえる"}
+                </button>
+                {isIphoneDevice() && (
+                  <button
+                    className="walk-voice-keyboard-button"
+                    disabled={isStoppingVoice}
+                    onClick={openKeyboardMicrophone}
+                    type="button"
+                  >
+                    キーボードのマイクで話す
+                  </button>
+                )}
+              </div>
               <p aria-live="polite">
                 {voiceStatus ||
-                  "お話し終わったら「音声入力を止める」を押してください。音声はブラウザーで処理され、内容を確認・修正してから保存できます。"}
+                  (isIphoneDevice()
+                    ? "「声でふりかえる」か「キーボードのマイクで話す」を選んでください。話した内容は、確認してから保存できます。"
+                    : "お話し終わったら「音声入力を止める」を押してください。音声はブラウザーで処理され、内容を確認・修正してから保存できます。")}
               </p>
               {voiceError && (
                 <div className="walk-voice-fallback" role="status">
                   <p className="walk-inline-error">{voiceError}</p>
-                  <button
-                    className="walk-voice-fallback-button"
-                    onClick={() => {
-                      setVoiceStatus("キーボードのマイクを押してお話しください。")
-                      reviewInputRef.current?.focus()
-                    }}
-                    type="button"
-                  >
-                    感想欄を開いてキーボードのマイクを使う
-                  </button>
+                  {!isIphoneDevice() && (
+                    <button
+                      className="walk-voice-fallback-button"
+                      onClick={() => {
+                        setVoiceStatus("キーボードのマイクを押してお話しください。")
+                        reviewInputRef.current?.focus()
+                      }}
+                      type="button"
+                    >
+                      感想欄を開いてキーボードのマイクを使う
+                    </button>
+                  )}
                 </div>
               )}
             </div>

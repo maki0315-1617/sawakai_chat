@@ -972,6 +972,42 @@
   line-height: 1.6;
 }
 
+.walk-voice-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.walk-voice-controls--iphone .walk-voice-button,
+.walk-voice-keyboard-button {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.walk-voice-keyboard-button {
+  padding: 12px 16px;
+  color: #1d4a3e;
+  background: #fff;
+  border: 3px solid var(--walk-green);
+  border-radius: 14px;
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.walk-voice-keyboard-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.walk-voice-controls--iphone > p {
+  font-size: 18px;
+}
+
 .walk-voice-fallback {
   margin-top: 12px;
 }
