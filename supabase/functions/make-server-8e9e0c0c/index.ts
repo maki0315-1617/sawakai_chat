@@ -5404,6 +5404,7 @@ app.post(`${root}/voice/token`, async (c) => {
     canPublish: true,
     canSubscribe: true,
     canPublishData: false,
+    canUpdateOwnMetadata: true,
   });
   return c.json({ token: await token.toJwt(), url });
 });

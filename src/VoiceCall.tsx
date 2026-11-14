@@ -20,6 +20,25 @@ type VoiceCallProps = {
 };
 
 type Status = "idle" | "connecting" | "connected" | "error";
+type Reaction = "hand" | "smile" | "puzzled";
+
+const reactionMarks: Record<Reaction, string> = {
+  hand: "✋",
+  smile: "😊",
+  puzzled: "😕",
+};
+
+const reactionChoices: Array<[Reaction, string]> = [
+  ["hand", "手を挙げる"],
+  ["smile", "笑顔"],
+  ["puzzled", "困った顔"],
+];
+
+const reactionOf = (attributes: Record<string, string> | undefined): Reaction | "" => {
+  const value = attributes?.reaction;
+  if (value === "hand" || value === "smile" || value === "puzzled") return value;
+  return "";
+};
 
 export default function VoiceCall({
   apiRoot,
@@ -38,6 +57,8 @@ export default function VoiceCall({
   const [gameTab, setGameTab] = useState<"quiz" | "word" | "turn">("quiz");
   const [names, setNames] = useState<string[]>([]);
   const [speaking, setSpeaking] = useState<string[]>([]);
+  const [reactions, setReactions] = useState<Record<string, Reaction>>({});
+  const [reactionNotice, setReactionNotice] = useState("");
   const [leaveNotice, setLeaveNotice] = useState("");
   const roomRef = useRef<Room | null>(null);
   const audioRef = useRef<HTMLDivElement>(null);
@@ -52,12 +73,20 @@ export default function VoiceCall({
   assistedRef.current = assisted;
 
   const refreshParticipants = (room: Room) => {
-    setNames([
-      room.localParticipant.name || myName,
-      ...[...room.remoteParticipants.values()].map(
-        (participant) => participant.name || participant.identity,
-      ),
-    ]);
+    const people = [
+      room.localParticipant,
+      ...room.remoteParticipants.values(),
+    ];
+    const nextReactions: Record<string, Reaction> = {};
+    setNames(
+      people.map((participant) => {
+        const name = participant.name || participant.identity;
+        const reaction = reactionOf(participant.attributes);
+        if (reaction) nextReactions[name] = reaction;
+        return name;
+      }),
+    );
+    setReactions(nextReactions);
   };
 
   const leave = () => {
@@ -67,6 +96,8 @@ export default function VoiceCall({
     setStatus("idle");
     setNames([]);
     setSpeaking([]);
+    setReactions({});
+    setReactionNotice("");
     setMuted(false);
     announcedJoinRef.current = false;
   };
@@ -97,6 +128,7 @@ export default function VoiceCall({
         .on(RoomEvent.ActiveSpeakersChanged, (speakers) =>
           setSpeaking(speakers.map((speaker) => speaker.name || speaker.identity)),
         )
+        .on(RoomEvent.ParticipantAttributesChanged, () => refreshParticipants(room))
         .on(RoomEvent.TrackSubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) {
             const element = track.attach();
@@ -156,6 +188,20 @@ export default function VoiceCall({
     // 声で参加を選んだときだけ、開いた直後に一度つなぐ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const toggleReaction = async (mark: Reaction) => {
+    const room = roomRef.current;
+    if (!room) return;
+    const next = reactionOf(room.localParticipant.attributes) === mark ? "" : mark;
+    setReactionNotice("");
+    try {
+      await room.localParticipant.setAttributes({ reaction: next });
+      refreshParticipants(room);
+    } catch (reason) {
+      console.error("通話のマークを送れませんでした", reason);
+      setReactionNotice("マークを伝えられませんでした。しばらくしてから、もう一度押してください。");
+    }
+  };
 
   const toggleMute = async () => {
     const room = roomRef.current;
@@ -239,10 +285,35 @@ export default function VoiceCall({
                 >
                   {name}
                   {name === myName ? "（あなた）" : ""}
+                  {reactions[name] ? (
+                    <span className="voice-reaction-mark">{reactionMarks[reactions[name]]}</span>
+                  ) : null}
                   {speaking.includes(name) ? " 🔊" : ""}
                 </li>
               ))}
             </ul>
+            <div className="voice-reactions">
+              <p>マークは、もう一度押すと消えます。</p>
+              {reactionChoices.map(([mark, label]) => (
+                <button
+                  aria-pressed={reactions[myName] === mark}
+                  className={`voice-reaction-button${
+                    reactions[myName] === mark ? " is-selected" : ""
+                  }`}
+                  key={mark}
+                  onClick={() => void toggleReaction(mark)}
+                  type="button"
+                >
+                  <span aria-hidden="true">{reactionMarks[mark]}</span>
+                  {label}
+                </button>
+              ))}
+              {reactionNotice && (
+                <p className="form-error" role="status">
+                  {reactionNotice}
+                </p>
+              )}
+            </div>
             <div className="voice-actions">
               <button
                 className={`voice-button ${muted ? "is-muted" : ""}`}

@@ -5310,6 +5310,50 @@ input:focus-visible {
   outline: 3px solid var(--accent);
 }
 
+.voice-reaction-mark {
+  margin-left: 8px;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.voice-reactions {
+  display: grid;
+  margin: 0 0 14px;
+  gap: 8px;
+}
+
+.voice-reactions p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.voice-reaction-button {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 700;
+  background: #ffffff;
+  border: 3px solid var(--accent);
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.voice-reaction-button span {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.voice-reaction-button.is-selected {
+  color: #ffffff;
+  background: var(--accent);
+}
+
 .voice-actions {
   display: grid;
   gap: 10px;
