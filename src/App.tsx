@@ -3495,7 +3495,6 @@ function BrainPanel({
   const [busyKind, setBusyKind] = useState<
     "loading" | "generating" | "submitting"
   >("loading")
-  const [busyStep, setBusyStep] = useState(0)
   const [error, setError] = useState("")
   const [useLocalBrain, setUseLocalBrain] = useState(false)
   const [showActivities, setShowActivities] = useState(false)
@@ -3545,7 +3544,6 @@ function BrainPanel({
   const load = async (nextMode = mode) => {
     setIsBusy(true)
     setBusyKind("loading")
-    setBusyStep(0)
     setError("")
     try {
       const response = await fetch(`${apiRoot}/brain/rounds?mode=${nextMode}`, {
@@ -3562,18 +3560,8 @@ function BrainPanel({
       }
       const loadedRound = result.round as BrainRound | null
       const hasValidQuestions = hasValidBrainQuestions(loadedRound)
-      const needsAdvancedQuestion =
-        loadedRound &&
-        (loadedRound.difficulty === "normal" ||
-          loadedRound.difficulty === "challenge")
-      const hasAdvancedQuestion = loadedRound?.questions.some(
-        (question) =>
-          question.category === "歴史" ||
-          question.category === "間違い探し",
-      )
       setSummary(
-        (loadedRound && !hasValidQuestions) ||
-          (needsAdvancedQuestion && !hasAdvancedQuestion)
+        loadedRound && !hasValidQuestions
           ? { ...result, round: null, result: null, leaderboard: [] }
           : result,
       )
@@ -3591,13 +3579,14 @@ function BrainPanel({
   }, [])
 
   useEffect(() => {
-    if (!isBusy || busyKind !== "generating") return
-    const interval = window.setInterval(
-      () => setBusyStep((current) => Math.min(current + 1, 2)),
-      2500,
-    )
-    return () => window.clearInterval(interval)
-  }, [busyKind, isBusy])
+    if (useLocalBrain) return
+    if (mode === "group" && !isAdmin) return
+    void fetch(`${apiRoot}/brain/rounds/prepare`, {
+      method: "POST",
+      headers: apiHeaders(token, activeGroupId),
+      body: JSON.stringify({ mode, difficulty }),
+    }).catch(() => undefined)
+  }, [activeGroupId, difficulty, isAdmin, mode, token, useLocalBrain])
 
   const changeMode = (nextMode: "group" | "practice") => {
     setMode(nextMode)
@@ -3608,7 +3597,6 @@ function BrainPanel({
     setMode(nextMode)
     setIsBusy(true)
     setBusyKind("generating")
-    setBusyStep(0)
     setError("")
     if (useLocalBrain) {
       beginLocalRound(nextMode)
@@ -3632,15 +3620,7 @@ function BrainPanel({
       if (!response.ok) {
         throw new Error(result.error ?? "問題を用意できませんでした。")
       }
-      const hasAdvancedQuestion = result.round?.questions?.some(
-        (question: BrainQuestion) =>
-          question.category === "歴史" ||
-          question.category === "間違い探し",
-      )
-      if (
-        !hasValidBrainQuestions(result.round ?? null) ||
-        (difficulty !== "easy" && !hasAdvancedQuestion)
-      ) {
+      if (!hasValidBrainQuestions(result.round ?? null)) {
         beginLocalRound(nextMode)
         return
       }
@@ -3675,7 +3655,6 @@ function BrainPanel({
     if (!summary?.round || answers.length !== 5) return
     setIsBusy(true)
     setBusyKind("submitting")
-    setBusyStep(0)
     setError("")
     if (useLocalBrain || summary.round.id.startsWith("local-")) {
       const questions = summary.round
@@ -3873,11 +3852,7 @@ function BrainPanel({
               <div>
                 <strong>
                   {busyKind === "generating"
-                    ? [
-                        "AIが5問を考えています",
-                        "問題の重なりを確認しています",
-                        "もう少しで準備できます",
-                      ][busyStep]
+                    ? "問題を開いています"
                     : busyKind === "submitting"
                       ? "答えを採点しています"
                       : "脳活タイムを読み込んでいます"}
@@ -3890,7 +3865,7 @@ function BrainPanel({
                           normal: "ふつう",
                           challenge: "チャレンジ",
                         }[difficulty]
-                      }問題・通常は7秒ほどで始まります`
+                      }の問題を開いています`
                     : "そのままお待ちください"}
                 </small>
               </div>

@@ -2188,7 +2188,7 @@ async function generateBrainQuestions(
     ],
     generationConfig: {
       temperature: 0.9,
-      maxOutputTokens: 900,
+      maxOutputTokens: 2048,
       responseMimeType: "application/json",
       responseSchema: {
         type: "OBJECT",
@@ -2244,34 +2244,16 @@ async function generateBrainQuestions(
   }
 
   try {
-    const configuredModel =
-      Deno.env.get("GEMINI_MODEL") || "models/gemini-2.0-flash"
-    const preferredModel = configuredModel.startsWith("models/")
-      ? configuredModel
-      : `models/${configuredModel}`
-    const modelsResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
-    )
-    const modelsResult = modelsResponse.ok
-      ? await modelsResponse.json()
-      : { models: [] }
-    const availableModels = Array.isArray(modelsResult.models)
-      ? modelsResult.models
-          .filter(
-            (model: {
-              name?: string
-              supportedGenerationMethods?: string[]
-            }) =>
-              typeof model.name === "string" &&
-              model.name.includes("flash") &&
-              !model.name.includes("image") &&
-              !model.name.includes("live") &&
-              !model.name.includes("tts") &&
-              model.supportedGenerationMethods?.includes("generateContent"),
-          )
-          .map((model: { name: string }) => model.name)
-      : []
-    const candidates = [...new Set([preferredModel, ...availableModels])]
+    const asModelName = (name: string) =>
+      name.startsWith("models/") ? name : `models/${name}`
+    const candidates = [
+      ...new Set([
+        asModelName(Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash"),
+        "models/gemini-2.5-flash",
+        "models/gemini-2.5-flash-lite",
+        "models/gemini-2.0-flash",
+      ]),
+    ].slice(0, 4)
 
     for (const model of candidates) {
       const response = await fetch(
@@ -2279,7 +2261,16 @@ async function generateBrainQuestions(
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(12000),
+          body: JSON.stringify({
+            ...requestBody,
+            generationConfig: {
+              ...requestBody.generationConfig,
+              ...(/gemini-2\.5/.test(model)
+                ? { thinkingConfig: { thinkingBudget: 0 } }
+                : {}),
+            },
+          }),
         },
       )
       if (!response.ok) continue
@@ -2295,12 +2286,6 @@ async function generateBrainQuestions(
             question.category,
           ),
         ).length >= 2 &&
-        (difficulty === "easy" ||
-          questions.some(
-            (question) =>
-              question.category === "歴史" ||
-              question.category === "間違い探し",
-          )) &&
         questions.every((question) => !usedPrompts.has(question.prompt))
       ) {
         const orderedQuestions =
@@ -2335,6 +2320,99 @@ async function generateBrainQuestions(
       usedPrompts,
     ),
     source: "fallback",
+  }
+}
+
+type BrainDraft = {
+  questions: BrainQuestion[]
+  source: "gemini"
+  createdAt: string
+}
+
+function brainDraftOwner(mode: BrainRound["mode"], name: string) {
+  return mode === "group" ? "shared" : name
+}
+
+function brainDraftKey(
+  groupId: string,
+  mode: BrainRound["mode"],
+  difficulty: BrainDifficulty,
+  owner: string,
+) {
+  return dataKey(groupId, `brain-draft:${mode}:${difficulty}:${owner}`)
+}
+
+function continueAfterResponse(work: Promise<unknown>) {
+  const runtime = (globalThis as {
+    EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void }
+  }).EdgeRuntime
+  const guarded = work.catch((reason) => {
+    console.warn("brain prepare failed", String(reason).slice(0, 200))
+  })
+  if (runtime?.waitUntil) runtime.waitUntil(guarded)
+}
+
+function todayBrainPrompts(rounds: BrainRound[]) {
+  const today = todayInJapan()
+  return new Set(
+    rounds
+      .filter((round) => todayInJapan(new Date(round.createdAt)) === today)
+      .flatMap((round) => round.questions.map((question) => question.prompt)),
+  )
+}
+
+function draftIsUsable(draft: BrainDraft | undefined, usedPrompts: Set<string>) {
+  if (!draft || draft.source !== "gemini" || !Array.isArray(draft.questions)) {
+    return false
+  }
+  if (Date.now() - new Date(draft.createdAt).getTime() > 12 * 60 * 60 * 1000) {
+    return false
+  }
+  return (
+    draft.questions.length === 5 &&
+    draft.questions.every(
+      (question) =>
+        question.prompt &&
+        !usedPrompts.has(question.prompt) &&
+        Array.isArray(question.choices) &&
+        question.choices.length === 3,
+    )
+  )
+}
+
+async function prepareBrainDraft(
+  groupId: string,
+  mode: BrainRound["mode"],
+  difficulty: BrainDifficulty,
+  owner: string,
+) {
+  if (Deno.env.get("BRAIN_USE_AI") !== "true" || !Deno.env.get("GEMINI_API_KEY")) {
+    return
+  }
+  const key = brainDraftKey(groupId, mode, difficulty, owner)
+  const lockKey = `${key}:lock`
+  const rounds = await getBrainRounds(groupId)
+  const usedPrompts = todayBrainPrompts(rounds)
+  const existing = (await kv.get(key)) as BrainDraft | undefined
+  if (draftIsUsable(existing, usedPrompts)) return
+  const lock = (await kv.get(lockKey)) as { startedAt?: number } | undefined
+  if (lock?.startedAt && Date.now() - lock.startedAt < 90_000) return
+  await kv.set(lockKey, { startedAt: Date.now() })
+  try {
+    const generated = await generateBrainQuestions(
+      usedPrompts,
+      difficulty,
+      rounds.length,
+    )
+    if (generated.source !== "gemini") return
+    const draft: BrainDraft = {
+      questions: generated.questions,
+      source: "gemini",
+      createdAt: new Date().toISOString(),
+    }
+    await kv.set(key, draft)
+  } finally {
+    await kv.del(lockKey).catch(() => undefined)
   }
 }
 
@@ -3545,13 +3623,7 @@ app.get(`${root}/brain/rounds`, async (c) => {
     (round) =>
       round.mode === mode &&
       (round.mode === "group" || round.createdBy === session.name) &&
-      hasValidBrainQuestions(round) &&
-      (round.difficulty === "easy" ||
-        round.questions.some(
-          (question) =>
-            question.category === "歴史" ||
-            question.category === "間違い探し",
-        )),
+      hasValidBrainQuestions(round),
   )
   const latest = visibleRounds.at(-1)
   const today = todayInJapan()
@@ -3631,20 +3703,20 @@ app.post(`${root}/brain/rounds`, async (c) => {
   }
 
   const rounds = await getBrainRounds(groupId)
-  const today = todayInJapan()
-  const todayRounds = rounds.filter(
-    (round) => todayInJapan(new Date(round.createdAt)) === today,
-  )
-  const usedPrompts = new Set(
-    todayRounds.flatMap((round) =>
-      round.questions.map((question) => question.prompt),
-    ),
-  )
-  const generated = await generateBrainQuestions(
-    usedPrompts,
-    difficulty,
-    todayRounds.length,
-  )
+  const usedPrompts = todayBrainPrompts(rounds)
+  const owner = brainDraftOwner(mode, session.name)
+  const draftKey = brainDraftKey(groupId, mode, difficulty, owner)
+  const draft = (await kv.get(draftKey)) as BrainDraft | undefined
+  const usable = Boolean(draft && draftIsUsable(draft, usedPrompts))
+  if (usable) await kv.del(draftKey).catch(() => undefined)
+  const questions = usable && draft
+    ? draft.questions
+    : includeAddedBrainQuestion(
+        fallbackBrainQuestions(usedPrompts, difficulty, rounds.length),
+        difficulty,
+        rounds.length,
+        usedPrompts,
+      )
   const nextRounds = rounds.map((round) =>
     round.status === "active" &&
     round.mode === mode &&
@@ -3660,17 +3732,52 @@ app.post(`${root}/brain/rounds`, async (c) => {
     createdAt: new Date().toISOString(),
     createdBy: session.name,
     status: "active",
-    questions: generated.questions,
+    questions,
     responses: {},
   }
   await kv.set(
     dataKey(groupId, "brain-rounds"),
     [...nextRounds, round].slice(-80),
   )
+  continueAfterResponse(
+    prepareBrainDraft(groupId, mode, difficulty, owner),
+  )
   return c.json({
     round: publicRound(round, session.name),
-    source: generated.source,
+    source: usable ? "gemini" : "fallback",
   })
+})
+
+app.post(`${root}/brain/rounds/prepare`, async (c) => {
+  const session = await getSession(c.req.header("X-Session-Token"))
+  if (!session) return c.json({ error: "もう一度参加してください。" }, 401)
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session)
+  if (!groupId) {
+    return c.json({ error: "このグループには参加していません。" }, 403)
+  }
+  const body = await c.req.json().catch(() => ({}))
+  const mode: BrainRound["mode"] =
+    body.mode === "practice" ? "practice" : "group"
+  const difficulty: BrainDifficulty = ["easy", "normal", "challenge"].includes(
+    body.difficulty,
+  )
+    ? body.difficulty
+    : "normal"
+  if (mode === "group") {
+    const group = await groupWithAdmin(groupId, session.name)
+    if (!group || !isGroupAdmin(group, session.name)) {
+      return c.json({ ok: true })
+    }
+  }
+  continueAfterResponse(
+    prepareBrainDraft(
+      groupId,
+      mode,
+      difficulty,
+      brainDraftOwner(mode, session.name),
+    ),
+  )
+  return c.json({ ok: true })
 })
 
 app.post(`${root}/brain/rounds/:roundId/submit`, async (c) => {
