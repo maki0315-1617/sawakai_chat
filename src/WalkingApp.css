@@ -869,6 +869,40 @@
   background: #894234;
 }
 
+.walk-arrived-button {
+  display: flex;
+  width: 100%;
+  min-height: 72px;
+  margin-bottom: 12px;
+  padding: 16px 18px;
+  align-items: center;
+  justify-content: center;
+  color: #1d4a3e;
+  background: #ffffff;
+  border: 3px solid var(--walk-green);
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.walk-arrival-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.walk-arrival-actions button {
+  width: 100%;
+  min-height: 64px;
+  font-size: 20px;
+}
+
+.walk-next-destination-dialog {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+
 .walk-review {
   max-width: 660px;
   margin: 28px auto;

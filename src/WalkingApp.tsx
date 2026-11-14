@@ -1257,6 +1257,15 @@ export default function WalkingApp({
 
   const [isWalking, setIsWalking] = useState(false)
   const [isReturning, setIsReturning] = useState(false)
+  const [showArrivalChoices, setShowArrivalChoices] = useState(false)
+  const [extendingRoute, setExtendingRoute] = useState(false)
+  const [extraPlannedRoute, setExtraPlannedRoute] = useState<Position[]>([])
+  const [extraDistanceMeters, setExtraDistanceMeters] = useState(0)
+  const [extraDurationSeconds, setExtraDurationSeconds] = useState(0)
+  const legBeforeExtend = useRef<Position[] | null>(null)
+  const destinationBeforeExtend = useRef<Coordinate | null>(null)
+  const distanceBeforeExtend = useRef<number | null>(null)
+  const durationBeforeExtend = useRef<number | null>(null)
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
 
@@ -1525,18 +1534,33 @@ export default function WalkingApp({
     )
 
   const suggestion = getSafetyMessage(condition, weather, new Date().getHours())
-  const plannedRoute =
-    returnToStart && destinationRoute.length > 1
+  const currentPlannedRoute =
+    !extendingRoute && returnToStart && destinationRoute.length > 1
       ? [...destinationRoute, ...destinationRoute.slice(0, -1).reverse()]
       : destinationRoute
-  const plannedDistanceMeters =
+  const plannedRoute = [
+    ...extraPlannedRoute,
+    ...(extendingRoute ? (legBeforeExtend.current ?? []) : []),
+    ...currentPlannedRoute,
+  ]
+  const currentPlannedDistance =
     destinationDistanceMeters === null
-      ? null
-      : destinationDistanceMeters * (returnToStart ? 2 : 1)
-  const plannedDurationSeconds =
+      ? 0
+      : destinationDistanceMeters * (!extendingRoute && returnToStart ? 2 : 1)
+  const currentPlannedDuration =
     destinationDurationSeconds === null
-      ? null
-      : destinationDurationSeconds * (returnToStart ? 2 : 1)
+      ? 0
+      : destinationDurationSeconds * (!extendingRoute && returnToStart ? 2 : 1)
+  const heldDistance = extendingRoute ? (distanceBeforeExtend.current ?? 0) : 0
+  const heldDuration = extendingRoute ? (durationBeforeExtend.current ?? 0) : 0
+  const plannedDistanceMeters =
+    extraDistanceMeters + heldDistance + currentPlannedDistance > 0
+      ? extraDistanceMeters + heldDistance + currentPlannedDistance
+      : null
+  const plannedDurationSeconds =
+    extraDurationSeconds + heldDuration + currentPlannedDuration > 0
+      ? extraDurationSeconds + heldDuration + currentPlannedDuration
+      : null
   const actualDistanceMeters =
     summarizeRoute(route, routePartial.current).distanceMeters
   const todayWalkCount = records.filter(
@@ -1672,6 +1696,11 @@ export default function WalkingApp({
     routePartial.current = false
     breakNextPoint.current = false
     startedAt.current = Date.now()
+    setExtraPlannedRoute([])
+    setExtraDistanceMeters(0)
+    setExtraDurationSeconds(0)
+    setShowArrivalChoices(false)
+    setExtendingRoute(false)
 
     setElapsedSeconds(0)
     setLocationEnabled(withLocation)
@@ -1772,6 +1801,70 @@ export default function WalkingApp({
     setShowReturnPrompt(true)
   }
 
+  const finishAtDestination = () => {
+    setShowArrivalChoices(false)
+    setExtendingRoute(false)
+    setDestinationMapOpen(false)
+    finishWalk()
+  }
+
+  const continueTowardHome = () => {
+    setShowArrivalChoices(false)
+    setIsReturning(true)
+  }
+
+  const beginNextDestination = () => {
+    if (!currentPosition) {
+      setDestinationError("現在地を確認できていません。しばらくしてから、もう一度押してください。")
+      return
+    }
+    legBeforeExtend.current = destinationRoute
+    destinationBeforeExtend.current = selectedDestination
+    distanceBeforeExtend.current = destinationDistanceMeters
+    durationBeforeExtend.current = destinationDurationSeconds
+    setDestinationRoute([])
+    setSelectedDestination(null)
+    setDestinationDistanceMeters(null)
+    setDestinationDurationSeconds(null)
+    setDestinationError("")
+    setShowArrivalChoices(false)
+    setExtendingRoute(true)
+    setDestinationMapOpen(true)
+  }
+
+  const confirmNextDestination = () => {
+    if (destinationRoute.length < 2 || !selectedDestination) return
+    const previousLeg = legBeforeExtend.current ?? []
+    const previousDistance = distanceBeforeExtend.current ?? 0
+    const previousDuration = durationBeforeExtend.current ?? 0
+    if (previousLeg.length > 1) {
+      setExtraPlannedRoute((current) => [...current, ...previousLeg])
+    }
+    setExtraDistanceMeters((current) => current + previousDistance)
+    setExtraDurationSeconds((current) => current + previousDuration)
+    legBeforeExtend.current = null
+    destinationBeforeExtend.current = null
+    distanceBeforeExtend.current = null
+    durationBeforeExtend.current = null
+    setExtendingRoute(false)
+    setDestinationMapOpen(false)
+    setDestinationError("")
+  }
+
+  const cancelNextDestination = () => {
+    setDestinationRoute(legBeforeExtend.current ?? [])
+    setSelectedDestination(destinationBeforeExtend.current)
+    setDestinationDistanceMeters(distanceBeforeExtend.current)
+    setDestinationDurationSeconds(durationBeforeExtend.current)
+    legBeforeExtend.current = null
+    destinationBeforeExtend.current = null
+    distanceBeforeExtend.current = null
+    durationBeforeExtend.current = null
+    setExtendingRoute(false)
+    setDestinationMapOpen(false)
+    setDestinationError("")
+  }
+
   const saveRecord = () => {
     const now = new Date()
 
@@ -1823,6 +1916,12 @@ export default function WalkingApp({
     setDestinationDistanceMeters(null)
     setDestinationDurationSeconds(null)
     setDestinationMapOpen(false)
+    setExtraPlannedRoute([])
+    setExtraDistanceMeters(0)
+    setExtraDurationSeconds(0)
+    setShowArrivalChoices(false)
+    setExtendingRoute(false)
+    legBeforeExtend.current = null
 
     routeRef.current = []
 
@@ -2671,6 +2770,15 @@ export default function WalkingApp({
             <p className="walk-look-away">
               画面を見続けず、周りに気をつけて歩きましょう。
             </p>
+            {selectedDestination && !isReturning && (
+              <button
+                className="walk-arrived-button"
+                onClick={() => setShowArrivalChoices(true)}
+                type="button"
+              >
+                ここに着きました
+              </button>
+            )}
             <button
               className="walk-finish-button"
               onClick={pauseAndAskAboutReturn}
@@ -3017,6 +3125,104 @@ export default function WalkingApp({
                 type="button"
               >
                 位置情報を使う
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showArrivalChoices && (
+        <div className="walk-dialog-backdrop">
+          <section
+            aria-labelledby="walk-arrival-title"
+            aria-modal="true"
+            className="walk-dialog"
+            role="dialog"
+          >
+            <h2 id="walk-arrival-title">ここに着きました</h2>
+            <p>このあとの歩き方を選んでください。選んでいる間も時間は進みます。</p>
+            {destinationError && (
+              <p className="walk-inline-error" role="status">
+                {destinationError}
+              </p>
+            )}
+            <div className="walk-dialog-actions walk-arrival-actions">
+              <button
+                className="walk-start-button"
+                onClick={finishAtDestination}
+                type="button"
+              >
+                ここでお散歩を終える
+              </button>
+              {!returnToStart && (
+                <button
+                  className="walk-secondary-button"
+                  onClick={beginNextDestination}
+                  type="button"
+                >
+                  次の目的地へ進む
+                </button>
+              )}
+              <button
+                className="walk-secondary-button"
+                onClick={continueTowardHome}
+                type="button"
+              >
+                出発地点に戻る
+              </button>
+              <button
+                className="walk-secondary-button"
+                onClick={() => setShowArrivalChoices(false)}
+                type="button"
+              >
+                もどる
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {extendingRoute && destinationMapOpen && currentPosition && (
+        <div className="walk-dialog-backdrop">
+          <section
+            aria-labelledby="walk-next-destination-title"
+            aria-modal="true"
+            className="walk-dialog walk-next-destination-dialog"
+            role="dialog"
+          >
+            <h2 id="walk-next-destination-title">次の目的地を選ぶ</h2>
+            <p>地図をタップしてください。歩いた道と時間はこのまま続きます。</p>
+            <DestinationMap
+              position={currentPosition}
+              destination={selectedDestination}
+              route={destinationRoute}
+              onSelect={(coordinate) => void selectDestination(coordinate)}
+            />
+            {isFindingRoute && (
+              <p className="walk-destination-status" role="status">
+                徒歩経路を調べています…
+              </p>
+            )}
+            {destinationError && (
+              <p className="walk-inline-error" role="status">
+                {destinationError}
+              </p>
+            )}
+            <div className="walk-dialog-actions walk-arrival-actions">
+              <button
+                className="walk-start-button"
+                disabled={isFindingRoute || destinationRoute.length < 2}
+                onClick={confirmNextDestination}
+                type="button"
+              >
+                この目的地へ進む
+              </button>
+              <button
+                className="walk-secondary-button"
+                onClick={cancelNextDestination}
+                type="button"
+              >
+                このままの目的地で歩く
               </button>
             </div>
           </section>
