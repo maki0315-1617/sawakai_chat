@@ -4899,6 +4899,7 @@ function JoinScreen({
 export default function App() {
   const [showWalking, setShowWalking] = useState(false);
   const [scrollChatToEnd, setScrollChatToEnd] = useState(false);
+  const [showLatestJump, setShowLatestJump] = useState(false);
   const [visualSupportEnabled, setVisualSupportEnabled] = useState(
     () => localStorage.getItem(visualSupportStorageKey) === "enabled",
   );
@@ -5520,6 +5521,25 @@ export default function App() {
     if (isLoading || !isPositioningMessages || !messageEndRef.current) return;
     messageEndRef.current.scrollIntoView({ behavior: "auto", block: "end" });
     setIsPositioningMessages(false);
+  }, [isLoading, isPositioningMessages, messages.length]);
+
+  useEffect(() => {
+    const updateLatestJump = () => {
+      const remaining =
+        document.documentElement.scrollHeight -
+        window.scrollY -
+        window.innerHeight;
+      const away =
+        !isLoading && !isPositioningMessages && remaining > 200;
+      setShowLatestJump((current) => (current === away ? current : away));
+    };
+    updateLatestJump();
+    window.addEventListener("scroll", updateLatestJump, { passive: true });
+    window.addEventListener("resize", updateLatestJump);
+    return () => {
+      window.removeEventListener("scroll", updateLatestJump);
+      window.removeEventListener("resize", updateLatestJump);
+    };
   }, [isLoading, isPositioningMessages, messages.length]);
 
   useEffect(() => {
@@ -6470,6 +6490,13 @@ export default function App() {
         behavior: "smooth",
         block: "end",
       });
+    });
+  };
+
+  const jumpToLatest = () => {
+    messageEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
     });
   };
 
@@ -7519,6 +7546,25 @@ export default function App() {
       )}
 
       <footer className="composer">
+        {showLatestJump && (
+          <button
+            aria-label="一番新しい投稿へ戻る"
+            className="jump-latest-button"
+            onClick={jumpToLatest}
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path
+                d="M12 4v13M6.5 12.5 12 19l5.5-6.5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2.4"
+              />
+            </svg>
+          </button>
+        )}
         <div className="composer__inner">
           <input
             accept="image/jpeg,image/png,image/webp,video/mp4,video/webm"
