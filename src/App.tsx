@@ -142,6 +142,7 @@ type BrainQuestion = {
     | "一般常識"
     | "防災"
     | "健康"
+    | "医療"
     | "防犯"
     | "交通"
   prompt: string
@@ -1074,6 +1075,36 @@ const safetyBrainQuestionBank: Required<BrainQuestion>[] = [
   { id: "festival-sendai-tanabata", category: "一般常識", prompt: "七夕まつりで知られる東北地方の都市はどこですか？", choices: ["仙台市", "盛岡市", "秋田市"], correctIndex: 0, explanation: "仙台七夕まつりは宮城県仙台市で行われます。" },
   { id: "festival-nagasaki-kunchi", category: "一般常識", prompt: "長崎くんちが行われる県はどこですか？", choices: ["長崎県", "山梨県", "香川県"], correctIndex: 0, explanation: "長崎くんちは長崎市の諏訪神社の祭礼です。" },
   { id: "festival-sapporo-snow", category: "一般常識", prompt: "さっぽろ雪まつりが行われる都道府県はどこですか？", choices: ["北海道", "愛知県", "和歌山県"], correctIndex: 0, explanation: "さっぽろ雪まつりは北海道札幌市で開催されます。" },
+  { id: "added-health-teeth", category: "健康", prompt: "歯と口を守る習慣として適切なのはどれですか？", choices: ["食後と寝る前に歯をみがき、入れ歯も洗う", "歯みがきは週に1回でよい", "入れ歯は洗わずにしまう"], correctIndex: 0, explanation: "歯と入れ歯を清潔に保つと、食事や全身の健康を守りやすくなります。" },
+  { id: "added-health-shoes", category: "健康", prompt: "歩きやすく転びにくい靴はどれですか？", choices: ["かかとがなく、サイズも大きい靴", "サイズが合い、かかとが安定して滑りにくい靴", "底がすり減った靴"], correctIndex: 1, explanation: "足に合い、かかとが安定し、滑りにくい靴は転倒予防に役立ちます。" },
+  { id: "added-health-indoor-heat", category: "健康", prompt: "暑い日に室内で熱中症を防ぐ方法はどれですか？", choices: ["エアコンを使わず我慢する", "水分を控え、窓を閉め切る", "エアコンや扇風機を使い、水分を取る"], correctIndex: 2, explanation: "室内でも熱中症になります。涼しくし、のどが渇く前から水分を取ります。" },
+  { id: "added-health-meal", category: "健康", prompt: "毎日の食事で心がけたいのはどれですか？", choices: ["主食・主菜・副菜をそろえる", "お菓子だけですませる", "同じ汁物だけを続ける"], correctIndex: 0, explanation: "主食、主菜、副菜をそろえると、必要な栄養を取りやすくなります。" },
+  { id: "added-health-walk", category: "健康", prompt: "体調に合わせた歩き方として適切なのはどれですか？", choices: ["息が苦しくても速度を上げる", "会話できる程度の速さで無理なく歩く", "痛みがあっても休まない"], correctIndex: 1, explanation: "会話できる速さで歩き、痛みや息苦しさがあれば休みます。" },
+  { id: "added-health-eyes", category: "健康", prompt: "見え方が急に変わったとき、適切な対応はどれですか？", choices: ["自然に戻るまで何もしない", "他人の眼鏡で様子を見る", "早めに眼科へ相談する"], correctIndex: 2, explanation: "急な見え方の変化は早めに眼科で確認します。" },
+  { id: "added-health-hearing", category: "健康", prompt: "聞き返しが増えたとき、どうするとよいですか？", choices: ["耳鼻咽喉科やかかりつけ医に相談する", "テレビの音を最大にして我慢する", "会話を避ける"], correctIndex: 0, explanation: "聞こえにくさが続くときは、耳鼻咽喉科やかかりつけ医に相談します。" },
+  { id: "added-health-smoke", category: "健康", prompt: "たばこと健康について適切なのはどれですか？", choices: ["本数を増やしたほうがよい", "吸わない、またはやめることが健康によい", "室内で吸えば影響はない"], correctIndex: 1, explanation: "たばこは吸わないこと、やめることが健康によいとされています。" },
+  { id: "added-health-bowel", category: "健康", prompt: "便に血が混じる、または便通が急に変わって続くときはどうしますか？", choices: ["市販薬を増やして様子を見る", "誰にも言わず我慢する", "医療機関に相談する"], correctIndex: 2, explanation: "便の急な変化や血が続くときは、自己判断せず医療機関に相談します。" },
+  { id: "added-health-cough", category: "健康", prompt: "咳やくしゃみが出るときのマナーとして適切なのはどれですか？", choices: ["口や鼻を覆い、その後に手を洗う", "手で覆わず人に向かってする", "手を洗わず食事をする"], correctIndex: 0, explanation: "口や鼻をティッシュや袖で覆い、あとで手を洗うと感染を広げにくくなります。" },
+  { id: "added-medical-notebook", category: "医療", prompt: "お薬手帳の使い方として適切なのはどれですか？", choices: ["家にしまったままにしている", "受診や薬局で見せ、薬の記録を残す", "家族の記録と混ぜて書く"], correctIndex: 1, explanation: "お薬手帳は受診や薬局で見せ、飲んでいる薬を確認してもらいます。" },
+  { id: "added-medical-doctor", category: "医療", prompt: "かかりつけ医がいるとよい理由はどれですか？", choices: ["病状や薬を継続して相談できる", "症状があっても受診しなくてよい", "検査は一度受ければ生涯不要になる"], correctIndex: 0, explanation: "かかりつけ医がいると、体調や薬のことを継続して相談できます。" },
+  { id: "added-medical-7119", category: "医療", prompt: "すぐに救急車を呼ぶべきか迷ったとき、地域によって使える相談番号はどれですか？", choices: ["117", "#7119（救急安心センター）", "177"], correctIndex: 1, explanation: "地域によっては #7119 で相談できます。意識がない、強い痛みなど緊急のときは119番です。" },
+  { id: "added-medical-generic", category: "医療", prompt: "ジェネリック医薬品（後発医薬品）について適切なのはどれですか？", choices: ["自分で錠剤を割って代用する", "希望を医師や薬剤師に相談する", "他人の薬と交換する"], correctIndex: 1, explanation: "後発医薬品を希望する場合は、医師や薬剤師に相談します。" },
+  { id: "added-medical-prescription", category: "医療", prompt: "保険の処方箋は、特別な記載がなければいつまで使えますか？", choices: ["発行日から1年", "期限はない", "交付日を含めて4日以内"], correctIndex: 2, explanation: "特別な記載がなければ、処方箋は交付された日を含めて4日以内に薬局へ出します。" },
+  { id: "added-medical-card", category: "医療", prompt: "医療機関を受診するとき、持っていくものとして適切なのはどれですか？", choices: ["マイナ保険証または資格確認書", "他人の保険証", "何も持たずに行く"], correctIndex: 0, explanation: "マイナ保険証または資格確認書を使い、他人のものは使いません。" },
+  { id: "added-medical-second", category: "医療", prompt: "別の医師の意見を聞きたいとき、適切なのはどれですか？", choices: ["主治医に無断で治療を中断する", "主治医に相談し、紹介状などを依頼する", "インターネットの体験談だけで決める"], correctIndex: 1, explanation: "別の医師の意見を聞くときは、主治医に相談して資料や紹介状を依頼します。" },
+  { id: "added-medical-result", category: "医療", prompt: "血液検査などの結果について適切なのはどれですか？", choices: ["数値の意味は医師の説明を聞く", "自分だけで病気を決める", "結果を見ずに捨てる"], correctIndex: 0, explanation: "検査の数値は、医師の説明を聞いて次の対応を相談します。" },
+  { id: "added-medical-night", category: "医療", prompt: "休日や夜間に具合が悪くなったとき、まず考えたいのはどれですか？", choices: ["必ず自分で車を運転する", "症状が重ければ119番、迷えば相談窓口を使う", "翌朝までどんな症状でも待つ"], correctIndex: 1, explanation: "緊急の症状は119番です。急ぎか迷うときは #7119 などの相談窓口を使えます。" },
+  { id: "added-medical-question", category: "医療", prompt: "診察で薬や治療の説明が分からなかったときはどうしますか？", choices: ["分かったふりをして帰る", "質問せずに薬を自己判断で変える", "その場で質問し、メモやお薬手帳に残す"], correctIndex: 2, explanation: "分からないことはその場で質問し、メモやお薬手帳に残すとあとで確認できます。" },
+  { id: "added-common-capital", category: "一般常識", prompt: "日本の首都はどこですか？", choices: ["大阪市", "東京都", "札幌市"], correctIndex: 1, explanation: "日本の首都は東京都です。" },
+  { id: "added-common-hokkaido", category: "一般常識", prompt: "日本で面積が一番大きい都道府県はどこですか？", choices: ["北海道", "沖縄県", "東京都"], correctIndex: 0, explanation: "日本で面積が一番大きい都道府県は北海道です。" },
+  { id: "added-common-fuji", category: "一般常識", prompt: "日本で一番高い山はどれですか？", choices: ["浅間山", "阿蘇山", "富士山"], correctIndex: 2, explanation: "日本で一番高い山は富士山で、静岡県と山梨県にまたがります。" },
+  { id: "added-common-left", category: "一般常識", prompt: "日本の車は、道路のどちら側を通りますか？", choices: ["左側", "右側", "中央だけ"], correctIndex: 0, explanation: "日本の車は道路の左側を通行します。" },
+  { id: "added-common-seasons", category: "一般常識", prompt: "日本の四季を順に並べたものはどれですか？", choices: ["夏・春・冬・秋", "春・夏・秋・冬", "冬・秋・夏・春"], correctIndex: 1, explanation: "日本の四季は、春、夏、秋、冬の順です。" },
+  { id: "added-common-yen", category: "一般常識", prompt: "日本の通貨はどれですか？", choices: ["ドル", "ユーロ", "円"], correctIndex: 2, explanation: "日本の通貨は円です。" },
+  { id: "added-common-newyear", category: "一般常識", prompt: "元日は何月何日ですか？", choices: ["1月1日", "1月15日", "12月31日"], correctIndex: 0, explanation: "元日は1月1日です。" },
+  { id: "added-common-week", category: "一般常識", prompt: "1週間は何日ですか？", choices: ["5日", "7日", "10日"], correctIndex: 1, explanation: "1週間は7日です。" },
+  { id: "added-common-reiwa", category: "一般常識", prompt: "2019年から使われている日本の元号はどれですか？", choices: ["平成", "昭和", "令和"], correctIndex: 2, explanation: "2019年5月から使われている元号は令和です。" },
+  { id: "added-common-respect", category: "一般常識", prompt: "敬老の日はいつですか？", choices: ["9月の第3月曜日", "5月5日", "1月1日"], correctIndex: 0, explanation: "敬老の日は9月の第3月曜日です。" },
 ]
 
 const addedSafetyQuestionIds = {
@@ -1100,6 +1131,28 @@ const addedSafetyQuestionIds = {
     "health-infection",
     "health-stroke-signs",
     "health-checkup",
+    "added-health-teeth",
+    "added-health-shoes",
+    "added-health-indoor-heat",
+    "added-health-meal",
+    "added-health-walk",
+    "added-health-eyes",
+    "added-health-hearing",
+    "added-health-smoke",
+    "added-health-bowel",
+    "added-health-cough",
+  ]),
+  医療: new Set([
+    "added-medical-notebook",
+    "added-medical-doctor",
+    "added-medical-7119",
+    "added-medical-generic",
+    "added-medical-prescription",
+    "added-medical-card",
+    "added-medical-second",
+    "added-medical-result",
+    "added-medical-night",
+    "added-medical-question",
   ]),
   一般常識: new Set([
     "festival-gion",
@@ -1112,6 +1165,16 @@ const addedSafetyQuestionIds = {
     "festival-sendai-tanabata",
     "festival-nagasaki-kunchi",
     "festival-sapporo-snow",
+    "added-common-capital",
+    "added-common-hokkaido",
+    "added-common-fuji",
+    "added-common-left",
+    "added-common-seasons",
+    "added-common-yen",
+    "added-common-newyear",
+    "added-common-week",
+    "added-common-reiwa",
+    "added-common-respect",
   ]),
 } as const
 
@@ -1121,7 +1184,7 @@ function includeAddedBrainQuestion(
   roundIndex: number,
   usedPrompts: Set<string> = new Set(),
 ): Required<BrainQuestion>[] {
-  const categories = ["防犯", "健康", "一般常識", "歴史"] as const
+  const categories = ["防犯", "健康", "医療", "一般常識", "歴史"] as const
   const category = categories[roundIndex % categories.length]
   const pool =
     category === "歴史"
@@ -1148,9 +1211,9 @@ function includeAddedBrainQuestion(
       (question) => question.category === "間違い探し",
     )
   }
-  if (replacementIndex < 0 && (category === "防犯" || category === "健康")) {
+  if (replacementIndex < 0 && (category === "防犯" || category === "健康" || category === "医療")) {
     replacementIndex = questions.findIndex((question) =>
-      ["防犯", "健康", "防災", "交通", "一般常識"].includes(
+      ["防犯", "健康", "医療", "防災", "交通", "一般常識"].includes(
         question.category,
       ),
     )
@@ -1159,7 +1222,7 @@ function includeAddedBrainQuestion(
     replacementIndex = questions.findIndex(
       (question) =>
         question.category !== "図形" &&
-        !["防犯", "健康", "防災", "交通"].includes(question.category),
+        !["防犯", "健康", "医療", "防災", "交通"].includes(question.category),
     )
   }
   if (replacementIndex < 0) {
