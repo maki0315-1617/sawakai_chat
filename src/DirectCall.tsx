@@ -59,6 +59,7 @@ export type DirectCallControl = {
 };
 
 const pollIntervalMs = 2000;
+const ringPollIntervalMs = 800;
 const assistedReplyWaitMs = 5000;
 const spokenEchoGuardMs = 1200;
 const defaultLimitSec = 180;
@@ -413,6 +414,7 @@ export default function DirectCall({
   onMissedCountRef.current = onMissedCount;
   missedRef.current = missed;
   const hangingUpRef = useRef(false);
+  const ringStopRef = useRef<(() => void) | null>(null);
 
   const changeCall = (next: DmCallView | null, nextPhase: Phase | null) => {
     callRef.current = next;
@@ -836,6 +838,14 @@ export default function DirectCall({
             if (phaseRef.current === "calling") void connectRoom(current.id);
           } else if (watched.status !== "ringing") {
             const wasPhase = phaseRef.current;
+            if (wasPhase === "calling" || wasPhase === "incoming") {
+              incomingChoiceRef.current = true;
+              answerYesRef.current?.cancel();
+              answerYesRef.current = null;
+              ringStopRef.current?.();
+              ringStopRef.current = null;
+              if (visualSupportRef.current) endGuidanceRef.current?.();
+            }
             if (wasPhase === "calling") {
               finishCall(
                 watched.status === "rejected"
@@ -910,16 +920,36 @@ export default function DirectCall({
         pollingRef.current = false;
       }
     };
-    void poll();
-    const timer = window.setInterval(() => void poll(), pollIntervalMs);
-    return () => window.clearInterval(timer);
+    let stopped = false;
+    let timer = 0;
+    const loop = () => {
+      void poll().finally(() => {
+        if (stopped) return;
+        const ringing =
+          phaseRef.current === "incoming" || phaseRef.current === "calling";
+        timer = window.setTimeout(
+          loop,
+          ringing ? ringPollIntervalMs : pollIntervalMs,
+        );
+      });
+    };
+    loop();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
 
   useEffect(() => {
     if (phase !== "incoming" && phase !== "calling") return;
     if (voiceRingHeld) return;
-    return startRinging(phase);
+    const stop = startRinging(phase);
+    ringStopRef.current = stop;
+    return () => {
+      stop();
+      if (ringStopRef.current === stop) ringStopRef.current = null;
+    };
   }, [phase, voiceRingHeld]);
 
   useEffect(() => {
@@ -957,7 +987,7 @@ export default function DirectCall({
       answerYesRef.current = session;
     };
     const scheduleListen = () => {
-      if (stopped || isIphoneDevice()) return;
+      if (stopped || isIphoneDevice() || phaseRef.current !== "incoming") return;
       window.clearTimeout(listenTimer);
       listenTimer = window.setTimeout(beginListen, spokenEchoGuardMs);
     };
