@@ -5892,10 +5892,13 @@ export default function App() {
     setShowDirectCall(true);
     const count =
       dmCallsLeft === null ? "" : `今日はあと${dmCallsLeft}回かけられます。`;
-    const leftAction =
-      peers.length === 1
+    const leftAction = isIphoneDevice()
+      ? peers.length === 1
         ? "左を押すと、やめます。"
-        : "左を押すと、次の人です。";
+        : "左を押すと、次の人です。"
+      : peers.length === 1
+        ? "次へ、と言うと、やめます。左を押しても、やめます。"
+        : "次へ、と言うと、次の人です。左を押しても、次の人です。";
     const howToCall = isIphoneDevice()
       ? `右を押すと、電話がかかります。${leftAction}`
       : `はい、と言うと、電話がかかります。右を押すと、電話がかかります。${leftAction}`;

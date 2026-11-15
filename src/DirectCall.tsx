@@ -16,7 +16,7 @@ import {
   VideoPresets,
 } from "livekit-client";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
-import { isIphoneDevice, isSpokenCallYes, listenForAnswer, type VoiceSession } from "./voiceJoin";
+import { isIphoneDevice, isSpokenAnswer, isSpokenCallYes, listenForAnswer, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -386,6 +386,7 @@ export default function DirectCall({
   const answerRef = useRef<() => void>(() => undefined);
   const hangUpRef = useRef<(message?: string) => void>(() => undefined);
   const assistedCallRef = useRef<() => void>(() => undefined);
+  const assistedSkipRef = useRef<() => void>(() => undefined);
   const callYesRef = useRef<VoiceSession | null>(null);
   const callYesReadyRef = useRef(false);
   const callYesTokenRef = useRef(0);
@@ -931,6 +932,7 @@ export default function DirectCall({
     const answerListen = isIphoneDevice()
       ? null
       : listenForAnswer({
+          accept: isSpokenAnswer,
           gate: () => answerYesReadyRef.current,
           onYes: () => {
             if (stopped || incomingChoiceRef.current || phaseRef.current !== "incoming") return;
@@ -958,7 +960,7 @@ export default function DirectCall({
       releaseTimer = window.setTimeout(resumeRing, 9000);
       const lead = isIphoneDevice()
         ? "右を押すと出ます。左を押すと出ません。"
-        : "はい、と言うと出ます。右を押すと出ます。左を押すと出ません。";
+        : "出ます、または、はい、と言うと出ます。右を押すと出ます。左を押すと出ません。";
       announceRef.current(
         `${peer}さんから電話です。${lead}`,
         () => {
@@ -1242,10 +1244,14 @@ export default function DirectCall({
       return;
     }
     assistedSpokenRef.current = key;
-    const left =
-      index >= names.length - 1
+    const lastPerson = index >= names.length - 1;
+    const left = isIphoneDevice()
+      ? lastPerson
         ? "左を押すと、やめます。"
-        : "左を押すと、次の人です。";
+        : "左を押すと、次の人です。"
+      : lastPerson
+        ? "次へ、と言うと、やめます。左を押しても、やめます。"
+        : "次へ、と言うと、次の人です。左を押しても、次の人です。";
     const yesLine = isIphoneDevice()
       ? ""
       : "はい、と言うと、電話がかかります。";
@@ -1287,12 +1293,17 @@ export default function DirectCall({
     const yesLine = isIphoneDevice()
       ? ""
       : "はい、と言うと、電話がかかります。";
+    const leftLine = isIphoneDevice()
+      ? last
+        ? "左を押すと、やめます。"
+        : "左を押すと、次の人です。"
+      : last
+        ? "次へ、と言うと、やめます。左を押しても、やめます。"
+        : "次へ、と言うと、次の人です。左を押しても、次の人です。";
     callYesReadyRef.current = false;
     const token = ++callYesTokenRef.current;
     announce(
-      `${next.name}さんに電話します。${yesLine}右を押すと、電話がかかります。${
-        last ? "左を押すと、やめます。" : "左を押すと、次の人です。"
-      }`,
+      `${next.name}さんに電話します。${yesLine}右を押すと、電話がかかります。${leftLine}`,
       () => {
         if (isIphoneDevice()) return;
         window.setTimeout(() => {
@@ -1326,6 +1337,7 @@ export default function DirectCall({
     void startCall(assistedPerson.name);
   };
   assistedCallRef.current = assistedCall;
+  assistedSkipRef.current = assistedSkip;
   beginCallYesRef.current = () => {
     if (isIphoneDevice() || callYesRef.current) return;
     callYesRef.current = listenForAnswer({
@@ -1333,6 +1345,9 @@ export default function DirectCall({
       onYes: () => {
         callYesRef.current = null;
         assistedCallRef.current();
+      },
+      onNext: () => {
+        assistedSkipRef.current();
       },
     });
   };
@@ -1390,8 +1405,8 @@ export default function DirectCall({
                   ? "右を押すと電話がかかります。左を押すとやめます。"
                   : "右を押すと電話がかかります。左を押すと次の人です。"
                 : assistedLast
-                  ? "はいと言うと電話がかかります。右を押すと電話がかかります。左を押すとやめます。"
-                  : "はいと言うと電話がかかります。右を押すと電話がかかります。左を押すと次の人です。"}
+                  ? "はいと言うと電話がかかります。次へと言うとやめます。右はかける、左はやめるです。"
+                  : "はいと言うと電話がかかります。次へと言うと次の人です。右はかける、左は次の人です。"}
             </p>
             <div className="dm-screen__sides">
               <button
@@ -1648,7 +1663,7 @@ export default function DirectCall({
               {visualSupportEnabled
                 ? isIphoneDevice()
                   ? "右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
-                  : "はいと言うと出ます。右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
+                  : "出ます、または、はいと言うと出ます。右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
                 : "1回の通話は3分までです"}
             </p>
           )}

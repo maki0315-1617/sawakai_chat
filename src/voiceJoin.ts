@@ -253,6 +253,20 @@ export function isSpokenYes(text: string) {
   return /はい|ええ|うん|yes|hai/.test(value);
 }
 
+/** 着信で「出ます」とも電話に出られるようにします。「出ない」は含めません。 */
+export function isSpokenAnswer(text: string) {
+  if (isSpokenYes(text)) return true;
+  const value = normalizeSpeech(text);
+  if (/出ない|出ません|出ねえ/.test(value)) return false;
+  return /出ます|でます|出る|でる/.test(value);
+}
+
+/** 1対1で相手を選ぶとき、左のボタンと同じ「次へ」です。 */
+export function isSpokenNext(text: string) {
+  const value = normalizeSpeech(text);
+  return /次へ|つぎへ|次の人|つぎの人/.test(value);
+}
+
 /** 不在着信の「かけ直しますか」で、はい・かける、を受けます。 */
 export function isSpokenCallYes(text: string) {
   if (isSpokenYes(text)) return true;
@@ -267,6 +281,7 @@ export function isSpokenCallYes(text: string) {
  */
 export function listenForAnswer(handlers: {
   onYes: () => void;
+  onNext?: () => void;
   onOther?: () => void;
   accept?: (text: string) => boolean;
   gate?: () => boolean;
@@ -312,6 +327,10 @@ export function listenForAnswer(handlers: {
         const text = row?.[0]?.transcript ?? "";
         if (!text.trim()) continue;
         if (handlers.gate && !handlers.gate()) continue;
+        if (handlers.onNext && isSpokenNext(text)) {
+          handlers.onNext();
+          return;
+        }
         if (accept(text)) {
           finish("yes");
           return;
