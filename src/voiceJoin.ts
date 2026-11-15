@@ -253,12 +253,13 @@ export function isSpokenYes(text: string) {
   return /はい|ええ|うん|yes|hai/.test(value);
 }
 
-/** 着信で「出ます」とも電話に出られるようにします。「出ない」は含めません。 */
+/** 着信は「出ます」または「はい」だけで出ます。案内文や「出ない」では出ません。 */
 export function isSpokenAnswer(text: string) {
-  if (isSpokenYes(text)) return true;
   const value = normalizeSpeech(text);
-  if (/出ない|出ません|出ねえ/.test(value)) return false;
-  return /出ます|でます|出る|でる/.test(value);
+  if (/出ない|出ません|出ねえ|いいえ/.test(value)) return false;
+  if (/または|と言う|というと|押す|右|左|電話/.test(value)) return false;
+  if (value.length > 12) return false;
+  return /はい|出ます|でます|出る|でる/.test(value);
 }
 
 /** 1対1で相手を選ぶとき、左のボタンと同じ「次へ」です。 */
@@ -275,11 +276,13 @@ export function isSpokenPlaceCall(text: string) {
   return /かける|かけます/.test(value);
 }
 
-/** 不在着信の「かけ直しますか」で、はい・かける、を受けます。 */
+/** 不在着信の「かけ直しますか」で、はい・かける、を受けます。案内文そのものは除きます。 */
 export function isSpokenCallYes(text: string) {
-  if (isSpokenYes(text)) return true;
   const value = normalizeSpeech(text);
   if (/いいえ|いえ|やめる|やめ|かけない|かけません/.test(value)) return false;
+  if (/電話がありました|かけ直しますか|かけなおしますか|着信がありました/.test(value)) return false;
+  if (value.length > 20) return false;
+  if (isSpokenYes(text)) return true;
   return /かける|かけます|かけ直|かけなお/.test(value);
 }
 

@@ -60,6 +60,7 @@ export type DirectCallControl = {
 
 const pollIntervalMs = 2000;
 const assistedReplyWaitMs = 5000;
+const spokenEchoGuardMs = 1200;
 const defaultLimitSec = 180;
 const warningSec = 30;
 const timeUpMessage =
@@ -842,7 +843,11 @@ export default function DirectCall({
                   : `${current.peer}さんは電話に出ませんでした。`,
               );
             } else if (wasPhase === "incoming") {
-              finishCall(`${current.peer}さんからの電話は切れました。`);
+              finishCall(
+                visualSupportRef.current && watched.status === "missed"
+                  ? ""
+                  : `${current.peer}さんからの電話は切れました。`,
+              );
             } else if (wasPhase === "incall" || wasPhase === "connecting") {
               const timeUp =
                 endsAtRef.current > 0 && Date.now() >= endsAtRef.current - 4000;
@@ -929,26 +934,37 @@ export default function DirectCall({
     const callId = current.id;
     let stopped = false;
     let releaseTimer = 0;
+    let listenTimer = 0;
     incomingChoiceRef.current = false;
     answerYesReadyRef.current = false;
     answerYesRef.current?.cancel();
-    const answerListen = isIphoneDevice()
-      ? null
-      : listenForAnswer({
-          accept: isSpokenAnswer,
-          gate: () => answerYesReadyRef.current,
-          onYes: () => {
-            if (stopped || incomingChoiceRef.current || phaseRef.current !== "incoming") return;
-            incomingChoiceRef.current = true;
-            announceRef.current("出ます。この通話は3分です。");
-            answerRef.current();
-          },
-        });
-    answerYesRef.current = answerListen;
+    answerYesRef.current = null;
+    const beginListen = () => {
+      if (stopped || isIphoneDevice() || incomingChoiceRef.current) return;
+      if (phaseRef.current !== "incoming" || answerYesRef.current) return;
+      answerYesReadyRef.current = true;
+      const session = listenForAnswer({
+        accept: isSpokenAnswer,
+        gate: () => answerYesReadyRef.current,
+        onYes: () => {
+          if (stopped || incomingChoiceRef.current || phaseRef.current !== "incoming") return;
+          incomingChoiceRef.current = true;
+          answerYesReadyRef.current = false;
+          announceRef.current("出ます。この通話は3分です。");
+          answerRef.current();
+        },
+      });
+      answerYesRef.current = session;
+    };
+    const scheduleListen = () => {
+      if (stopped || isIphoneDevice()) return;
+      window.clearTimeout(listenTimer);
+      listenTimer = window.setTimeout(beginListen, spokenEchoGuardMs);
+    };
     const timer = window.setTimeout(() => {
       if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
       if (announcedIncomingRef.current.has(callId)) {
-        answerYesReadyRef.current = true;
+        scheduleListen();
         return;
       }
       announcedIncomingRef.current.add(callId);
@@ -967,26 +983,19 @@ export default function DirectCall({
       announceRef.current(
         `${peer}さんから電話です。${lead}`,
         () => {
-          if (!isIphoneDevice()) {
-            window.setTimeout(() => {
-              answerYesReadyRef.current = true;
-            }, 700);
-          }
           window.clearTimeout(releaseTimer);
           resumeRing();
+          scheduleListen();
         },
       );
     }, 700);
-    const readyTimer = window.setTimeout(() => {
-      if (!stopped && !isIphoneDevice()) answerYesReadyRef.current = true;
-    }, 20000);
     return () => {
       stopped = true;
       window.clearTimeout(timer);
-      window.clearTimeout(readyTimer);
+      window.clearTimeout(listenTimer);
       window.clearTimeout(releaseTimer);
-      answerListen?.cancel();
-      if (answerYesRef.current === answerListen) answerYesRef.current = null;
+      answerYesRef.current?.cancel();
+      answerYesRef.current = null;
     };
   }, [phase, visualSupportEnabled, call?.id]);
 
@@ -1046,6 +1055,7 @@ export default function DirectCall({
       void startCall(item.peer);
     };
     missedChoiceRef.current = { yes: finishYes, no: finishNo };
+    let echoTimer = 0;
     const startListen = () => {
       if (stopped || session || isIphoneDevice()) return;
       beep([880], 0.12, 0.2);
@@ -1056,16 +1066,20 @@ export default function DirectCall({
       });
     };
     announceRef.current(
-      `${item.peer}さんから着信がありました。かけ直しますか。`,
-      () => startListen(),
+      `${myName}さん、${item.peer}さんから電話がありました。かけ直しますか。`,
+      () => {
+        echoTimer = window.setTimeout(startListen, spokenEchoGuardMs);
+      },
     );
     if (isIphoneDevice()) return () => {
       stopped = true;
+      window.clearTimeout(echoTimer);
     };
-    const lateListen = window.setTimeout(startListen, 12000);
+    const lateListen = window.setTimeout(startListen, 18000);
     const giveUp = window.setTimeout(finishNo, 25000);
     return () => {
       stopped = true;
+      window.clearTimeout(echoTimer);
       window.clearTimeout(lateListen);
       window.clearTimeout(giveUp);
       stopListening();
