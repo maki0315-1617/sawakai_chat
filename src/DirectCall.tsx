@@ -16,7 +16,7 @@ import {
   VideoPresets,
 } from "livekit-client";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
-import { isIphoneDevice, isSpokenAnswer, isSpokenCallYes, listenForAnswer, type VoiceSession } from "./voiceJoin";
+import { isIphoneDevice, isSpokenAnswer, isSpokenCallYes, isSpokenPlaceCall, listenForAnswer, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -1245,20 +1245,10 @@ export default function DirectCall({
     }
     assistedSpokenRef.current = key;
     const lastPerson = index >= names.length - 1;
-    const left = isIphoneDevice()
-      ? lastPerson
-        ? "左を押すと、やめます。"
-        : "左を押すと、次の人です。"
-      : lastPerson
-        ? "次へ、と言うと、やめます。左を押しても、やめます。"
-        : "次へ、と言うと、次の人です。左を押しても、次の人です。";
-    const yesLine = isIphoneDevice()
-      ? ""
-      : "はい、と言うと、電話がかかります。";
     callYesReadyRef.current = false;
     const token = ++callYesTokenRef.current;
     announceRef.current(
-      `${name}さんに電話します。${yesLine}右を押すと、電話がかかります。${left}`,
+      lastPerson ? `最後の${name}さんです。` : `${name}さんです。`,
       () => {
         if (isIphoneDevice()) return;
         window.setTimeout(() => {
@@ -1290,20 +1280,10 @@ export default function DirectCall({
     if (!next) return;
     const last = nextIndex >= others.length - 1;
     assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
-    const yesLine = isIphoneDevice()
-      ? ""
-      : "はい、と言うと、電話がかかります。";
-    const leftLine = isIphoneDevice()
-      ? last
-        ? "左を押すと、やめます。"
-        : "左を押すと、次の人です。"
-      : last
-        ? "次へ、と言うと、やめます。左を押しても、やめます。"
-        : "次へ、と言うと、次の人です。左を押しても、次の人です。";
     callYesReadyRef.current = false;
     const token = ++callYesTokenRef.current;
     announce(
-      `${next.name}さんに電話します。${yesLine}右を押すと、電話がかかります。${leftLine}`,
+      last ? `最後の${next.name}さんです。` : `${next.name}さんです。`,
       () => {
         if (isIphoneDevice()) return;
         window.setTimeout(() => {
@@ -1341,6 +1321,7 @@ export default function DirectCall({
   beginCallYesRef.current = () => {
     if (isIphoneDevice() || callYesRef.current) return;
     callYesRef.current = listenForAnswer({
+      accept: isSpokenPlaceCall,
       gate: () => callYesReadyRef.current,
       onYes: () => {
         callYesRef.current = null;
@@ -1405,8 +1386,8 @@ export default function DirectCall({
                   ? "右を押すと電話がかかります。左を押すとやめます。"
                   : "右を押すと電話がかかります。左を押すと次の人です。"
                 : assistedLast
-                  ? "はいと言うと電話がかかります。次へと言うとやめます。右はかける、左はやめるです。"
-                  : "はいと言うと電話がかかります。次へと言うと次の人です。右はかける、左は次の人です。"}
+                  ? "最後の人です。はい、または、かけるで呼び出します。次へでやめます。"
+                  : "次へで次の人です。はい、または、かけるで呼び出します。"}
             </p>
             <div className="dm-screen__sides">
               <button

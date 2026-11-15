@@ -5892,19 +5892,20 @@ export default function App() {
     setShowDirectCall(true);
     const count =
       dmCallsLeft === null ? "" : `今日はあと${dmCallsLeft}回かけられます。`;
-    const leftAction = isIphoneDevice()
-      ? peers.length === 1
-        ? "左を押すと、やめます。"
-        : "左を押すと、次の人です。"
-      : peers.length === 1
-        ? "次へ、と言うと、やめます。左を押しても、やめます。"
-        : "次へ、と言うと、次の人です。左を押しても、次の人です。";
+    const onlyOne = peers.length === 1;
+    const personLine = onlyOne
+      ? `最後の${peers[0].name}さんです。`
+      : `${peers[0].name}さんです。`;
     const howToCall = isIphoneDevice()
-      ? `右を押すと、電話がかかります。${leftAction}`
-      : `はい、と言うと、電話がかかります。右を押すと、電話がかかります。${leftAction}`;
+      ? onlyOne
+        ? "右を押すと呼び出します。左を押すとやめます。"
+        : "右を押すと呼び出します。左を押すと次の人です。"
+      : onlyOne
+        ? "次へ、と言うとやめます。はい、または、かける、と言うと呼び出します。"
+        : "次へ、と言うと次の人へ進みます。はい、または、かける、と言うと呼び出します。";
     const say = () =>
       speakJapanese(
-        `1対1の電話です。1回は3分まで、1日3回までです。${count}${peers[0].name}さんに電話します。${howToCall}`,
+        `1対1の電話です。1回は3分まで、1日3回までです。${count}${howToCall}${personLine}`,
         () => {
           if (!isIphoneDevice()) dmControlRef.current?.releaseCallYes();
         },

@@ -267,6 +267,14 @@ export function isSpokenNext(text: string) {
   return /次へ|つぎへ|次の人|つぎの人/.test(value);
 }
 
+/** 相手を選んでいるとき、「はい」または「かける」で呼び出します。 */
+export function isSpokenPlaceCall(text: string) {
+  if (isSpokenYes(text)) return true;
+  const value = normalizeSpeech(text);
+  if (/かけない|かけません|かけねえ/.test(value)) return false;
+  return /かける|かけます/.test(value);
+}
+
 /** 不在着信の「かけ直しますか」で、はい・かける、を受けます。 */
 export function isSpokenCallYes(text: string) {
   if (isSpokenYes(text)) return true;
