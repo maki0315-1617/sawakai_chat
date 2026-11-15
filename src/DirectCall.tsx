@@ -59,6 +59,7 @@ export type DirectCallControl = {
 };
 
 const pollIntervalMs = 2000;
+const assistedReplyWaitMs = 5000;
 const defaultLimitSec = 180;
 const warningSec = 30;
 const timeUpMessage =
@@ -387,6 +388,8 @@ export default function DirectCall({
   const hangUpRef = useRef<(message?: string) => void>(() => undefined);
   const assistedCallRef = useRef<() => void>(() => undefined);
   const assistedSkipRef = useRef<() => void>(() => undefined);
+  const assistedTimeoutRef = useRef<() => void>(() => undefined);
+  const assistedReplyTimerRef = useRef(0);
   const callYesRef = useRef<VoiceSession | null>(null);
   const callYesReadyRef = useRef(false);
   const callYesTokenRef = useRef(0);
@@ -1250,24 +1253,32 @@ export default function DirectCall({
     announceRef.current(
       lastPerson ? `最後の${name}さんです。` : `${name}さんです。`,
       () => {
-        if (isIphoneDevice()) return;
-        window.setTimeout(() => {
-          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
-        }, 1000);
+        if (callYesTokenRef.current !== token) return;
+        callYesReadyRef.current = true;
+        window.clearTimeout(assistedReplyTimerRef.current);
+        assistedReplyTimerRef.current = window.setTimeout(() => {
+          if (callYesTokenRef.current === token) assistedTimeoutRef.current();
+        }, assistedReplyWaitMs);
       },
     );
-    if (!isIphoneDevice()) {
-      window.setTimeout(() => {
-        if (callYesTokenRef.current === token) callYesReadyRef.current = true;
-      }, 20000);
-    }
   }, [assistedChooser, showPanel, callsLeft, assistedNames, pickIndex, onClosePanel]);
 
   const assistedIndex =
     others.length === 0 ? 0 : Math.min(pickIndex, others.length - 1);
   const assistedPerson = others[assistedIndex];
   const assistedLast = others.length === 0 || assistedIndex >= others.length - 1;
+  const startAssistedReplyWait = (token: number) => {
+    window.clearTimeout(assistedReplyTimerRef.current);
+    if (callYesTokenRef.current !== token) return;
+    callYesReadyRef.current = true;
+    assistedReplyTimerRef.current = window.setTimeout(() => {
+      if (callYesTokenRef.current === token) assistedTimeoutRef.current();
+    }, assistedReplyWaitMs);
+  };
   const assistedSkip = () => {
+    window.clearTimeout(assistedReplyTimerRef.current);
+    callYesReadyRef.current = false;
+    callYesTokenRef.current += 1;
     if (!assistedPerson) return;
     if (assistedLast) {
       announce("やめるが選択されました。");
@@ -1280,26 +1291,32 @@ export default function DirectCall({
     if (!next) return;
     const last = nextIndex >= others.length - 1;
     assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
-    callYesReadyRef.current = false;
-    const token = ++callYesTokenRef.current;
+    const token = callYesTokenRef.current;
     announce(
       last ? `最後の${next.name}さんです。` : `${next.name}さんです。`,
-      () => {
-        if (isIphoneDevice()) return;
-        window.setTimeout(() => {
-          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
-        }, 1000);
-      },
+      () => startAssistedReplyWait(token),
     );
-    if (!isIphoneDevice()) {
-      window.setTimeout(() => {
-        if (callYesTokenRef.current === token) callYesReadyRef.current = true;
-      }, 20000);
-    }
+    setPickIndex(nextIndex);
+  };
+  const assistedTimeout = () => {
+    if (!assistedPerson || others.length === 0) return;
+    const nextIndex = assistedLast ? 0 : assistedIndex + 1;
+    const next = others[nextIndex];
+    if (!next) return;
+    const last = others.length === 1 || nextIndex >= others.length - 1;
+    window.clearTimeout(assistedReplyTimerRef.current);
+    callYesReadyRef.current = false;
+    const token = ++callYesTokenRef.current;
+    assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
+    const nameLine = last ? `最後の${next.name}さんです。` : `${next.name}さんです。`;
+    announce(`次の呼び出しをします。${nameLine}`, () => startAssistedReplyWait(token));
     setPickIndex(nextIndex);
   };
   const assistedCall = () => {
     if (!assistedPerson) return;
+    window.clearTimeout(assistedReplyTimerRef.current);
+    callYesReadyRef.current = false;
+    callYesTokenRef.current += 1;
     callYesRef.current?.cancel();
     callYesRef.current = null;
     const iphone = isIphoneDevice();
@@ -1318,6 +1335,7 @@ export default function DirectCall({
   };
   assistedCallRef.current = assistedCall;
   assistedSkipRef.current = assistedSkip;
+  assistedTimeoutRef.current = assistedTimeout;
   beginCallYesRef.current = () => {
     if (isIphoneDevice() || callYesRef.current) return;
     callYesRef.current = listenForAnswer({
@@ -1338,9 +1356,11 @@ export default function DirectCall({
     if (!open) {
       callYesRef.current?.cancel();
       callYesRef.current = null;
+      window.clearTimeout(assistedReplyTimerRef.current);
       return;
     }
     beginCallYesRef.current();
+    return () => window.clearTimeout(assistedReplyTimerRef.current);
   }, [assistedChooser, showPanel, call, callsLeft]);
 
   const sheetDrag = useSheetDrag(onClosePanel);
@@ -1351,17 +1371,11 @@ export default function DirectCall({
       hangUp: () => void hangUp(),
       armCallYes: () => {
         callYesReadyRef.current = false;
-        const token = ++callYesTokenRef.current;
+        callYesTokenRef.current += 1;
         beginCallYesRef.current();
-        window.setTimeout(() => {
-          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
-        }, 20000);
       },
       releaseCallYes: () => {
-        const token = callYesTokenRef.current;
-        window.setTimeout(() => {
-          if (callYesTokenRef.current === token) callYesReadyRef.current = true;
-        }, 1000);
+        startAssistedReplyWait(callYesTokenRef.current);
       },
     };
   }
@@ -1386,8 +1400,8 @@ export default function DirectCall({
                   ? "右を押すと電話がかかります。左を押すとやめます。"
                   : "右を押すと電話がかかります。左を押すと次の人です。"
                 : assistedLast
-                  ? "最後の人です。はい、または、かけるで呼び出します。次へでやめます。"
-                  : "次へで次の人です。はい、または、かけるで呼び出します。"}
+                  ? "最後の人です。はい、または、かけるで呼び出します。次へでやめます。5秒返事がないと次の人です。"
+                  : "次へで次の人です。はい、または、かけるで呼び出します。5秒返事がないと次の人です。"}
             </p>
             <div className="dm-screen__sides">
               <button

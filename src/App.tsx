@@ -5907,7 +5907,7 @@ export default function App() {
       speakJapanese(
         `1対1の電話です。1回は3分まで、1日3回までです。${count}${howToCall}${personLine}`,
         () => {
-          if (!isIphoneDevice()) dmControlRef.current?.releaseCallYes();
+          dmControlRef.current?.releaseCallYes();
         },
       );
     if (interrupted) window.setTimeout(say, 100);
