@@ -61,6 +61,7 @@ export type DirectCallControl = {
 const pollIntervalMs = 2000;
 const ringPollIntervalMs = 800;
 const assistedReplyWaitMs = 5000;
+const assistedFirstReplyWaitMs = 10000;
 const spokenEchoGuardMs = 1200;
 const defaultLimitSec = 180;
 const warningSec = 30;
@@ -347,6 +348,9 @@ export default function DirectCall({
   const [remoteCamOn, setRemoteCamOn] = useState(false);
   const [callsLeft, setCallsLeft] = useState<number | null>(null);
   const [pickIndex, setPickIndex] = useState(0);
+  const [assistedWaitSec, setAssistedWaitSec] = useState(
+    assistedFirstReplyWaitMs / 1000,
+  );
   const [tab, setTab] = useState<"pick" | "history">("pick");
   const [history, setHistory] = useState<DmCallView[]>([]);
   const [historyError, setHistoryError] = useState("");
@@ -391,6 +395,7 @@ export default function DirectCall({
   const assistedCallRef = useRef<() => void>(() => undefined);
   const assistedSkipRef = useRef<() => void>(() => undefined);
   const assistedTimeoutRef = useRef<() => void>(() => undefined);
+  const assistedStopRef = useRef<() => void>(() => undefined);
   const assistedReplyTimerRef = useRef(0);
   const callYesRef = useRef<VoiceSession | null>(null);
   const callYesReadyRef = useRef(false);
@@ -1261,6 +1266,7 @@ export default function DirectCall({
     if (!assistedChooser || !showPanel) {
       assistedSpokenRef.current = "";
       setPickIndex(0);
+      setAssistedWaitSec(assistedFirstReplyWaitMs / 1000);
       return;
     }
     if (callsLeft === 0) {
@@ -1294,6 +1300,7 @@ export default function DirectCall({
     const lastPerson = index >= names.length - 1;
     callYesReadyRef.current = false;
     const token = ++callYesTokenRef.current;
+    setAssistedWaitSec(assistedReplyWaitMs / 1000);
     announceRef.current(
       lastPerson ? `最後の${name}さんです。` : `${name}さんです。`,
       () => {
@@ -1311,13 +1318,27 @@ export default function DirectCall({
     others.length === 0 ? 0 : Math.min(pickIndex, others.length - 1);
   const assistedPerson = others[assistedIndex];
   const assistedLast = others.length === 0 || assistedIndex >= others.length - 1;
-  const startAssistedReplyWait = (token: number) => {
+  const startAssistedReplyWait = (
+    token: number,
+    waitMs = assistedReplyWaitMs,
+  ) => {
     window.clearTimeout(assistedReplyTimerRef.current);
     if (callYesTokenRef.current !== token) return;
     callYesReadyRef.current = true;
+    setAssistedWaitSec(waitMs / 1000);
     assistedReplyTimerRef.current = window.setTimeout(() => {
       if (callYesTokenRef.current === token) assistedTimeoutRef.current();
-    }, assistedReplyWaitMs);
+    }, waitMs);
+  };
+  const assistedStop = () => {
+    window.clearTimeout(assistedReplyTimerRef.current);
+    callYesReadyRef.current = false;
+    callYesTokenRef.current += 1;
+    callYesRef.current?.cancel();
+    callYesRef.current = null;
+    announce("呼び出しを終わります。");
+    onClosePanel();
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
   const assistedSkip = () => {
     window.clearTimeout(assistedReplyTimerRef.current);
@@ -1333,6 +1354,7 @@ export default function DirectCall({
     const nextIndex = assistedIndex + 1;
     const next = others[nextIndex];
     if (!next) return;
+    setAssistedWaitSec(assistedReplyWaitMs / 1000);
     const last = nextIndex >= others.length - 1;
     assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
     const token = callYesTokenRef.current;
@@ -1348,6 +1370,7 @@ export default function DirectCall({
     const next = others[nextIndex];
     if (!next) return;
     const last = others.length === 1 || nextIndex >= others.length - 1;
+    setAssistedWaitSec(assistedReplyWaitMs / 1000);
     window.clearTimeout(assistedReplyTimerRef.current);
     callYesReadyRef.current = false;
     const token = ++callYesTokenRef.current;
@@ -1380,6 +1403,7 @@ export default function DirectCall({
   assistedCallRef.current = assistedCall;
   assistedSkipRef.current = assistedSkip;
   assistedTimeoutRef.current = assistedTimeout;
+  assistedStopRef.current = assistedStop;
   beginCallYesRef.current = () => {
     if (isIphoneDevice() || callYesRef.current) return;
     callYesRef.current = listenForAnswer({
@@ -1391,6 +1415,10 @@ export default function DirectCall({
       },
       onNext: () => {
         assistedSkipRef.current();
+      },
+      onStop: () => {
+        callYesRef.current = null;
+        assistedStopRef.current();
       },
     });
   };
@@ -1419,7 +1447,10 @@ export default function DirectCall({
         beginCallYesRef.current();
       },
       releaseCallYes: () => {
-        startAssistedReplyWait(callYesTokenRef.current);
+        startAssistedReplyWait(
+          callYesTokenRef.current,
+          assistedFirstReplyWaitMs,
+        );
       },
     };
   }
@@ -1444,8 +1475,8 @@ export default function DirectCall({
                   ? "右を押すと電話がかかります。左を押すとやめます。"
                   : "右を押すと電話がかかります。左を押すと次の人です。"
                 : assistedLast
-                  ? "最後の人です。はい、または、かけるで呼び出します。次へでやめます。5秒返事がないと次の人です。"
-                  : "次へで次の人です。はい、または、かけるで呼び出します。5秒返事がないと次の人です。"}
+                  ? `最後の人です。はい、または、かけるで呼び出します。次へでやめます。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`
+                  : `次へで次の人です。はい、または、かけるで呼び出します。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`}
             </p>
             <div className="dm-screen__sides">
               <button

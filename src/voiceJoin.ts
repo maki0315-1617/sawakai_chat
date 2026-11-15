@@ -268,6 +268,15 @@ export function isSpokenNext(text: string) {
   return /次へ|つぎへ|次の人|つぎの人/.test(value);
 }
 
+/** 相手を順に呼んでいるとき、「終わる」「終わり」で呼び出しを閉じます。 */
+export function isSpokenStop(text: string) {
+  const value = normalizeSpeech(text);
+  if (/終わらない|終わりません|おわらない|おわりません/.test(value)) return false;
+  if (/と言う|というと|または|呼び出/.test(value)) return false;
+  if (value.length > 12) return false;
+  return /終わる|終わり|おわる|おわり/.test(value);
+}
+
 /** 相手を選んでいるとき、「はい」または「かける」で呼び出します。 */
 export function isSpokenPlaceCall(text: string) {
   if (isSpokenYes(text)) return true;
@@ -293,6 +302,7 @@ export function isSpokenCallYes(text: string) {
 export function listenForAnswer(handlers: {
   onYes: () => void;
   onNext?: () => void;
+  onStop?: () => void;
   onOther?: () => void;
   accept?: (text: string) => boolean;
   gate?: () => boolean;
@@ -303,7 +313,7 @@ export function listenForAnswer(handlers: {
   let current: Recognition | null = null;
   let failedStarts = 0;
 
-  const finish = (kind: "yes" | "other") => {
+  const finish = (kind: "yes" | "other" | "stop") => {
     if (cancelled || decided) return;
     decided = true;
     cancelled = true;
@@ -313,6 +323,7 @@ export function listenForAnswer(handlers: {
       // already stopped
     }
     if (kind === "yes") handlers.onYes();
+    else if (kind === "stop") handlers.onStop?.();
     else handlers.onOther?.();
   };
 
@@ -338,6 +349,10 @@ export function listenForAnswer(handlers: {
         const text = row?.[0]?.transcript ?? "";
         if (!text.trim()) continue;
         if (handlers.gate && !handlers.gate()) continue;
+        if (handlers.onStop && isSpokenStop(text)) {
+          finish("stop");
+          return;
+        }
         if (handlers.onNext && isSpokenNext(text)) {
           handlers.onNext();
           return;
