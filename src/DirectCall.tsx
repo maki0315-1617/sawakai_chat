@@ -60,8 +60,8 @@ export type DirectCallControl = {
 
 const pollIntervalMs = 2000;
 const ringPollIntervalMs = 800;
-const assistedReplyWaitMs = 5000;
-const assistedFirstReplyWaitMs = 13000;
+const assistedReplyWaitMs = 7000;
+const assistedFirstReplyWaitMs = 12000;
 const spokenEchoGuardMs = 1200;
 const defaultLimitSec = 180;
 const warningSec = 30;
@@ -457,6 +457,7 @@ export default function DirectCall({
   const assistedTimeoutRef = useRef<() => void>(() => undefined);
   const assistedStopRef = useRef<() => void>(() => undefined);
   const assistedReplyTimerRef = useRef(0);
+  const assistedListenTimerRef = useRef(0);
   const callYesRef = useRef<VoiceSession | null>(null);
   const callYesReadyRef = useRef(false);
   const callYesTokenRef = useRef(0);
@@ -1545,11 +1546,18 @@ export default function DirectCall({
       callYesRef.current?.cancel();
       callYesRef.current = null;
       window.clearTimeout(assistedReplyTimerRef.current);
-      return;
+      window.clearTimeout(assistedListenTimerRef.current);
     }
-    beginCallYesRef.current();
-    return () => window.clearTimeout(assistedReplyTimerRef.current);
   }, [assistedChooser, showPanel, call, callsLeft]);
+
+  useEffect(
+    () => () => {
+      callYesRef.current?.cancel();
+      window.clearTimeout(assistedReplyTimerRef.current);
+      window.clearTimeout(assistedListenTimerRef.current);
+    },
+    [],
+  );
 
   const sheetDrag = useSheetDrag(onClosePanel);
 
@@ -1560,13 +1568,18 @@ export default function DirectCall({
       armCallYes: () => {
         callYesReadyRef.current = false;
         callYesTokenRef.current += 1;
-        beginCallYesRef.current();
+        callYesRef.current?.cancel();
+        callYesRef.current = null;
+        window.clearTimeout(assistedListenTimerRef.current);
       },
       releaseCallYes: () => {
-        startAssistedReplyWait(
-          callYesTokenRef.current,
-          assistedFirstReplyWaitMs,
-        );
+        const token = callYesTokenRef.current;
+        window.clearTimeout(assistedListenTimerRef.current);
+        assistedListenTimerRef.current = window.setTimeout(() => {
+          if (callYesTokenRef.current !== token) return;
+          startAssistedReplyWait(token, assistedFirstReplyWaitMs);
+          beginCallYesRef.current();
+        }, spokenEchoGuardMs);
       },
     };
   }

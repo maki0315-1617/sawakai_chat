@@ -262,9 +262,11 @@ export function isSpokenAnswer(text: string) {
   return /はい|出ます|でます|出る|でる/.test(value);
 }
 
-/** 1対1で相手を選ぶとき、左のボタンと同じ「次へ」です。 */
+/** 1対1で相手を選ぶとき、左のボタンと同じ「次へ」です。案内文そのものは除きます。 */
 export function isSpokenNext(text: string) {
   const value = normalizeSpeech(text);
+  if (/と言う|というと|または/.test(value)) return false;
+  if (value.length > 10) return false;
   return /次へ|つぎへ|次の人|つぎの人/.test(value);
 }
 
@@ -277,12 +279,13 @@ export function isSpokenStop(text: string) {
   return /終わる|終わり|おわる|おわり/.test(value);
 }
 
-/** 相手を選んでいるとき、「はい」または「かける」で呼び出します。 */
+/** 相手を選んでいるとき、「はい」または「かける」で呼び出します。案内文そのものは除きます。 */
 export function isSpokenPlaceCall(text: string) {
-  if (isSpokenYes(text)) return true;
   const value = normalizeSpeech(text);
-  if (/かけない|かけません|かけねえ/.test(value)) return false;
-  return /かける|かけます/.test(value);
+  if (/かけない|かけません|かけねえ|いいえ|やめる|やめ/.test(value)) return false;
+  if (/と言う|というと|または|呼び出|次へ|つぎ|終わる|終わり|おわる|おわり|押す/.test(value)) return false;
+  if (value.length > 10) return false;
+  return /はい|かける|かけます/.test(value);
 }
 
 /** 不在着信の「かけ直しますか」で、はい・かける、を受けます。案内文そのものは除きます。 */
