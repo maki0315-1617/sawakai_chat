@@ -232,6 +232,7 @@ type PicturePuzzleSession = {
   prompt: string;
   entries: [];
   photoIndex: number;
+  board: number[];
   scores: Record<string, number>;
   hints?: Record<string, number>;
   closeReason?: "admin-away";
@@ -1500,6 +1501,7 @@ async function getPushDevices(groupId: string): Promise<PushDevice[]> {
 
 type PushNotificationOptions = {
   recipientNames?: Set<string>;
+  endpoint?: string;
   title?: string;
   body?: string;
   tag?: string;
@@ -1507,7 +1509,48 @@ type PushNotificationOptions = {
   fixedBody?: boolean;
   ttlSeconds?: number;
   urgent?: boolean;
+  // 電話は夜間設定で止めない。メッセージの夜間設定はそのまま
+  bypassQuietHours?: boolean;
+  // 同じ通知の古い配信が、あとから届いて新しい案内を上書きしないようにする
+  eventAt?: number;
+  // テスト通知で、未読が0でもアイコンに数字が出るようにする
+  badgeFloor?: number;
 };
+
+async function badgeCountForName(name: string): Promise<number> {
+  const sessions = (
+    (await kv.getByPrefix("sawakai:session:")) as Session[]
+  ).filter(
+    (session) =>
+      session?.name === name &&
+      typeof session.expiresAt === "number" &&
+      session.expiresAt >= Date.now(),
+  );
+  const now = Date.now();
+  let total = 0;
+  for (const group of await getGroups()) {
+    const members = await getMembers(group.id);
+    if (!members.some((member) => member.name === name)) continue;
+    if (sessions.length) {
+      const readAt = sessions.reduce((latest, session) => {
+        const stamp = new Date(
+          session.readAt?.[group.id] ?? "1970-01-01T00:00:00.000Z",
+        ).getTime();
+        return Number.isFinite(stamp) ? Math.max(latest, stamp) : latest;
+      }, 0);
+      const messages = await getMessages(group.id);
+      total += messages.filter(
+        (message) =>
+          message.sender !== name &&
+          new Date(message.createdAt).getTime() > readAt,
+      ).length;
+    }
+    const calls =
+      ((await kv.get(dmCallsKey(group.id))) as DmCall[] | undefined) ?? [];
+    total += directCallAttentionFor(calls, name, now);
+  }
+  return total;
+}
 
 async function sendPushNotifications(
   groupId: string,
@@ -1519,9 +1562,10 @@ async function sendPushNotifications(
   const devices = (await getPushDevices(groupId)).filter(
     (device) =>
       device.name !== sender &&
-      (!options.recipientNames || options.recipientNames.has(device.name)),
+      (!options.recipientNames || options.recipientNames.has(device.name)) &&
+      (!options.endpoint || device.endpoint === options.endpoint),
   );
-  if (!devices.length) return { notifiedCount: 0, deviceCount: 0 };
+  if (!devices.length) return { notifiedCount: 0, deviceCount: 0, badgeCount: 0 };
   const hourInJapan = Number(
     new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Tokyo",
@@ -1531,9 +1575,13 @@ async function sendPushNotifications(
   );
   const activeDevices = devices.filter(
     (device) =>
-      !device.quietHours || (hourInJapan >= 8 && hourInJapan < 20),
+      options.bypassQuietHours ||
+      !device.quietHours ||
+      (hourInJapan >= 8 && hourInJapan < 20),
   );
-  if (!activeDevices.length) return { notifiedCount: 0, deviceCount: 0 };
+  if (!activeDevices.length) {
+    return { notifiedCount: 0, deviceCount: 0, badgeCount: 0 };
+  }
   const group = (await getGroups()).find((item) => item.id === groupId);
   const vapidKeys = await getVapidKeys();
   const webPush = await getWebPush();
@@ -1544,6 +1592,8 @@ async function sendPushNotifications(
   );
   const expired = new Set<string>();
   const notifiedNames = new Set<string>();
+  const badgeCounts = new Map<string, number>();
+  let sentBadgeCount = 0;
   await Promise.all(
     activeDevices.map(async (device) => {
       const body = options.fixedBody
@@ -1556,6 +1606,20 @@ async function sendPushNotifications(
         : options.body
           ? "みんなの遊びへのお誘いが届きました。"
           : "新しいメッセージが届きました。";
+      let badgeCount: number | undefined;
+      if (device.appBadge) {
+        try {
+          if (!badgeCounts.has(device.name)) {
+            badgeCounts.set(device.name, await badgeCountForName(device.name));
+          }
+          badgeCount = Math.max(
+            badgeCounts.get(device.name) ?? 0,
+            options.badgeFloor ?? 0,
+          );
+        } catch {
+          console.warn("Badge count could not be calculated");
+        }
+      }
       try {
         await webPush.sendNotification(
           {
@@ -1570,6 +1634,8 @@ async function sendPushNotifications(
             tag: options.tag ?? `group-${groupId}`,
             url: "./",
             appBadge: device.appBadge,
+            badgeCount,
+            eventAt: options.eventAt ?? Date.now(),
           }),
           options.ttlSeconds
             ? {
@@ -1579,6 +1645,7 @@ async function sendPushNotifications(
             : undefined,
         );
         notifiedNames.add(device.name);
+        if (badgeCount !== undefined) sentBadgeCount = badgeCount;
       } catch (reason) {
         const statusCode =
           typeof reason === "object" &&
@@ -1595,14 +1662,16 @@ async function sendPushNotifications(
     }),
   );
   if (expired.size) {
+    const stored = await getPushDevices(groupId);
     await kv.set(
       dataKey(groupId, "push-devices"),
-      devices.filter((device) => !expired.has(device.endpoint)),
+      stored.filter((device) => !expired.has(device.endpoint)),
     );
   }
   return {
     notifiedCount: notifiedNames.size,
     deviceCount: activeDevices.length - expired.size,
+    badgeCount: sentBadgeCount,
   };
 }
 
@@ -2955,6 +3024,7 @@ app.get(`${root}/groups`, async (c) => {
   const groups: (Group & {
     imageUrl?: string;
     unreadCount: number;
+    callAttention: number;
     latestMessage?: {
       sender: string;
       text: string;
@@ -2980,11 +3050,19 @@ app.get(`${root}/groups`, async (c) => {
           message.sender !== session.name &&
           new Date(message.createdAt).getTime() > readAt,
       ).length;
+      const storedCalls =
+        ((await kv.get(dmCallsKey(group.id))) as DmCall[] | undefined) ?? [];
+      const callAttention = directCallAttentionFor(
+        storedCalls,
+        session.name,
+        Date.now(),
+      );
       const latest = messages.at(-1);
       groups.push({
         ...group,
         imageUrl: group.image?.signedUrl,
         unreadCount,
+        callAttention,
         latestMessage: latest
           ? {
               sender: latest.sender,
@@ -3924,6 +4002,44 @@ app.post(`${root}/push/subscribe`, async (c) => {
     registeredGroups += 1;
   }
   return c.json({ subscribed: true, registeredGroups });
+});
+
+app.post(`${root}/push/test`, async (c) => {
+  const session = await getSession(c.req.header("X-Session-Token"));
+  if (!session) return c.json({ error: "もう一度参加してください。" }, 401);
+  const groupId = await requestedGroupId(c.req.header("X-Group-Id"), session);
+  if (!groupId) return c.json({ error: "このグループには参加していません。" }, 403);
+  const body = await c.req.json().catch(() => ({}));
+  const endpoint = typeof body.endpoint === "string" ? body.endpoint : "";
+  if (!endpoint.startsWith("https://")) {
+    return c.json(
+      { error: "この端末のバックグラウンド通知が登録されていません。通知をオンにしてから、もう一度お試しください。" },
+      400,
+    );
+  }
+  const result = await sendPushNotifications(groupId, "", "", false, {
+    recipientNames: new Set([session.name]),
+    endpoint,
+    title: "茶話会・みんなで脳活",
+    body: "通知のテストです。画面を閉じて、通知とアイコンの数字を確認してください。",
+    tag: `push-test-${session.name}`,
+    fixedBody: true,
+    ttlSeconds: 5 * 60,
+    urgent: true,
+    bypassQuietHours: true,
+    badgeFloor: 1,
+    eventAt: Date.now(),
+  });
+  if (!result.notifiedCount) {
+    return c.json(
+      {
+        error:
+          "この端末へ通知を送れませんでした。通知をオンにしてから、もう一度お試しください。",
+      },
+      400,
+    );
+  }
+  return c.json({ ok: true, badgeCount: result.badgeCount });
 });
 
 app.post(`${root}/push/unsubscribe`, async (c) => {
@@ -5430,6 +5546,7 @@ type DmCall = {
   missedSeen?: boolean;
 };
 const dmRingSeconds = 30;
+const dmRingPushTtlSeconds = 180;
 const dmStaleSeconds = 20;
 const dmLimitSeconds = 180;
 const dmLimitGraceSeconds = 3;
@@ -5519,10 +5636,12 @@ async function dmPush(call: DmCall, kind: "ring" | "missed") {
         kind === "ring"
           ? "タップして茶話会を開き、電話に出てください。"
           : `${time}の電話に出られませんでした。`,
-      tag: `dm-${call.id}`,
+      tag: kind === "ring" ? `dm-${call.id}` : `dm-missed-${call.id}`,
       fixedBody: true,
-      ttlSeconds: kind === "ring" ? dmRingSeconds : 60 * 60 * 24,
+      ttlSeconds: kind === "ring" ? dmRingPushTtlSeconds : 60 * 60 * 24,
       urgent: kind === "ring",
+      bypassQuietHours: true,
+      eventAt: kind === "ring" ? call.createdAt : call.endedAt ?? Date.now(),
     });
   } catch {
     console.warn("Call push notification failed");
@@ -5573,9 +5692,44 @@ async function dmLoadCalls(groupId: string): Promise<DmCall[]> {
       if (!dmIsLive(call)) await dmClearActive(call);
     }
     for (const call of newlyEnded) await dmCloseRoom(call.id);
-    for (const call of newlyMissed) await dmPush(call, "missed");
+    for (const call of newlyMissed) await notifyMissedCall(call);
   }
   return settled;
+}
+
+function directCallAttentionFor(calls: DmCall[], name: string, now: number) {
+  const settled = calls.map((call) => dmSettle(call, now));
+  const missed = settled.filter(
+    (call) =>
+      call.callee === name && call.status === "missed" && !call.missedSeen,
+  );
+  const ringing = settled.some(
+    (call) => call.callee === name && call.status === "ringing",
+  );
+  return missed.slice(-5).length + (ringing ? 1 : 0);
+}
+
+async function notifyMissedCall(call: DmCall) {
+  const claimKey = `sawakai:dm:missed-push:${call.id}`;
+  if (await kv.get(claimKey)) return;
+  await kv.set(claimKey, Date.now());
+  await dmPush(call, "missed");
+}
+
+function scheduleDirectCallFollowUp(groupId: string) {
+  const task = new Promise((resolve) =>
+    setTimeout(resolve, (dmRingSeconds + 2) * 1000),
+  )
+    .then(() => dmLoadCalls(groupId))
+    .catch(() => {
+      console.warn("Could not settle a direct call after ringing");
+    });
+  const runtime = (
+    globalThis as {
+      EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void };
+    }
+  ).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(task);
 }
 
 async function dmSaveCalls(groupId: string, calls: DmCall[]) {
@@ -5781,6 +5935,7 @@ app.post(`${root}/dm/call`, async (c) => {
   await kv.set(dmActiveKey(session.name), active);
   await kv.set(dmActiveKey(to), active);
   await dmPush(call, "ring");
+  scheduleDirectCallFollowUp(groupId);
   return c.json({ call: dmView(call, session.name) });
 });
 
@@ -5908,7 +6063,7 @@ async function dmAction(
   await dmSaveCalls(groupId, calls);
   if (!dmIsLive(updated)) await dmClearActive(updated);
   if (call.status === "ringing" && updated.status === "missed") {
-    await dmPush(updated, "missed");
+    await notifyMissedCall(updated);
   }
   return c.json({ call: dmView(updated, session.name) });
 }

@@ -12,8 +12,27 @@ async function readBadgeCount() {
 async function writeBadgeCount(count) {
   const cache = await caches.open(BADGE_CACHE);
   await cache.put(badgeKey, new Response(String(count)));
-  if (count > 0) await self.navigator?.setAppBadge?.(count);
-  else await self.navigator?.clearAppBadge?.();
+  try {
+    if (count > 0) await self.navigator?.setAppBadge?.(count);
+    else await self.navigator?.clearAppBadge?.();
+  } catch {
+    // ホーム画面に追加していないブラウザでは件数を付けられない
+  }
+}
+
+function pushEventKey(tag) {
+  return new URL(`__push-event/${encodeURIComponent(tag)}`, scopeUrl).href;
+}
+
+async function latestPushEventAt(tag) {
+  const cache = await caches.open(BADGE_CACHE);
+  const response = await cache.match(pushEventKey(tag));
+  return response ? Number(await response.text()) || 0 : 0;
+}
+
+async function rememberPushEventAt(tag, eventAt) {
+  const cache = await caches.open(BADGE_CACHE);
+  await cache.put(pushEventKey(tag), new Response(String(eventAt)));
 }
 
 self.addEventListener("message", (event) => {
@@ -107,32 +126,18 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
-async function bumpDirectCallBadge(tag) {
-  const cache = await caches.open(BADGE_CACHE);
-  const seenKey = new URL("__badge-tags", scopeUrl).href;
-  const response = await cache.match(seenKey);
-  const seen = response ? await response.json() : [];
-  const tags = Array.isArray(seen)
-    ? seen.filter((item) => typeof item === "string")
-    : [];
-  if (tags.includes(tag)) return;
-  tags.push(tag);
-  await cache.put(
-    seenKey,
-    new Response(JSON.stringify(tags.slice(-40)), {
-      headers: { "content-type": "application/json" },
-    }),
-  );
-  const count = await readBadgeCount();
-  await writeBadgeCount(count + 1);
-}
-
 self.addEventListener("push", (event) => {
-  const payload = event.data?.json?.() ?? {};
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {};
+  }
   const title = payload.title || "茶話会・みんなで脳活";
+  const tag = String(payload.tag || "sawakai-message");
   const options = {
     body: payload.body || "新しいメッセージが届きました。",
-    tag: payload.tag || "sawakai-message",
+    tag,
     renotify: true,
     icon: new URL("pwa-icon-192.png", scopeUrl).href,
     badge: new URL("pwa-icon-192.png", scopeUrl).href,
@@ -142,24 +147,23 @@ self.addEventListener("push", (event) => {
   };
   event.waitUntil(
     (async () => {
-      const clients = await self.clients.matchAll({
-        type: "window",
-        includeUncontrolled: true,
-      });
-      const tag = String(payload.tag || "");
-      const isDirectCall = tag.startsWith("dm-");
-      const appVisible = clients.some(
-        (client) => client.visibilityState === "visible",
-      );
+      const eventAt = Number(payload.eventAt) || 0;
+      if (eventAt && eventAt <= (await latestPushEventAt(tag))) return;
       await self.registration.showNotification(title, options);
+      if (eventAt) await rememberPushEventAt(tag, eventAt);
       if (payload.appBadge) {
-        if (isDirectCall) {
-          if (!appVisible) await bumpDirectCallBadge(tag);
+        const badgeCount = Number(payload.badgeCount);
+        if (Number.isFinite(badgeCount)) {
+          await writeBadgeCount(Math.max(0, Math.floor(badgeCount)));
         } else {
           const count = await readBadgeCount();
           await writeBadgeCount(count + 1);
         }
       }
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
       for (const client of clients) {
         client.postMessage({ type: "SAWAKAI_PUSH_RECEIVED" });
       }

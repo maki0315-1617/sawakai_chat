@@ -974,7 +974,7 @@ export default function DirectCall({
           notify(
             `${item.peer}さんから電話がありました`,
             `${formatDateTime(item.createdAt)}${countNote}`,
-            `dm-${item.id}`,
+            `dm-missed-${item.id}`,
           );
         });
       } catch {

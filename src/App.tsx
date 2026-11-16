@@ -120,6 +120,7 @@ type GroupSummary = {
   inviteCode: string;
   imageUrl?: string;
   unreadCount?: number;
+  callAttention?: number;
   latestMessage?: {
     sender: string;
     text: string;
@@ -5113,7 +5114,12 @@ export default function App() {
     0,
   );
   const directCallAttention = dmMissedCount + (dmIncoming ? 1 : 0);
-  const appIconBadgeCount = totalGroupUnread + directCallAttention;
+  const otherGroupCallAttention = groups.reduce((total, group) => {
+    if (group.id === activeGroupId) return total;
+    return total + (group.callAttention ?? 0);
+  }, 0);
+  const appIconBadgeCount =
+    totalGroupUnread + directCallAttention + otherGroupCallAttention;
 
   const leaveSession = () => {
     localStorage.removeItem(sessionStorageKey);
@@ -6418,8 +6424,12 @@ export default function App() {
       );
       return;
     }
+    let endpoint = "";
     try {
       await registerPushSubscription();
+      const registration = await navigator.serviceWorker.ready;
+      endpoint =
+        (await registration.pushManager.getSubscription())?.endpoint ?? "";
     } catch (reason) {
       setNotificationMessage(
         reason instanceof Error
@@ -6428,22 +6438,37 @@ export default function App() {
       );
       return;
     }
-    await showSystemNotification(
-      appName,
-      "通知は正しく設定されています。",
-      `test-${Date.now()}`,
-    );
+    if (!endpoint) {
+      setNotificationMessage(
+        "この端末のバックグラウンド通知が登録されていません。",
+      );
+      return;
+    }
+    const response = await fetch(`${apiRoot}/push/test`, {
+      method: "POST",
+      headers: apiHeaders(token, activeGroupId),
+      body: JSON.stringify({ endpoint }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setNotificationMessage(
+        typeof result.error === "string"
+          ? result.error
+          : "テスト通知を送れませんでした。",
+      );
+      return;
+    }
     setNotificationsEnabled(true);
     localStorage.setItem(notificationStorageKey, "enabled");
-    const badgeNavigator = navigator as Navigator & {
-      setAppBadge?: (count?: number) => Promise<void>;
-    };
-    if (appBadgeEnabled) {
-      await badgeNavigator.setAppBadge?.(1).catch(() => undefined);
-    }
     setNotificationMessage(
-      "テスト通知を送信しました。対応端末ではアイコンにバッジも表示します。",
+      "テストを送りました。画面を閉じて、通知とアイコンの数字を確認してください。",
     );
+    } catch (reason) {
+      setNotificationMessage(
+        reason instanceof Error
+          ? reason.message
+          : "テスト通知を送れませんでした。",
+      );
     } finally {
       setIsNotificationBusy(false);
     }
