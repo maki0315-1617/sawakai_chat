@@ -1734,7 +1734,10 @@ export default function DirectCall({
         const pending = [...missedRef.current]
           .filter((item) => !dismissedRef.current.has(item.id))
           .sort((a, b) => a.createdAt - b.createdAt);
+        // タップ前に先頭の相手だけ案内済みになっているので、表示中の相手を先に話す
+        const showing = pending.find((item) => item.id === missedPrompt?.id);
         const next =
+          showing ??
           pending.find((item) => !askedMissedRef.current.has(item.id)) ??
           pending[0];
         if (!next) return false;
