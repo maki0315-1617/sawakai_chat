@@ -1025,7 +1025,7 @@ export default function DirectCall({
   }, [phase]);
 
   useEffect(() => {
-    if (phase !== "incoming" || !visualSupportEnabled || document.hidden) return;
+    if (phase !== "incoming" || !visualSupportEnabled) return;
     const current = callRef.current;
     if (!current) return;
     const callId = current.id;
@@ -1058,39 +1058,71 @@ export default function DirectCall({
       window.clearTimeout(listenTimer);
       listenTimer = window.setTimeout(beginListen, spokenEchoGuardMs);
     };
-    const timer = window.setTimeout(() => {
+    let retryTimer = 0;
+    const resumeRing = () => {
+      if (!stopped && phaseRef.current === "incoming" && !incomingChoiceRef.current) {
+        setVoiceRingHeld(false);
+      }
+    };
+    const speakIncoming = () => {
       if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
+      if (document.hidden) return;
       if (announcedIncomingRef.current.has(callId)) {
         scheduleListen();
         return;
       }
       announcedIncomingRef.current.add(callId);
       const peer = callRef.current?.peer ?? current.peer;
-      beep([880], 0.25, 0.3);
-      beep([660], 0.25, 0.3, 0.3);
-      const resumeRing = () => {
-        if (!stopped && phaseRef.current === "incoming" && !incomingChoiceRef.current) {
-          setVoiceRingHeld(false);
+      const iphone = isIphoneDevice();
+      if (iphone) {
+        try {
+          const session = audioSession();
+          if (session && session.type !== "playback") session.type = "playback";
+        } catch {
+          // 古いiPhoneには音声セッションの切り替えがない
         }
-      };
+      } else {
+        beep([880], 0.25, 0.3);
+        beep([660], 0.25, 0.3, 0.3);
+      }
+      window.clearTimeout(releaseTimer);
       releaseTimer = window.setTimeout(resumeRing, 9000);
-      const lead = isIphoneDevice()
+      const lead = iphone
         ? "右を押すと出ます。左を押すと出ません。"
         : "出ます、または、はい、と言うと出ます。右を押すと出ます。左を押すと出ません。";
-      announceRef.current(
-        `${peer}さんから電話です。${lead}`,
-        () => {
-          window.clearTimeout(releaseTimer);
-          resumeRing();
-          scheduleListen();
-        },
-      );
-    }, 700);
+      const line = `${peer}さんから電話です。${lead}`;
+      const onSpoken = () => {
+        window.clearTimeout(releaseTimer);
+        window.clearTimeout(retryTimer);
+        resumeRing();
+        scheduleListen();
+      };
+      announceRef.current(line, onSpoken);
+      if (!iphone) return;
+      // iPhoneは最初の読み上げだけ消えることがある
+      retryTimer = window.setTimeout(() => {
+        if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
+        const synth = window.speechSynthesis;
+        if (!synth || synth.speaking || synth.pending) return;
+        synth.cancel();
+        window.setTimeout(() => {
+          if (stopped || phaseRef.current !== "incoming" || incomingChoiceRef.current) return;
+          announceRef.current(line, onSpoken);
+        }, 250);
+      }, 1500);
+    };
+    const onVisible = () => {
+      if (!document.hidden) speakIncoming();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setTimeout(speakIncoming, 700);
     return () => {
       stopped = true;
+      document.removeEventListener("visibilitychange", onVisible);
       window.clearTimeout(timer);
       window.clearTimeout(listenTimer);
       window.clearTimeout(releaseTimer);
+      window.clearTimeout(retryTimer);
       answerYesRef.current?.cancel();
       answerYesRef.current = null;
     };
@@ -1201,6 +1233,8 @@ export default function DirectCall({
       kind,
       missedRef.current.length,
     );
+    let retryTimer = 0;
+    let said = false;
     const speakMissed = () => {
       if (stopped) return;
       announceRef.current(
@@ -1212,22 +1246,61 @@ export default function DirectCall({
             },
       );
     };
-    // iPhoneでは直前の案内を止めた直後だと、次の読み上げも一緒に消える
-    if (iphone) speakTimer = window.setTimeout(speakMissed, 700);
-    else speakMissed();
-    if (iphone) return () => {
-      stopped = true;
-      window.clearTimeout(echoTimer);
-      window.clearTimeout(speakTimer);
-      stopListening();
-      if (callRef.current && visualSupportRef.current) endGuidanceRef.current?.();
+    const prepareIphoneAudio = () => {
+      try {
+        const session = audioSession();
+        if (session && session.type !== "playback") session.type = "playback";
+      } catch {
+        // 古いiPhoneには音声セッションの切り替えがない
+      }
     };
+    const retryMissed = () => {
+      retryTimer = window.setTimeout(() => {
+        if (stopped) return;
+        const synth = window.speechSynthesis;
+        if (!synth || synth.speaking || synth.pending) return;
+        synth.cancel();
+        window.setTimeout(() => {
+          if (stopped) return;
+          prepareIphoneAudio();
+          speakMissed();
+        }, 250);
+      }, 1500);
+    };
+    const armIphoneSpeak = () => {
+      if (stopped || said || document.hidden) return;
+      said = true;
+      prepareIphoneAudio();
+      window.clearTimeout(speakTimer);
+      speakTimer = window.setTimeout(() => {
+        speakMissed();
+        retryMissed();
+      }, 700);
+    };
+    if (iphone) {
+      const onVisible = () => {
+        if (!document.hidden) armIphoneSpeak();
+      };
+      document.addEventListener("visibilitychange", onVisible);
+      armIphoneSpeak();
+      return () => {
+        stopped = true;
+        document.removeEventListener("visibilitychange", onVisible);
+        window.clearTimeout(echoTimer);
+        window.clearTimeout(speakTimer);
+        window.clearTimeout(retryTimer);
+        stopListening();
+        if (callRef.current && visualSupportRef.current) endGuidanceRef.current?.();
+      };
+    }
+    speakMissed();
     const lateListen = window.setTimeout(startListen, 18000);
     const giveUp = window.setTimeout(finishAll, 25000);
     return () => {
       stopped = true;
       window.clearTimeout(echoTimer);
       window.clearTimeout(speakTimer);
+      window.clearTimeout(retryTimer);
       window.clearTimeout(lateListen);
       window.clearTimeout(giveUp);
       stopListening();

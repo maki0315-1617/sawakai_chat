@@ -625,10 +625,11 @@ function playNextSpeech() {
   synth.resume();
   synth.speak(utterance);
   keepSpeechAlive();
+  // iPhoneは読み上げ開始が遅れ、最初の案内だけ消えることがある
   window.setTimeout(() => {
     if (epoch !== speechEpoch || finished) return;
     if (!synth.speaking && !synth.pending) finish();
-  }, 350);
+  }, isIphoneDevice() ? 1200 : 350);
 }
 
 function speakJapanese(text: string, onEnd?: () => void, onError?: () => void) {
