@@ -1593,6 +1593,7 @@ async function showSystemNotification(
   title: string,
   body: string,
   tag: string,
+  renotify = false,
 ) {
   if (!("Notification" in window) || Notification.permission !== "granted") {
     return;
@@ -1603,9 +1604,10 @@ async function showSystemNotification(
       await registration.showNotification(title, {
         body,
         tag,
+        renotify,
         icon: `${import.meta.env.BASE_URL}pwa-icon-192.png`,
         badge: `${import.meta.env.BASE_URL}pwa-icon-192.png`,
-      });
+      } as NotificationOptions);
       return;
     }
   }
@@ -5018,6 +5020,7 @@ export default function App() {
   const dmInCallRef = useRef(dmInCall);
   dmInCallRef.current = dmInCall;
   const [dmIncoming, setDmIncoming] = useState(false);
+  const [dmMissedCount, setDmMissedCount] = useState(0);
   const [dmCallsLeft, setDmCallsLeft] = useState<number | null>(null);
   const [dmPeer, setDmPeer] = useState<string | null>(null);
   const dmControlRef = useRef<DirectCallControl | null>(null);
@@ -5109,6 +5112,8 @@ export default function App() {
     (total, group) => total + (group.unreadCount ?? 0),
     0,
   );
+  const directCallAttention = dmMissedCount + (dmIncoming ? 1 : 0);
+  const appIconBadgeCount = totalGroupUnread + directCallAttention;
 
   const leaveSession = () => {
     localStorage.removeItem(sessionStorageKey);
@@ -5588,30 +5593,39 @@ export default function App() {
 
   useEffect(() => {
     const pageTitle = `${groupName}｜${appName}`;
-    document.title = totalGroupUnread
-      ? `(${totalGroupUnread}) ${pageTitle}`
+    document.title = appIconBadgeCount
+      ? `(${appIconBadgeCount}) ${pageTitle}`
       : pageTitle;
     const badgeNavigator = navigator as Navigator & {
       setAppBadge?: (count?: number) => Promise<void>;
       clearAppBadge?: () => Promise<void>;
     };
-    const badgeCount = appBadgeEnabled ? totalGroupUnread : 0;
-    if (badgeCount > 0) {
-      void badgeNavigator.setAppBadge?.(badgeCount)?.catch(() => undefined);
-    } else {
-      void badgeNavigator.clearAppBadge?.()?.catch(() => undefined);
-    }
-    if ("serviceWorker" in navigator) {
-      void navigator.serviceWorker.ready
-        .then((registration) =>
-          registration.active?.postMessage({
-            type: "SAWAKAI_BADGE_SYNC",
-            count: badgeCount,
-          }),
-        )
-        .catch(() => undefined);
-    }
-  }, [appBadgeEnabled, groupName, totalGroupUnread]);
+    const applyBadge = () => {
+      const badgeCount = appBadgeEnabled ? appIconBadgeCount : 0;
+      if (badgeCount > 0) {
+        void badgeNavigator.setAppBadge?.(badgeCount)?.catch(() => undefined);
+      } else {
+        void badgeNavigator.clearAppBadge?.()?.catch(() => undefined);
+      }
+      if ("serviceWorker" in navigator) {
+        void navigator.serviceWorker.ready
+          .then((registration) =>
+            registration.active?.postMessage({
+              type: "SAWAKAI_BADGE_SYNC",
+              count: badgeCount,
+            }),
+          )
+          .catch(() => undefined);
+      }
+    };
+    applyBadge();
+    const handleVisibility = () => {
+      if (!document.hidden) applyBadge();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
+  }, [appBadgeEnabled, appIconBadgeCount, groupName]);
 
   useEffect(() => {
     if (!token || !activeGroupId || showWalking) return;
@@ -7262,12 +7276,22 @@ export default function App() {
               グループ通話に参加する
             </button>
             <button
+              aria-label={
+                directCallAttention > 0
+                  ? `1対1で電話する。着信${directCallAttention}件`
+                  : "1対1で電話する"
+              }
               className="voice-join-banner__button voice-direct-button"
               disabled={dmInCall || dmIncoming}
               onClick={openDirectCall}
               type="button"
             >
               1対1で電話する
+              {directCallAttention > 0 && (
+                <span className="group-unread-badge">
+                  {directCallAttention > 99 ? "99+" : directCallAttention}
+                </span>
+              )}
             </button>
           </div>
         )}
@@ -7339,8 +7363,12 @@ export default function App() {
             <span>グループ通話</span>
           </button>
           <button
-            aria-label="1対1で電話をする"
-            className="header-action"
+            aria-label={
+              directCallAttention > 0
+                ? `1対1で電話をする。着信${directCallAttention}件`
+                : "1対1で電話をする"
+            }
+            className="header-action header-action--calls"
             onClick={() => {
               setDirectAssistedPick(false);
               setShowDirectCall(true);
@@ -7348,6 +7376,11 @@ export default function App() {
           >
             <span aria-hidden="true" className="header-action__icon">🤙</span>
             <span>1対1</span>
+            {directCallAttention > 0 && (
+              <span className="group-unread-badge">
+                {directCallAttention > 99 ? "99+" : directCallAttention}
+              </span>
+            )}
           </button>
           <button
             aria-label="みんなで脳活タイムを開く"
@@ -8005,7 +8038,7 @@ export default function App() {
             "Notification" in window &&
             Notification.permission === "granted"
           ) {
-            void showSystemNotification(title, body, tag);
+            void showSystemNotification(title, body, tag, true);
           }
         }}
         onClosePanel={() => {
@@ -8022,6 +8055,7 @@ export default function App() {
         visualSupportEnabled={visualSupportEnabled}
         onMissedCount={(count) => {
           missedCountRef.current = count;
+          setDmMissedCount(count);
         }}
         onVisualGuideReady={handleGuideReady}
         endGuidance={visualSupportEnabled ? stopVisualGuidance : undefined}
@@ -8754,7 +8788,7 @@ export default function App() {
                     <strong>アプリアイコンに未読件数</strong>
                     <small>
                       {"setAppBadge" in navigator
-                        ? "ホーム画面のアイコンへ件数を表示します"
+                        ? "ホーム画面のアイコンへ、未読と1対1の着信件数を表示します"
                         : "この端末ではOSバッジに未対応です。画面内には表示します"}
                     </small>
                   </span>
@@ -8765,7 +8799,7 @@ export default function App() {
                       src="/pwa-icon-192.png"
                       width="38"
                     />
-                    <b>{totalGroupUnread || 1}</b>
+                    <b>{appIconBadgeCount || 1}</b>
                   </span>
                   <input
                     checked={appBadgeEnabled}

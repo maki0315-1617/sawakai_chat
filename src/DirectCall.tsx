@@ -942,8 +942,8 @@ export default function DirectCall({
         } else if (!current && result.incoming) {
           const incoming = result.incoming as DmCallView;
           changeCall(incoming, "incoming");
-          if (document.hidden && !notifiedRef.current.has(incoming.id)) {
-            notifiedRef.current.add(incoming.id);
+          if (!notifiedRef.current.has(`ring-${incoming.id}`)) {
+            notifiedRef.current.add(`ring-${incoming.id}`);
             notify(
               `${incoming.peer}さんから電話です`,
               "茶話会を開いて電話に出てください。",
@@ -965,14 +965,17 @@ export default function DirectCall({
           if (!waiting) onVisualGuideReadyRef.current?.(true);
         }
         missedCalls.forEach((item) => {
-          if (document.hidden && !notifiedRef.current.has(item.id)) {
-            notifiedRef.current.add(item.id);
-            notify(
-              `${item.peer}さんから電話がありました`,
-              formatDateTime(item.createdAt),
-              `dm-${item.id}`,
-            );
-          }
+          if (notifiedRef.current.has(`missed-${item.id}`)) return;
+          notifiedRef.current.add(`missed-${item.id}`);
+          const countNote =
+            missedCalls.length > 1
+              ? ` 着信は${missedCalls.length}件です。`
+              : "";
+          notify(
+            `${item.peer}さんから電話がありました`,
+            `${formatDateTime(item.createdAt)}${countNote}`,
+            `dm-${item.id}`,
+          );
         });
       } catch {
         if (!guideCheckedRef.current) {

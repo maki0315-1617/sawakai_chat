@@ -95,7 +95,6 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(writeBadgeCount(0));
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
@@ -107,6 +106,26 @@ self.addEventListener("notificationclick", (event) => {
       }),
   );
 });
+
+async function bumpDirectCallBadge(tag) {
+  const cache = await caches.open(BADGE_CACHE);
+  const seenKey = new URL("__badge-tags", scopeUrl).href;
+  const response = await cache.match(seenKey);
+  const seen = response ? await response.json() : [];
+  const tags = Array.isArray(seen)
+    ? seen.filter((item) => typeof item === "string")
+    : [];
+  if (tags.includes(tag)) return;
+  tags.push(tag);
+  await cache.put(
+    seenKey,
+    new Response(JSON.stringify(tags.slice(-40)), {
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  const count = await readBadgeCount();
+  await writeBadgeCount(count + 1);
+}
 
 self.addEventListener("push", (event) => {
   const payload = event.data?.json?.() ?? {};
@@ -122,18 +141,28 @@ self.addEventListener("push", (event) => {
     },
   };
   event.waitUntil(
-    Promise.all([
-      self.registration.showNotification(title, options),
-      payload.appBadge
-        ? readBadgeCount().then((count) => writeBadgeCount(count + 1))
-        : Promise.resolve(),
-      self.clients
-        .matchAll({ type: "window", includeUncontrolled: true })
-        .then((clients) => {
-          for (const client of clients) {
-            client.postMessage({ type: "SAWAKAI_PUSH_RECEIVED" });
-          }
-        }),
-    ]),
+    (async () => {
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      const tag = String(payload.tag || "");
+      const isDirectCall = tag.startsWith("dm-");
+      const appVisible = clients.some(
+        (client) => client.visibilityState === "visible",
+      );
+      await self.registration.showNotification(title, options);
+      if (payload.appBadge) {
+        if (isDirectCall) {
+          if (!appVisible) await bumpDirectCallBadge(tag);
+        } else {
+          const count = await readBadgeCount();
+          await writeBadgeCount(count + 1);
+        }
+      }
+      for (const client of clients) {
+        client.postMessage({ type: "SAWAKAI_PUSH_RECEIVED" });
+      }
+    })(),
   );
 });

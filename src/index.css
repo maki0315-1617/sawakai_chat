@@ -5513,6 +5513,11 @@ input:focus-visible {
   background: #f1f1ec;
 }
 
+.header-action--calls {
+  position: relative;
+  overflow: visible;
+}
+
 @media (min-width: 521px) {
   .header-action {
     font-size: 15px;
@@ -6379,8 +6384,18 @@ input:focus-visible {
 }
 
 .voice-direct-button {
+  position: relative;
   background: #1d4e89;
   border-color: #163a66;
+}
+
+.voice-direct-button .group-unread-badge {
+  top: 12px;
+  right: 12px;
+  min-width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  font-size: 18px;
 }
 
 .voice-leave-banner {
