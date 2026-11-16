@@ -5029,6 +5029,11 @@ export default function App() {
     () => localStorage.getItem(visualSupportStorageKey) === "enabled",
   );
   const [iphoneTapGuide, setIphoneTapGuide] = useState(false);
+  const [iphoneSpeechReady, setIphoneSpeechReady] = useState(
+    () =>
+      !isIphoneDevice() ||
+      localStorage.getItem(visualSupportStorageKey) !== "enabled",
+  );
   const visualSupportEnabledRef = useRef(visualSupportEnabled);
   visualSupportEnabledRef.current = visualSupportEnabled;
   const shouldAnnounceStartupRef = useRef(visualSupportEnabled);
@@ -7275,7 +7280,11 @@ export default function App() {
       type="button"
       onClick={() => {
         setIphoneTapGuide(false);
-        speakJapanese(`茶話会アプリが起動しました。${visualCallGuide}`);
+        setIphoneSpeechReady(true);
+        const spokeMissed = dmControlRef.current?.speakMissedGuide() === true;
+        if (!spokeMissed) {
+          speakJapanese(`茶話会アプリが起動しました。${visualCallGuide}`);
+        }
       }}
     >
       画面のどこかを、一度タップしてください
@@ -8225,6 +8234,7 @@ export default function App() {
           setDmMissedCount(count);
         }}
         onVisualGuideReady={handleGuideReady}
+        iphoneSpeechReady={iphoneSpeechReady}
         endGuidance={visualSupportEnabled ? stopVisualGuidance : undefined}
         showPanel={showDirectCall}
       />

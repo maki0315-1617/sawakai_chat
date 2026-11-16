@@ -50,12 +50,14 @@ type DirectCallProps = {
   endGuidance?: () => boolean;
   onMissedCount?: (count: number) => void;
   onVisualGuideReady?: (ready: boolean) => void;
+  iphoneSpeechReady?: boolean;
 };
 export type DirectCallControl = {
   startCall: (to: string) => void;
   hangUp: () => void;
   armCallYes: () => void;
   releaseCallYes: () => void;
+  speakMissedGuide: () => boolean;
 };
 
 const pollIntervalMs = 2000;
@@ -431,6 +433,7 @@ export default function DirectCall({
   endGuidance,
   onMissedCount,
   onVisualGuideReady,
+  iphoneSpeechReady = true,
 }: DirectCallProps) {
   const [call, setCall] = useState<DmCallView | null>(null);
   const [phase, setPhase] = useState<Phase | null>(null);
@@ -507,6 +510,7 @@ export default function DirectCall({
   const askedMissedRef = useRef(new Set<string>());
   const missedSequenceRef = useRef(false);
   const missedRef = useRef<DmCallView[]>([]);
+  const missedSpokenFromTapRef = useRef("");
   const guideCheckedRef = useRef(false);
   const guideAfterCallRef = useRef(false);
   const guideSawCallRef = useRef(false);
@@ -1016,6 +1020,9 @@ export default function DirectCall({
             missedCalls.length > 1
               ? ` 着信は${missedCalls.length}件です。`
               : "";
+          const voiceInstead =
+            isIphoneDevice() && visualSupportRef.current && !document.hidden;
+          if (voiceInstead) return;
           notify(
             `${item.peer}さんから電話がありました`,
             `${formatDateTime(item.createdAt)}${countNote}`,
@@ -1333,6 +1340,13 @@ export default function DirectCall({
       }, 600);
     };
     if (iphone) {
+      if (!iphoneSpeechReady) return;
+      if (missedSpokenFromTapRef.current === item.id) {
+        return () => {
+          iphoneHoldPlayback = false;
+          releaseIphonePlaybackSoon();
+        };
+      }
       const onVisible = () => {
         if (!document.hidden) speakIphoneMissed();
       };
@@ -1366,7 +1380,7 @@ export default function DirectCall({
     };
     // dismissMissed と startCall は、この着信のあいだだけ使う
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missedPrompt, call]);
+  }, [missedPrompt, call, iphoneSpeechReady]);
 
   useEffect(() => {
     if (phase !== "incall" || !visualSupportEnabled) return;
@@ -1712,6 +1726,45 @@ export default function DirectCall({
           startAssistedReplyWait(token, assistedFirstReplyWaitMs);
           beginCallYesRef.current();
         }, spokenEchoGuardMs);
+      },
+      speakMissedGuide: () => {
+        if (!isIphoneDevice() || !visualSupportRef.current || callRef.current) {
+          return false;
+        }
+        const pending = [...missedRef.current]
+          .filter((item) => !dismissedRef.current.has(item.id))
+          .sort((a, b) => a.createdAt - b.createdAt);
+        const next =
+          pending.find((item) => !askedMissedRef.current.has(item.id)) ??
+          pending[0];
+        if (!next) return false;
+        askedMissedRef.current.add(next.id);
+        const kind = missedGuideKind(
+          next.id,
+          pending,
+          missedSequenceRef.current,
+        );
+        const line = missedGuideSpeech(
+          next.peer,
+          myName,
+          true,
+          kind,
+          pending.length,
+        );
+        iphoneHoldPlayback = true;
+        try {
+          const session = audioSession();
+          if (session && session.type !== "playback") session.type = "playback";
+        } catch {
+          // 古いiPhoneには音声セッションの切り替えがない
+        }
+        missedSpokenFromTapRef.current = next.id;
+        setMissedPrompt(next);
+        announceRef.current(line, () => {
+          iphoneHoldPlayback = false;
+          releaseIphonePlaybackSoon();
+        });
+        return true;
       },
     };
   }
