@@ -18,6 +18,7 @@ import {
   isIphoneDevice,
   isVoiceSupported,
   listenOnce,
+  primeDesktopMicrophone,
   normalizeInviteCode,
   normalizeName,
   type VoiceSession,
@@ -590,6 +591,12 @@ function playNextSpeech() {
   const voice = japaneseVoice();
   if (voice) utterance.voice = voice;
   let finished = false;
+  let notified = false;
+  const notifyEnd = () => {
+    if (notified || epoch !== speechEpoch) return;
+    notified = true;
+    job.onEnd?.();
+  };
   const finish = () => {
     if (finished) return;
     finished = true;
@@ -598,17 +605,29 @@ function playNextSpeech() {
     speechPlaying = false;
     playNextSpeech();
   };
-  const safety = window.setTimeout(
-    finish,
-    Math.min(30000, Math.max(4000, job.text.length * 180)),
-  );
+  const estimated = Math.min(30000, Math.max(4000, job.text.length * 180));
+  const safety = window.setTimeout(() => {
+    if (finished || epoch !== speechEpoch) return;
+    const synth = window.speechSynthesis;
+    if (synth.speaking || synth.pending) {
+      window.setTimeout(() => {
+        if (finished || epoch !== speechEpoch) return;
+        if (synth.speaking || synth.pending) synth.cancel();
+        notifyEnd();
+        finish();
+      }, 8000);
+      return;
+    }
+    notifyEnd();
+    finish();
+  }, estimated);
   utterance.onend = () => {
     if (epoch !== speechEpoch) {
       finished = true;
       window.clearTimeout(safety);
       return;
     }
-    job.onEnd?.();
+    notifyEnd();
     finish();
   };
   utterance.onerror = (event) => {
@@ -621,6 +640,7 @@ function playNextSpeech() {
     else if (event.error !== "interrupted" && event.error !== "canceled") {
       job.onError?.();
     }
+    if (event.error !== "interrupted" && event.error !== "canceled") notifyEnd();
     finish();
   };
   synth.resume();
@@ -4900,6 +4920,103 @@ function JoinScreen({
   );
 }
 
+const appIconUrl = `${import.meta.env.BASE_URL}pwa-icon-192.png`;
+let faviconImage: Promise<HTMLImageElement | null> | null = null;
+let faviconRequest = 0;
+let osBadgeNeedsGesture = false;
+
+function loadAppIcon() {
+  if (!faviconImage) {
+    faviconImage = new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => resolve(null);
+      image.src = appIconUrl;
+    });
+  }
+  return faviconImage;
+}
+
+async function applyDesktopFaviconBadge(count: number) {
+  if (!isDesktopDevice()) return;
+  const request = ++faviconRequest;
+  const image = await loadAppIcon();
+  if (request !== faviconRequest) return;
+  let href = appIconUrl;
+  if (image && count > 0) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.drawImage(image, 0, 0, 64, 64);
+      context.fillStyle = "#b94b43";
+      context.beginPath();
+      context.arc(46, 18, 16, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#ffffff";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      const label = count > 99 ? "99+" : String(count);
+      context.font = `700 ${label.length > 2 ? 13 : 18}px sans-serif`;
+      context.fillText(label, 46, 19);
+      try {
+        href = canvas.toDataURL("image/png");
+      } catch {
+        href = appIconUrl;
+      }
+    }
+  }
+  const previous = document.querySelector<HTMLLinkElement>("link#sawakai-favicon");
+  const link = document.createElement("link");
+  link.id = "sawakai-favicon";
+  link.rel = "icon";
+  link.type = "image/png";
+  link.href = href;
+  previous?.remove();
+  document.head.appendChild(link);
+}
+
+let osBadgeDesired = 0;
+let osBadgeApplied = -1;
+let osBadgeChain: Promise<void> = Promise.resolve();
+
+function applyOsAppBadge(count: number) {
+  osBadgeDesired = count;
+  const run = osBadgeChain.then(flushOsAppBadge);
+  osBadgeChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+async function flushOsAppBadge() {
+  const badgeNavigator = navigator as Navigator & {
+    setAppBadge?: (count?: number) => Promise<void>;
+    clearAppBadge?: () => Promise<void>;
+  };
+  while (osBadgeApplied !== osBadgeDesired) {
+    const count = osBadgeDesired;
+    try {
+      if (count > 0) {
+        if (!badgeNavigator.setAppBadge) return;
+        await badgeNavigator.setAppBadge(count);
+      } else if (badgeNavigator.clearAppBadge) {
+        await badgeNavigator.clearAppBadge();
+      }
+      if (count === osBadgeDesired) {
+        osBadgeApplied = count;
+        osBadgeNeedsGesture = false;
+      }
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      osBadgeNeedsGesture =
+        count > 0 && (name === "NotAllowedError" || name === "SecurityError");
+      return;
+    }
+  }
+}
+
 export default function App() {
   const [showWalking, setShowWalking] = useState(false);
   const [scrollChatToEnd, setScrollChatToEnd] = useState(false);
@@ -5602,17 +5719,10 @@ export default function App() {
     document.title = appIconBadgeCount
       ? `(${appIconBadgeCount}) ${pageTitle}`
       : pageTitle;
-    const badgeNavigator = navigator as Navigator & {
-      setAppBadge?: (count?: number) => Promise<void>;
-      clearAppBadge?: () => Promise<void>;
-    };
     const applyBadge = () => {
       const badgeCount = appBadgeEnabled ? appIconBadgeCount : 0;
-      if (badgeCount > 0) {
-        void badgeNavigator.setAppBadge?.(badgeCount)?.catch(() => undefined);
-      } else {
-        void badgeNavigator.clearAppBadge?.()?.catch(() => undefined);
-      }
+      void applyDesktopFaviconBadge(badgeCount);
+      void applyOsAppBadge(badgeCount);
       if ("serviceWorker" in navigator) {
         void navigator.serviceWorker.ready
           .then((registration) =>
@@ -5628,9 +5738,15 @@ export default function App() {
     const handleVisibility = () => {
       if (!document.hidden) applyBadge();
     };
+    const retryOsBadge = () => {
+      if (osBadgeNeedsGesture) applyBadge();
+    };
     document.addEventListener("visibilitychange", handleVisibility);
-    return () =>
+    document.addEventListener("pointerdown", retryOsBadge);
+    return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
+      document.removeEventListener("pointerdown", retryOsBadge);
+    };
   }, [appBadgeEnabled, appIconBadgeCount, groupName]);
 
   useEffect(() => {
@@ -5826,8 +5942,23 @@ export default function App() {
       if (!target.closest("button, a, [role='button']")) return;
       endVisualGuidance();
     };
+    const primeMic = (event: Event) => {
+      if (isIphoneDevice()) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".voice-input, .walk-voice-button")
+      ) {
+        return;
+      }
+      primeDesktopMicrophone();
+    };
     document.addEventListener("pointerdown", stopOnAction, true);
-    return () => document.removeEventListener("pointerdown", stopOnAction, true);
+    document.addEventListener("pointerdown", primeMic, true);
+    return () => {
+      document.removeEventListener("pointerdown", stopOnAction, true);
+      document.removeEventListener("pointerdown", primeMic, true);
+    };
   }, [visualSupportEnabled]);
 
   const startSendListening = (start: () => void) => {
@@ -8812,9 +8943,11 @@ export default function App() {
                   <span>
                     <strong>アプリアイコンに未読件数</strong>
                     <small>
-                      {"setAppBadge" in navigator
-                        ? "ホーム画面のアイコンへ、未読と1対1の着信件数を表示します"
-                        : "この端末ではOSバッジに未対応です。画面内には表示します"}
+                      {isDesktopDevice()
+                        ? "PCのタブと、インストールしたアプリのアイコンへ、未読と1対1の着信件数を表示します"
+                        : "setAppBadge" in navigator
+                          ? "ホーム画面のアイコンへ、未読と1対1の着信件数を表示します"
+                          : "この端末ではOSバッジに未対応です。画面内には表示します"}
                     </small>
                   </span>
                   <span className="app-badge-preview" aria-hidden="true">

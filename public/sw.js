@@ -9,14 +9,34 @@ async function readBadgeCount() {
   return response ? Number(await response.text()) || 0 : 0;
 }
 
-async function writeBadgeCount(count) {
-  const cache = await caches.open(BADGE_CACHE);
-  await cache.put(badgeKey, new Response(String(count)));
-  try {
-    if (count > 0) await self.navigator?.setAppBadge?.(count);
-    else await self.navigator?.clearAppBadge?.();
-  } catch {
-    // ホーム画面に追加していないブラウザでは件数を付けられない
+let badgeDesired = 0;
+let badgeApplied = null;
+let badgeChain = Promise.resolve();
+
+function writeBadgeCount(count) {
+  badgeDesired = count;
+  const run = badgeChain.then(flushBadgeCount);
+  badgeChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function flushBadgeCount() {
+  while (badgeApplied !== badgeDesired) {
+    const count = badgeDesired;
+    const cache = await caches.open(BADGE_CACHE);
+    if (count !== badgeDesired) continue;
+    await cache.put(badgeKey, new Response(String(count)));
+    if (count !== badgeDesired) continue;
+    try {
+      if (count > 0) await self.navigator?.setAppBadge?.(count);
+      else await self.navigator?.clearAppBadge?.();
+    } catch {
+      // ホーム画面に追加していないブラウザでは件数を付けられない
+    }
+    if (count === badgeDesired) badgeApplied = count;
   }
 }
 

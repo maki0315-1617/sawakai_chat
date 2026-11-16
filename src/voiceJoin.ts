@@ -6,6 +6,7 @@ type Recognition = {
   onresult:
     | ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void)
     | null;
+  onstart: (() => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
   start: () => void;
@@ -33,6 +34,71 @@ function getRecognitionClass(): (new () => Recognition) | null {
 
 export function isVoiceSupported() {
   return getRecognitionClass() !== null;
+}
+
+let desktopMicPrimed = false;
+let desktopMicPriming = false;
+
+function releaseDesktopMic(stream: MediaStream) {
+  stream.getTracks().forEach((track) => track.stop());
+}
+
+// Windows の Chrome は、ボタンを押した直後以外で音声認識を始めると
+// 許可もマイク表示も出さない。押した瞬間に一度だけ開いて閉じておく。
+export function primeDesktopMicrophone() {
+  if (desktopMicPrimed || desktopMicPriming || !isDesktopDevice()) return;
+  const RecognitionClass = getRecognitionClass();
+  if (!RecognitionClass) {
+    desktopMicPriming = true;
+    void navigator.mediaDevices
+      ?.getUserMedia({ audio: true })
+      .then((stream) => {
+        desktopMicPrimed = true;
+        releaseDesktopMic(stream);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        desktopMicPriming = false;
+      });
+    return;
+  }
+  desktopMicPriming = true;
+  try {
+    const recognition = new RecognitionClass();
+    recognition.lang = "ja-JP";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = () => undefined;
+    recognition.onstart = () => {
+      desktopMicPrimed = true;
+      try {
+        recognition.abort();
+      } catch {
+        // 許可の確認が終わったので、案内を聞く前に止める
+      }
+    };
+    recognition.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        desktopMicPrimed = false;
+      }
+    };
+    recognition.onend = () => {
+      desktopMicPriming = false;
+    };
+    recognition.start();
+    window.setTimeout(() => {
+      if (!desktopMicPrimed) desktopMicPriming = false;
+    }, 5000);
+  } catch {
+    desktopMicPriming = false;
+    void navigator.mediaDevices
+      ?.getUserMedia({ audio: true })
+      .then((stream) => {
+        desktopMicPrimed = true;
+        releaseDesktopMic(stream);
+      })
+      .catch(() => undefined);
+  }
 }
 
 export function isIphoneDevice() {
@@ -316,6 +382,7 @@ export function listenForAnswer(handlers: {
   let decided = false;
   let current: Recognition | null = null;
   let failedStarts = 0;
+  let speechWaits = 0;
 
   const finish = (kind: "yes" | "other" | "stop") => {
     if (cancelled || decided) return;
@@ -333,6 +400,17 @@ export function listenForAnswer(handlers: {
 
   const start = () => {
     if (cancelled || decided) return;
+    if (
+      isDesktopDevice() &&
+      speechWaits < 40 &&
+      "speechSynthesis" in window &&
+      (window.speechSynthesis.speaking || window.speechSynthesis.pending)
+    ) {
+      speechWaits += 1;
+      window.setTimeout(start, 300);
+      return;
+    }
+    speechWaits = 0;
     const RecognitionClass = getRecognitionClass();
     if (!RecognitionClass) return;
     const recognition = new RecognitionClass();
@@ -369,10 +447,18 @@ export function listenForAnswer(handlers: {
       }
     };
     recognition.onerror = (event) => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        failedStarts += 1;
-        if (failedStarts >= 4) cancelled = true;
+      if (
+        event.error !== "not-allowed" &&
+        event.error !== "service-not-allowed" &&
+        event.error !== "audio-capture"
+      ) {
+        return;
       }
+      failedStarts += 1;
+      if (failedStarts === 1 && isDesktopDevice()) {
+        primeDesktopMicrophone();
+      }
+      if (failedStarts >= 4) cancelled = true;
     };
     recognition.onend = () => {
       if (cancelled || decided) return;
