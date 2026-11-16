@@ -7932,15 +7932,7 @@ export default function App() {
             ref={mediaInputRef}
             type="file"
           />
-          {visualSupportEnabled ? (
-            <button
-              className="talk-chat-button"
-              onClick={() => selectReplyMode("voice")}
-              type="button"
-            >
-              話してチャット
-            </button>
-          ) : (
+          {visualSupportEnabled ? null : (
             <div
               aria-label="返事のしかた"
               className="reply-tabs"
@@ -8325,7 +8317,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-          ) : (
+          ) : !visualSupportEnabled ? (
             <div className="compact-reply">
               {replyMode === "ai" ? (
                 <button
@@ -8337,23 +8329,28 @@ export default function App() {
                   <span>{suggestions[0] ?? fallbackSuggestions[0]}</span>
                   <small>この言葉で返す</small>
                 </button>
-              ) : (
+              ) : replyMode === "write" ? (
                 <button
                   className="compact-suggestion"
                   onClick={() => selectReplyMode(replyMode)}
                 >
-                  <span>
-                    {replyMode === "voice"
-                      ? "🎤 話して返事する"
-                      : "⌨ 書いて返事する"}
-                  </span>
+                  <span>⌨ 書いて返事する</span>
                   <small>押すと始まります</small>
                 </button>
-              )}
+              ) : null}
               {isLoadingSuggestions && (
                 <span className="compact-loading" aria-label="返信案を更新中" />
               )}
             </div>
+          ) : null}
+          {visualSupportEnabled && (
+            <button
+              className="talk-chat-button"
+              onClick={() => selectReplyMode("voice")}
+              type="button"
+            >
+              話してチャット
+            </button>
           )}
           <div className="app-copyright">© Ron AI Systems. All rights reserved.</div>
         </div>
