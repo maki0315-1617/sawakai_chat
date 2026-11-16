@@ -61,7 +61,7 @@ export type DirectCallControl = {
 const pollIntervalMs = 2000;
 const ringPollIntervalMs = 800;
 const assistedReplyWaitMs = 5000;
-const assistedFirstReplyWaitMs = 10000;
+const assistedFirstReplyWaitMs = 13000;
 const spokenEchoGuardMs = 1200;
 const defaultLimitSec = 180;
 const warningSec = 30;
@@ -298,6 +298,65 @@ function formatDateTime(value: number) {
   return `${date.getMonth() + 1}月${date.getDate()}日（${weekday}） ${formatClock(value)}`;
 }
 
+type MissedGuideKind = "only" | "first" | "next" | "last";
+
+function missedGuideKind(
+  currentId: string,
+  missed: { id: string }[],
+  sequenceOn: boolean,
+): MissedGuideKind {
+  const others = missed.filter((item) => item.id !== currentId).length;
+  if (!sequenceOn && others === 0) return "only";
+  if (!sequenceOn) return "first";
+  if (others === 0) return "last";
+  return "next";
+}
+
+function missedGuideSpeech(
+  peer: string,
+  myName: string,
+  iphone: boolean,
+  kind: MissedGuideKind,
+  count: number,
+) {
+  if (iphone) {
+    if (kind === "only") {
+      return `${peer}さんから電話がありました。右を押すとかけなおします。左を押すと茶話会の最初の画面に戻ります。`;
+    }
+    if (kind === "first") {
+      return `電話が${count}件ありました。最初は${peer}さんからです。右を押すとかけなおします。左を押すと次の人です。`;
+    }
+    if (kind === "next") {
+      return `次は${peer}さんからです。右を押すとかけなおします。左を押すと次の人です。`;
+    }
+    return `最後は${peer}さんからです。右を押すとかけなおします。左を押すと茶話会の最初の画面に戻ります。`;
+  }
+  if (kind === "only") {
+    return `${myName}さん、${peer}さんから電話がありました。かけ直しますか。`;
+  }
+  if (kind === "first") {
+    return `${myName}さん、電話が${count}件ありました。最初は${peer}さんからです。かけ直しますか。`;
+  }
+  if (kind === "next") return `次は${peer}さんからです。かけ直しますか。`;
+  return `最後は${peer}さんからです。かけ直しますか。`;
+}
+
+function missedGuideHint(
+  peer: string,
+  myName: string,
+  iphone: boolean,
+  kind: MissedGuideKind,
+  count: number,
+) {
+  const spoken = missedGuideSpeech(peer, myName, iphone, kind, count);
+  if (iphone) return spoken;
+  const side =
+    kind === "only" || kind === "last"
+      ? "左の戻るを押すか、いいえ、と言うと最初の画面に戻ります。"
+      : "左の次の人を押すか、いいえ、または、次へ、と言うと次の人です。";
+  return `${spoken}右のかけなおすを押すか、はい、または、かける、と言うとかけなおします。${side}`;
+}
+
 function historyLabel(call: DmCallView) {
   const outgoing = call.direction === "outgoing";
   if (call.status === "ended") {
@@ -356,6 +415,7 @@ export default function DirectCall({
   const [historyError, setHistoryError] = useState("");
   const [missed, setMissed] = useState<DmCallView[]>([]);
   const [missedPrompt, setMissedPrompt] = useState<DmCallView | null>(null);
+  const [missedSequenceOn, setMissedSequenceOn] = useState(false);
   const [showListenNotice, setShowListenNotice] = useState(
     () => localStorage.getItem(listenNoticeKey) !== "seen",
   );
@@ -405,6 +465,7 @@ export default function DirectCall({
   const beginCallYesRef = useRef<() => void>(() => undefined);
   const dismissedRef = useRef(new Set<string>());
   const askedMissedRef = useRef(new Set<string>());
+  const missedSequenceRef = useRef(false);
   const missedRef = useRef<DmCallView[]>([]);
   const guideCheckedRef = useRef(false);
   const guideAfterCallRef = useRef(false);
@@ -1036,7 +1097,9 @@ export default function DirectCall({
 
   useEffect(() => {
     if (!visualSupportEnabled || call || missedPrompt) return;
-    const next = missed.find((item) => !askedMissedRef.current.has(item.id));
+    const next = [...missed]
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .find((item) => !askedMissedRef.current.has(item.id));
     if (!next) return;
     askedMissedRef.current.add(next.id);
     setMissedPrompt(next);
@@ -1047,7 +1110,13 @@ export default function DirectCall({
   }, [missed.length]);
 
   useEffect(() => {
-    if (!missedPrompt) return;
+    if (missed.length > 0 || !missedSequenceRef.current) return;
+    missedSequenceRef.current = false;
+    setMissedSequenceOn(false);
+  }, [missed.length]);
+
+  useEffect(() => {
+    if (!missedPrompt || call) return;
     const item = missedPrompt;
     let stopped = false;
     let session: VoiceSession | null = null;
@@ -1060,7 +1129,29 @@ export default function DirectCall({
       }
       session = null;
     };
+    const iphone = isIphoneDevice();
+    const pending = missedRef.current.filter((entry) => entry.id !== item.id);
+    const kind = missedGuideKind(item.id, missedRef.current, missedSequenceRef.current);
+    const rememberSequence = () => {
+      if (kind !== "first") return;
+      missedSequenceRef.current = true;
+      setMissedSequenceOn(true);
+    };
+    const returnHome = () => {
+      onClosePanel();
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      onVisualGuideReadyRef.current?.(true);
+    };
     const finishNo = () => {
+      if (stopped) return;
+      stopped = true;
+      stopListening();
+      rememberSequence();
+      dismissMissed([item]);
+      setMissedPrompt(null);
+      if (pending.length === 0) returnHome();
+    };
+    const finishAll = () => {
       if (stopped) return;
       stopped = true;
       stopListening();
@@ -1068,17 +1159,17 @@ export default function DirectCall({
       current.forEach((entry) => askedMissedRef.current.add(entry.id));
       dismissMissed(current.length > 0 ? current : [item]);
       setMissedPrompt(null);
-      onVisualGuideReadyRef.current?.(true);
+      returnHome();
     };
     const finishYes = () => {
       if (stopped) return;
       stopped = true;
       stopListening();
+      rememberSequence();
       guideAfterCallRef.current = true;
       guideSawCallRef.current = false;
       dismissMissed([item]);
       setMissedPrompt(null);
-      const iphone = isIphoneDevice();
       if (iphone) playCallingRing();
       const say = () =>
         announceRef.current(`${item.peer}さんにかけ直します。`, () => {
@@ -1091,37 +1182,59 @@ export default function DirectCall({
     };
     missedChoiceRef.current = { yes: finishYes, no: finishNo };
     let echoTimer = 0;
+    let speakTimer = 0;
     const startListen = () => {
-      if (stopped || session || isIphoneDevice()) return;
+      if (stopped || session || iphone) return;
       beep([880], 0.12, 0.2);
       session = listenForAnswer({
         accept: isSpokenCallYes,
         onYes: () => finishYes(),
+        onNext: () => finishNo(),
         onOther: () => finishNo(),
       });
     };
-    announceRef.current(
-      `${myName}さん、${item.peer}さんから電話がありました。かけ直しますか。`,
-      () => {
-        echoTimer = window.setTimeout(startListen, spokenEchoGuardMs);
-      },
+    const missedLine = missedGuideSpeech(
+      item.peer,
+      myName,
+      iphone,
+      kind,
+      missedRef.current.length,
     );
-    if (isIphoneDevice()) return () => {
+    const speakMissed = () => {
+      if (stopped) return;
+      announceRef.current(
+        missedLine,
+        iphone
+          ? undefined
+          : () => {
+              echoTimer = window.setTimeout(startListen, spokenEchoGuardMs);
+            },
+      );
+    };
+    // iPhoneでは直前の案内を止めた直後だと、次の読み上げも一緒に消える
+    if (iphone) speakTimer = window.setTimeout(speakMissed, 700);
+    else speakMissed();
+    if (iphone) return () => {
       stopped = true;
       window.clearTimeout(echoTimer);
+      window.clearTimeout(speakTimer);
+      stopListening();
+      if (callRef.current && visualSupportRef.current) endGuidanceRef.current?.();
     };
     const lateListen = window.setTimeout(startListen, 18000);
-    const giveUp = window.setTimeout(finishNo, 25000);
+    const giveUp = window.setTimeout(finishAll, 25000);
     return () => {
       stopped = true;
       window.clearTimeout(echoTimer);
+      window.clearTimeout(speakTimer);
       window.clearTimeout(lateListen);
       window.clearTimeout(giveUp);
       stopListening();
+      if (callRef.current && visualSupportRef.current) endGuidanceRef.current?.();
     };
     // dismissMissed と startCall は、この着信のあいだだけ使う
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missedPrompt]);
+  }, [missedPrompt, call]);
 
   useEffect(() => {
     if (phase !== "incall" || !visualSupportEnabled) return;
@@ -1241,6 +1354,9 @@ export default function DirectCall({
   }, [showPanel, tab, request]);
 
   const others = members.filter((member) => member.name !== myName);
+  const missedKindNow = missedPrompt
+    ? missedGuideKind(missedPrompt.id, missed, missedSequenceOn)
+    : "only";
   const assistedChooser = assistedPick && visualSupportEnabled;
   const assistedNames = others.map((member) => member.name).join("\n");
   const busy = call !== null;
@@ -1614,9 +1730,13 @@ export default function DirectCall({
           <p className="dm-screen__label">着信がありました</p>
           <h2 className="dm-screen__name">{missedPrompt.peer}さん</h2>
           <p className="dm-screen__hint">
-            {isIphoneDevice()
-              ? "右のはいを押すとかけ直します。左のいいえを押すと消します。"
-              : "かけ直しますか。はいと言うとかけ直します。いいえと言うと消します。"}
+            {missedGuideHint(
+              missedPrompt.peer,
+              myName,
+              isIphoneDevice(),
+              missedKindNow,
+              missed.length,
+            )}
           </p>
           <div className="dm-screen__sides">
             <button
@@ -1625,7 +1745,7 @@ export default function DirectCall({
               type="button"
             >
               <small>左</small>
-              いいえ
+              {missedKindNow === "first" || missedKindNow === "next" ? "次の人" : "戻る"}
             </button>
             <button
               className="dm-side dm-side--answer"
@@ -1633,7 +1753,7 @@ export default function DirectCall({
               type="button"
             >
               <small>右</small>
-              はい
+              かけなおす
             </button>
           </div>
         </div>
