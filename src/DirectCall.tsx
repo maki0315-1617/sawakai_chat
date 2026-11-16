@@ -209,6 +209,7 @@ function playCallingRing() {
 }
 
 let iphonePlaybackRelease = 0;
+let iphoneHoldPlayback = false;
 
 function iphoneSpeechBusy() {
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
@@ -216,7 +217,7 @@ function iphoneSpeechBusy() {
 }
 
 function clearIphonePlayback() {
-  if (!isIphoneDevice() || callingRingOn || iphoneSpeechBusy()) return false;
+  if (!isIphoneDevice() || callingRingOn || iphoneHoldPlayback || iphoneSpeechBusy()) return false;
   try {
     const session = audioSession();
     if (session?.type === "playback") session.type = "auto";
@@ -1281,18 +1282,9 @@ export default function DirectCall({
       missedRef.current.length,
     );
     let retryTimer = 0;
-    let said = false;
-    const speakMissed = () => {
-      if (stopped) return;
-      announceRef.current(
-        missedLine,
-        iphone
-          ? undefined
-          : () => {
-              echoTimer = window.setTimeout(startListen, spokenEchoGuardMs);
-            },
-      );
-    };
+    let backupTimer = 0;
+    let heardMissed = false;
+    let missedAttempt = 0;
     const prepareIphoneAudio = () => {
       try {
         const session = audioSession();
@@ -1301,42 +1293,61 @@ export default function DirectCall({
         // 古いiPhoneには音声セッションの切り替えがない
       }
     };
-    const retryMissed = () => {
-      retryTimer = window.setTimeout(() => {
-        if (stopped) return;
-        const synth = window.speechSynthesis;
-        if (!synth || synth.speaking || synth.pending) return;
-        synth.cancel();
-        window.setTimeout(() => {
-          if (stopped) return;
-          prepareIphoneAudio();
-          speakMissed();
-        }, 250);
-      }, 1500);
+    const speakMissed = () => {
+      if (stopped) return;
+      announceRef.current(missedLine, () => {
+        echoTimer = window.setTimeout(startListen, spokenEchoGuardMs);
+      });
     };
-    const armIphoneSpeak = () => {
-      if (stopped || said || document.hidden) return;
-      said = true;
-      prepareIphoneAudio();
+    const speakIphoneMissed = () => {
+      if (stopped || heardMissed || missedAttempt >= 3 || document.hidden) return;
+      missedAttempt += 1;
       window.clearTimeout(speakTimer);
+      window.clearTimeout(retryTimer);
+      window.clearTimeout(backupTimer);
+      iphoneHoldPlayback = true;
+      prepareIphoneAudio();
+      // 着信案内の直後は、cancelした次の読み上げがiPhoneでは消える
+      endGuidanceRef.current?.();
       speakTimer = window.setTimeout(() => {
-        speakMissed();
-        retryMissed();
-      }, 700);
+        if (stopped || heardMissed) return;
+        prepareIphoneAudio();
+        const started = Date.now();
+        announceRef.current(missedLine, () => {
+          if (stopped || heardMissed) return;
+          if (Date.now() - started < 900) {
+            window.clearTimeout(backupTimer);
+            retryTimer = window.setTimeout(speakIphoneMissed, 400);
+            return;
+          }
+          heardMissed = true;
+          iphoneHoldPlayback = false;
+          releaseIphonePlaybackSoon();
+        });
+        backupTimer = window.setTimeout(() => {
+          if (stopped || heardMissed) return;
+          const synth = window.speechSynthesis;
+          if (synth && (synth.speaking || synth.pending)) return;
+          speakIphoneMissed();
+        }, 1800);
+      }, 600);
     };
     if (iphone) {
       const onVisible = () => {
-        if (!document.hidden) armIphoneSpeak();
+        if (!document.hidden) speakIphoneMissed();
       };
       document.addEventListener("visibilitychange", onVisible);
-      armIphoneSpeak();
+      speakIphoneMissed();
       return () => {
         stopped = true;
+        iphoneHoldPlayback = false;
         document.removeEventListener("visibilitychange", onVisible);
         window.clearTimeout(echoTimer);
         window.clearTimeout(speakTimer);
         window.clearTimeout(retryTimer);
+        window.clearTimeout(backupTimer);
         stopListening();
+        releaseIphonePlaybackSoon();
         if (callRef.current && visualSupportRef.current) endGuidanceRef.current?.();
       };
     }
