@@ -1449,6 +1449,7 @@ export default function DirectCall({
   };
   const assistedStop = () => {
     window.clearTimeout(assistedReplyTimerRef.current);
+    window.clearTimeout(assistedListenTimerRef.current);
     callYesReadyRef.current = false;
     callYesTokenRef.current += 1;
     callYesRef.current?.cancel();
@@ -1461,18 +1462,18 @@ export default function DirectCall({
     window.clearTimeout(assistedReplyTimerRef.current);
     callYesReadyRef.current = false;
     callYesTokenRef.current += 1;
-    if (!assistedPerson) return;
-    if (assistedLast) {
+    if (!assistedPerson || others.length === 0) return;
+    if (isIphoneDevice() && assistedLast) {
       announce("やめるが選択されました。");
       onClosePanel();
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       return;
     }
-    const nextIndex = assistedIndex + 1;
+    const nextIndex = assistedLast ? 0 : assistedIndex + 1;
     const next = others[nextIndex];
     if (!next) return;
     setAssistedWaitSec(assistedReplyWaitMs / 1000);
-    const last = nextIndex >= others.length - 1;
+    const last = others.length === 1 || nextIndex >= others.length - 1;
     assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
     const token = callYesTokenRef.current;
     announce(
@@ -1603,9 +1604,7 @@ export default function DirectCall({
                 ? assistedLast
                   ? "右を押すと電話がかかります。左を押すとやめます。"
                   : "右を押すと電話がかかります。左を押すと次の人です。"
-                : assistedLast
-                  ? `最後の人です。はい、または、かけるで呼び出します。次へでやめます。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`
-                  : `次へで次の人です。はい、または、かけるで呼び出します。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`}
+                : `次へで次の人です。はい、または、かけるで呼び出します。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`}
             </p>
             <div className="dm-screen__sides">
               <button
@@ -1614,7 +1613,7 @@ export default function DirectCall({
                 type="button"
               >
                 <small>左</small>
-                {assistedLast ? "やめる" : "次の人"}
+                {isIphoneDevice() && assistedLast ? "やめる" : "次の人"}
               </button>
               <button
                 className="dm-side dm-side--answer"

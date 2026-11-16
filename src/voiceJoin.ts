@@ -270,13 +270,14 @@ export function isSpokenNext(text: string) {
   return /次へ|つぎへ|次の人|つぎの人/.test(value);
 }
 
-/** 相手を順に呼んでいるとき、「終わる」「終わり」で呼び出しを閉じます。 */
+/** 相手を順に呼んでいるとき、「終わる」「終わり」「終了」で呼び出しを閉じます。 */
 export function isSpokenStop(text: string) {
   const value = normalizeSpeech(text);
-  if (/終わらない|終わりません|おわらない|おわりません/.test(value)) return false;
-  if (/と言う|というと|または|呼び出/.test(value)) return false;
-  if (value.length > 12) return false;
-  return /終わる|終わり|おわる|おわり/.test(value);
+  if (/終わらない|終わりません|おわらない|おわりません|終了しない|終了しません|しゅうりょうしない/.test(value)) {
+    return false;
+  }
+  if (/と言う|というと|または/.test(value)) return false;
+  return /終わる|終わって|終わり|おわる|おわって|おわり|終了|しゅうりょう/.test(value);
 }
 
 /** 相手を選んでいるとき、「はい」または「かける」で呼び出します。案内文そのものは除きます。 */
