@@ -6933,6 +6933,7 @@ export default function App() {
       trackEvent("message_sent");
       setSentNotice(true);
       window.setTimeout(() => setSentNotice(false), 2200);
+      if (visualSupportEnabledRef.current) speakJapanese("送信しました。");
     } catch (reason) {
       setPendingSend(null);
       setLoadError(
