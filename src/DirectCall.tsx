@@ -208,27 +208,65 @@ function playCallingRing() {
     .catch(() => noteRingFailed());
 }
 
-function stopCallingRing() {
-  callingRingOn = false;
-  ringFailCount = 0;
-  if (callingRingAudio) {
-    callingRingAudio.pause();
+let iphonePlaybackRelease = 0;
+
+function iphoneSpeechBusy() {
+  const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+  return Boolean(synth && (synth.speaking || synth.pending));
+}
+
+function clearIphonePlayback() {
+  if (!isIphoneDevice() || callingRingOn || iphoneSpeechBusy()) return false;
+  try {
+    const session = audioSession();
+    if (session?.type === "playback") session.type = "auto";
+  } catch {
+    // 古いiPhoneには音声セッションの切り替えがない
+  }
+  const media = navigator.mediaSession;
+  if (media) {
     try {
-      callingRingAudio.currentTime = 0;
+      media.playbackState = "none";
+      media.metadata = null;
     } catch {
-      // not loaded yet
+      // 待ち受けの再生表示を消せない端末では、音だけ止める
     }
   }
+  return true;
+}
+
+function releaseIphonePlaybackSoon() {
   if (!isIphoneDevice()) return;
-  window.setTimeout(() => {
-    if (callingRingOn) return;
+  window.clearInterval(iphonePlaybackRelease);
+  // この直後に「出ませんでした」の案内が始まるので、同じ瞬間には消さない
+  iphonePlaybackRelease = window.setInterval(() => {
+    if (!clearIphonePlayback()) return;
+    window.clearInterval(iphonePlaybackRelease);
+  }, 300);
+  window.setTimeout(() => window.clearInterval(iphonePlaybackRelease), 20000);
+}
+
+function stopCallingRing(forceRelease = false) {
+  callingRingOn = false;
+  ringFailCount = 0;
+  const audio = callingRingAudio;
+  callingRingAudio = null;
+  if (audio) {
+    audio.loop = false;
+    audio.pause();
+    audio.removeAttribute("src");
     try {
-      const session = audioSession();
-      if (session?.type === "playback") session.type = "auto";
+      audio.load();
     } catch {
-      // ignore
+      // まだ読み込んでいない
     }
-  }, 8000);
+    audio.remove();
+  }
+  if (forceRelease) {
+    window.clearInterval(iphonePlaybackRelease);
+    if (clearIphonePlayback() || !isIphoneDevice()) return;
+  }
+  releaseIphonePlaybackSoon();
 }
 
 function beep(frequencies: number[], seconds: number, volume: number, delay = 0) {
@@ -542,6 +580,12 @@ export default function DirectCall({
     hangingUpRef.current = true;
     const wasTalking = phaseRef.current === "incall";
     const action = phaseRef.current === "calling" ? "cancel" : phaseRef.current === "incoming" ? "reject" : "end";
+    if (!wasTalking) {
+      endGuidanceRef.current?.();
+      ringStopRef.current?.();
+      ringStopRef.current = null;
+      stopCallingRing(true);
+    }
     finishCall(wasTalking ? message : "");
     try {
       await request(`/dm/${current.id}/${action}`, { method: "POST" });
