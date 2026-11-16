@@ -992,6 +992,21 @@ input:focus-visible {
   border-color: var(--accent);
 }
 
+.talk-chat-button {
+  width: 100%;
+  min-height: 132px;
+  padding: 24px 16px;
+  color: #ffffff;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.3;
+  background: #9a3412;
+  border: 3px solid #7c2d12;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
 .read-aloud-button {
   min-height: 56px;
   padding: 10px 14px;

@@ -7932,36 +7932,46 @@ export default function App() {
             ref={mediaInputRef}
             type="file"
           />
-          <div
-            aria-label="返事のしかた"
-            className="reply-tabs"
-            role="tablist"
-          >
-            {(
-              [
-                ["ai", "🤖", "おまかせ"],
-                ["voice", "🎤", "話す"],
-                ["write", "⌨", "書く"],
-              ] as [ReplyMode, string, string][]
-            ).map(([mode, icon, label]) => (
-              <button
-                aria-selected={isReplyPanelOpen && replyMode === mode}
-                className={`reply-tab ${
-                  isReplyPanelOpen && replyMode === mode ? "is-active" : ""
-                }`}
-                key={mode}
-                onClick={() => selectReplyMode(mode)}
-                role="tab"
-                type="button"
-              >
-                <span aria-hidden="true" className="reply-tab__icon">
-                  {icon}
-                </span>
-                {label}
-              </button>
-            ))}
-          </div>
-          {isReplyPanelOpen && replyMode === "write" ? (
+          {visualSupportEnabled ? (
+            <button
+              className="talk-chat-button"
+              onClick={() => selectReplyMode("voice")}
+              type="button"
+            >
+              話してチャット
+            </button>
+          ) : (
+            <div
+              aria-label="返事のしかた"
+              className="reply-tabs"
+              role="tablist"
+            >
+              {(
+                [
+                  ["ai", "🤖", "おまかせ"],
+                  ["voice", "🎤", "話す"],
+                  ["write", "⌨", "書く"],
+                ] as [ReplyMode, string, string][]
+              ).map(([mode, icon, label]) => (
+                <button
+                  aria-selected={isReplyPanelOpen && replyMode === mode}
+                  className={`reply-tab ${
+                    isReplyPanelOpen && replyMode === mode ? "is-active" : ""
+                  }`}
+                  key={mode}
+                  onClick={() => selectReplyMode(mode)}
+                  role="tab"
+                  type="button"
+                >
+                  <span aria-hidden="true" className="reply-tab__icon">
+                    {icon}
+                  </span>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {!visualSupportEnabled && isReplyPanelOpen && replyMode === "write" ? (
             <div className="writing-panel">
               <div className="writing-panel__heading">
                 <label htmlFor="free-message">キーボードで書いて返事する</label>
@@ -8253,7 +8263,7 @@ export default function App() {
                 </button>
               </div>
             </>
-          ) : isReplyPanelOpen ? (
+          ) : !visualSupportEnabled && isReplyPanelOpen ? (
             <div className="expanded-replies">
               <div className="expanded-replies__heading">
                 <strong>返信を選ぶ</strong>
