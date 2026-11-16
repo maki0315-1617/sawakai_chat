@@ -355,6 +355,117 @@ export function isSpokenPlaceCall(text: string) {
   return /はい|かける|かけます/.test(value);
 }
 
+/** 起動直後の音声チャット開始。「話す」または「チャット」だけを受けます。 */
+export function isSpokenChatStart(text: string) {
+  const value = normalizeSpeech(text);
+  if (
+    /話さない|はなさない|チャットしない|ちゃっとしない|言って|または|ボタン|押す|電話がありました/.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+  if (value.length > 20) return false;
+  return /話す|はなす|チャット|ちゃっと/.test(value);
+}
+
+/** タップの直後に一度だけ開いて閉じ、案内のあとでもマイクを使えるようにします。 */
+export function unlockSpeechRecognition() {
+  const RecognitionClass = getRecognitionClass();
+  if (!RecognitionClass) return;
+  try {
+    const recognition = new RecognitionClass();
+    recognition.lang = "ja-JP";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = () => undefined;
+    recognition.onerror = () => undefined;
+    recognition.onend = () => undefined;
+    recognition.onstart = () => {
+      try {
+        recognition.abort();
+      } catch {
+        // 許可だけ確認して、案内のあいだはマイクを止める
+      }
+    };
+    recognition.start();
+    try {
+      recognition.abort();
+    } catch {
+      // まだ始まっていない
+    }
+  } catch {
+    // この端末では、案内のあとの画面タップでチャットを開く
+  }
+}
+
+export function listenForChatStart(handlers: {
+  gate: () => boolean;
+  onMatch: () => void;
+}): { stop: () => void } {
+  const RecognitionClass = getRecognitionClass();
+  if (!RecognitionClass) return { stop() {} };
+  let stopped = false;
+  let current: Recognition | null = null;
+  const start = () => {
+    if (stopped) return;
+    const recognition = new RecognitionClass();
+    current = recognition;
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      if (stopped || !handlers.gate()) return;
+      const rich = event as unknown as {
+        resultIndex?: number;
+        results: ArrayLike<
+          ArrayLike<{ transcript: string }> & { isFinal?: boolean }
+        >;
+      };
+      const from = rich.resultIndex ?? 0;
+      for (let index = from; index < rich.results.length; index += 1) {
+        const row = rich.results[index];
+        if (!row?.isFinal) continue;
+        const text = row[0]?.transcript ?? "";
+        if (!isSpokenChatStart(text)) continue;
+        stopped = true;
+        try {
+          recognition.abort();
+        } catch {
+          // already stopped
+        }
+        handlers.onMatch();
+        return;
+      }
+    };
+    recognition.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        stopped = true;
+      }
+    };
+    recognition.onend = () => {
+      if (stopped) return;
+      window.setTimeout(start, 400);
+    };
+    try {
+      recognition.start();
+    } catch {
+      // 案内のあとの開始ができない端末は、画面タップで開く
+    }
+  };
+  start();
+  return {
+    stop() {
+      stopped = true;
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+    },
+  };
+}
+
 /** 不在着信の「かけ直しますか」で、はい・かける、を受けます。案内文そのものは除きます。 */
 export function isSpokenCallYes(text: string) {
   const value = normalizeSpeech(text);
