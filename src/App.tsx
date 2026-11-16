@@ -5223,6 +5223,7 @@ export default function App() {
   });
   const [pendingSend, setPendingSend] = useState<ChatMessage | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const voiceDraftRef = useRef<HTMLTextAreaElement>(null);
   const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -8197,6 +8198,19 @@ export default function App() {
                     );
                   }}
                 />
+                <button
+                  className="keyboard-mic-button"
+                  onClick={() => {
+                    setVoiceCancelSignal((signal) => signal + 1);
+                    setVoiceInputStatus(
+                      "キーボードに出たマイクを押してお話しください。話した文字は、下の欄に入ります。",
+                    );
+                    voiceDraftRef.current?.focus();
+                  }}
+                  type="button"
+                >
+                  キーボードのマイクで話す
+                </button>
                 {visualSupportEnabled && (
                   <p className="visual-voice-command-help" role="status">
                     文章を話した後「送信」と言うと確認します。読み上げ後に「はい、送信」で送信、「修正」で言い直し、「取り消し」で中止できます。
@@ -8212,6 +8226,7 @@ export default function App() {
                   maxLength={500}
                   onChange={(event) => setDraft(event.target.value)}
                   placeholder="話した内容がここに表示されます。直すこともできます。"
+                  ref={voiceDraftRef}
                   rows={3}
                   value={draft}
                 />
