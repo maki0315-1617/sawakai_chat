@@ -4950,16 +4950,20 @@ async function applyDesktopFaviconBadge(count: number) {
     const context = canvas.getContext("2d");
     if (context) {
       context.drawImage(image, 0, 0, 64, 64);
-      context.fillStyle = "#b94b43";
+      const label = count > 99 ? "99+" : String(count);
+      const radius = label.length > 2 ? 22 : 20;
       context.beginPath();
-      context.arc(46, 18, 16, 0, Math.PI * 2);
+      context.arc(64 - radius, radius, radius, 0, Math.PI * 2);
+      context.fillStyle = "#b94b43";
       context.fill();
+      context.lineWidth = 4;
+      context.strokeStyle = "#ffffff";
+      context.stroke();
       context.fillStyle = "#ffffff";
       context.textAlign = "center";
       context.textBaseline = "middle";
-      const label = count > 99 ? "99+" : String(count);
-      context.font = `700 ${label.length > 2 ? 13 : 18}px sans-serif`;
-      context.fillText(label, 46, 19);
+      context.font = `700 ${label.length > 2 ? 16 : 24}px sans-serif`;
+      context.fillText(label, 64 - radius, radius + 1);
       try {
         href = canvas.toDataURL("image/png");
       } catch {
@@ -4967,14 +4971,14 @@ async function applyDesktopFaviconBadge(count: number) {
       }
     }
   }
-  const previous = document.querySelector<HTMLLinkElement>("link#sawakai-favicon");
-  const link = document.createElement("link");
-  link.id = "sawakai-favicon";
-  link.rel = "icon";
+  const link =
+    document.querySelector<HTMLLinkElement>("link#sawakai-favicon") ??
+    document.querySelector<HTMLLinkElement>("link[rel='icon']");
+  if (!link) return;
+  // 要素を作り直すと、Chromeはタブのアイコンを更新しない
+  if (link.getAttribute("href") === href) return;
   link.type = "image/png";
   link.href = href;
-  previous?.remove();
-  document.head.appendChild(link);
 }
 
 let osBadgeDesired = 0;
@@ -5736,15 +5740,22 @@ export default function App() {
     };
     applyBadge();
     const handleVisibility = () => {
-      if (!document.hidden) applyBadge();
+      if (document.hidden) return;
+      // Windowsは開いているウィンドウにだけ数字を描く。再表示のたびに付け直す
+      osBadgeApplied = -1;
+      applyBadge();
     };
     const retryOsBadge = () => {
-      if (osBadgeNeedsGesture) applyBadge();
+      if (!osBadgeNeedsGesture) return;
+      osBadgeApplied = -1;
+      applyBadge();
     };
     document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
     document.addEventListener("pointerdown", retryOsBadge);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
       document.removeEventListener("pointerdown", retryOsBadge);
     };
   }, [appBadgeEnabled, appIconBadgeCount, groupName]);
