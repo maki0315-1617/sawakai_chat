@@ -8084,7 +8084,7 @@ export default function App() {
             className="header-action"
             onClick={() => setShowVoice(true)}
           >
-            <span aria-hidden="true" className="header-action__icon">📞</span>
+            <span aria-hidden="true" className="header-action__icon">📱</span>
             <span>グループ通話</span>
           </button>
           <button
@@ -8099,7 +8099,7 @@ export default function App() {
               setShowDirectCall(true);
             }}
           >
-            <span aria-hidden="true" className="header-action__icon">🤙</span>
+            <span aria-hidden="true" className="header-action__icon">📞</span>
             <span>1対1</span>
             {directCallAttention > 0 && (
               <span className="group-unread-badge">
