@@ -7342,11 +7342,17 @@ export default function App() {
         }
         return;
       }
+      const folded = command
+        .replace(/終わ/g, "おわ")
+        .replace(/返事/g, "へんじ")
+        .replace(/話して/g, "はなして")
+        .replace(/言って/g, "いって");
+      const saidEnd = /(おわりです|おわりました|おわります|おわり)$/.test(folded);
+      const heardGuidance =
+        /おわったら|いってください|へんじをはなして|といって/.test(folded) ||
+        /^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(folded);
       const body = finishedReply(text).body.trim();
-      const heardGuidance = /終わったら|返事を話して|言ってください|言って下さい/.test(
-        command,
-      );
-      if (!body || heardGuidance) {
+      if (!saidEnd || !body || heardGuidance) {
         assistedShortCueRef.current = true;
         window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
         return;

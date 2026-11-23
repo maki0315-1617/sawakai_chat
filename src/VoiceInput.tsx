@@ -119,10 +119,31 @@ function compactSpeech(text: string) {
     .replace(/[\s　]/g, "");
 }
 
-/** 案内文そのもの。中の「終わり」では返事を終えない */
+function foldSpeech(text: string) {
+  return compactSpeech(text)
+    .replace(/終わ/g, "おわ")
+    .replace(/返事/g, "へんじ")
+    .replace(/話して/g, "はなして")
+    .replace(/言って/g, "いって")
+    .replace(/下さい/g, "ください")
+    .replace(/[。、．.!！?？]/g, "");
+}
+
+/** 案内文そのもの。ここにある「終わり」は、使用者の合図ではない */
 function isReplyGuidance(text: string) {
-  const value = compactSpeech(text).replace(/[。、．.!！?？]/g, "");
-  return /終わったら|言ってください|言って下さい|返事を話して|マイクの準備/.test(value);
+  const value = foldSpeech(text);
+  if (!value) return false;
+  return /おわったら|いってください|へんじをはなして|マイクのじゅんび|マイクの準備|といって/.test(
+    value,
+  );
+}
+
+/** 使用者が返事の最後に「終わり」と言ったときだけ真 */
+function userSaidEnd(text: string) {
+  if (!text.trim() || isReplyGuidance(text)) return false;
+  const value = foldSpeech(text);
+  if (/^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(value)) return false;
+  return /(おわりです|おわりました|おわります|おわり)$/.test(value);
 }
 
 /** 視覚サポートの確認で、発話全体が「送信」の指示か */
@@ -664,14 +685,19 @@ export default function VoiceInput({
       const spoken = readResults(event.results);
       utterance = `${spoken.finals}${spoken.interim}`.trim();
       const combined = `${carried}${utterance}`.trim();
-      if (!combined || isReplyGuidance(combined)) {
+      if (
+        !combined ||
+        isReplyGuidance(combined) ||
+        /^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(foldSpeech(combined))
+      ) {
         utterance = "";
         return;
       }
       heardRef.current = combined;
       const last = event.results[event.results.length - 1];
-      const held = textToHold(combined, Boolean(last?.isFinal));
-      if (held.done) {
+      if (!userSaidEnd(combined)) return;
+      const held = textToHold(combined, true);
+      if (held.done && held.text.trim()) {
         deliverHeld(held.text);
         return;
       }
@@ -689,8 +715,10 @@ export default function VoiceInput({
       for (let index = 1; index < count; index += 1) {
         const alt = choice[index]?.transcript?.trim() ?? "";
         if (!alt || alt.length + 2 < top.length) continue;
-        const attempt = textToHold(`${previous}${alt}`, true);
-        if (!attempt.done) continue;
+        const candidate = `${previous}${alt}`;
+        if (!userSaidEnd(candidate)) continue;
+        const attempt = textToHold(candidate, true);
+        if (!attempt.done || !attempt.text.trim()) continue;
         deliverHeld(attempt.text);
         return;
       }
@@ -715,13 +743,16 @@ export default function VoiceInput({
         if (timerRef.current !== null) window.clearInterval(timerRef.current);
         timerRef.current = null;
         recognitionRef.current = null;
-        const held = textToHold(heardRef.current);
-        if (heardRef.current.trim()) deliverHeld(held.text);
-        else {
-          deliveredRef.current = true;
-          setState("idle");
-          setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+        if (heardRef.current.trim() && userSaidEnd(heardRef.current)) {
+          const held = textToHold(heardRef.current, true);
+          if (held.text.trim()) {
+            deliverHeld(held.text);
+            return;
+          }
         }
+        deliveredRef.current = true;
+        setState("idle");
+        setError("終わり、と言うまで待っていました。もう一度、緑のボタンを押して話してください。");
         return;
       }
       if (utterance) {
@@ -823,14 +854,17 @@ export default function VoiceInput({
       const elapsed = Date.now() - startedAt;
       setSeconds(Math.floor(elapsed / 1000));
       if (elapsed < maxSeconds * 1000 || deliveredRef.current) return;
-      const held = textToHold(heardRef.current);
-      if (heardRef.current.trim()) deliverHeld(held.text);
-      else {
-        deliveredRef.current = true;
-        recognition.stop();
-        setState("idle");
-        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+      if (heardRef.current.trim() && userSaidEnd(heardRef.current)) {
+        const held = textToHold(heardRef.current, true);
+        if (held.text.trim()) {
+          deliverHeld(held.text);
+          return;
+        }
       }
+      deliveredRef.current = true;
+      recognition.stop();
+      setState("idle");
+      setError("終わり、と言うまで待っていました。もう一度、緑のボタンを押して話してください。");
     }, 250);
   };
 
