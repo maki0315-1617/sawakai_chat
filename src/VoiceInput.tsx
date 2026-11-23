@@ -352,6 +352,8 @@ export default function VoiceInput({
   holdForEndRef.current = holdForEnd;
   const heardRef = useRef("");
   const deliveredRef = useRef(false);
+  const recordArmedRef = useRef(true);
+  const armedAtRef = useRef(0);
   const lastRestartRef = useRef(restartSignal);
   const mountedRef = useRef(true);
   const generationRef = useRef(0);
@@ -381,6 +383,7 @@ export default function VoiceInput({
   };
 
   const stop = () => {
+    if (!recordArmedRef.current) return;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       return;
@@ -504,7 +507,7 @@ export default function VoiceInput({
       let lastVoiceAt = 0;
       let peakNow = 0;
       node.onaudioprocess = (event) => {
-        if (stoppedRef.current) return;
+        if (stoppedRef.current || !recordArmedRef.current) return;
         const data = event.inputBuffer.getChannelData(0);
         chunksRef.current.push(new Float32Array(data));
         let peak = 0;
@@ -536,7 +539,11 @@ export default function VoiceInput({
       setState("listening");
       timerRef.current = window.setInterval(() => {
         const now = Date.now();
-        const elapsed = now - startedAt;
+        if (!recordArmedRef.current) {
+          setSeconds(0);
+          return;
+        }
+        const elapsed = now - (armedAtRef.current || startedAt);
         setSeconds(Math.floor(elapsed / 1000));
         const heardVoice = lastVoiceAt > 0;
         if (
@@ -884,34 +891,54 @@ export default function VoiceInput({
   };
 
   const startListening = () => {
+    recordArmedRef.current = true;
+    armedAtRef.current = 0;
     onListeningStartRef.current?.();
     if (Date.now() < deviceModeUntil || !canRecord) beginDevice();
     else void begin();
   };
 
-  // 視覚サポートの返事は、オフの「話して入力」と同じ録音で聞く。案内のあとで開始する。
+  // 視覚サポートの返事は、オフの「話して入力」と同じ録音で聞く。
+  // マイクはボタンを押した瞬間に開く。案内が終わるまで声は捨て、そのあとで返事を録る。
   const startStandard = () => {
     if (disabled) return;
     if (localStorage.getItem(consentKey) !== "agreed") {
       setNeedsConsent(true);
       return;
     }
+    try {
+      const session = (
+        navigator as unknown as { audioSession?: { type: string } }
+      ).audioSession;
+      if (session?.type === "playback") session.type = "auto";
+    } catch {
+      // 古いiPhoneには音声セッションの切り替えがない
+    }
     cancel();
     const sessionAtStart = sessionRef.current;
-    const listen = () => {
-      if (!mountedRef.current || sessionRef.current !== sessionAtStart) return;
-      startListening();
-    };
-    if (navigator.mediaDevices?.getUserMedia) {
-      void navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then((stream) => {
-          stream.getTracks().forEach((track) => track.stop());
-        })
-        .catch(() => undefined);
+    const stillOpen = () =>
+      mountedRef.current && sessionRef.current === sessionAtStart;
+    if (Date.now() < deviceModeUntil || !canRecord) {
+      const listen = () => {
+        if (!stillOpen()) return;
+        startListening();
+      };
+      if (onCueRef.current) onCueRef.current(listen);
+      else listen();
+      return;
     }
-    if (onCueRef.current) onCueRef.current(listen);
-    else listen();
+    const arm = () => {
+      if (!stillOpen()) return;
+      chunksRef.current = [];
+      recordArmedRef.current = true;
+      armedAtRef.current = Date.now();
+    };
+    recordArmedRef.current = false;
+    armedAtRef.current = 0;
+    onListeningStartRef.current?.();
+    void begin();
+    if (onCueRef.current) onCueRef.current(arm);
+    else arm();
   };
 
   useEffect(() => {
