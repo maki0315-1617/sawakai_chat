@@ -5086,6 +5086,7 @@ export default function App() {
     () => localStorage.getItem(visualSupportStorageKey) === "enabled",
   );
   const [headerToolsCollapsed, setHeaderToolsCollapsed] = useState(false);
+  const [iphonePlainVoice, setIphonePlainVoice] = useState(false);
   const [iphoneTapGuide, setIphoneTapGuide] = useState(false);
   const [iphoneChatRetap, setIphoneChatRetap] = useState(false);
   const [iphoneChatTapReady, setIphoneChatTapReady] = useState(false);
@@ -6046,6 +6047,10 @@ export default function App() {
       window.speechSynthesis.cancel();
     }
   };
+
+  useEffect(() => {
+    if (!isReplyPanelOpen) setIphonePlainVoice(false);
+  }, [isReplyPanelOpen]);
 
   useEffect(() => {
     if (!shouldAnnounceStartupRef.current) return;
@@ -7280,6 +7285,17 @@ export default function App() {
       openDirectCall();
       return;
     }
+    if (isIphoneDevice()) {
+      setHeaderToolsCollapsed(true);
+      setIphonePlainVoice(true);
+      setVoiceAutoMode(false);
+      setVoiceConfirmationAutoStart(false);
+      setReplyModeState("voice");
+      localStorage.setItem(replyModeStorageKey, "voice");
+      trackEvent("reply_mode_voice");
+      setIsReplyPanelOpen(true);
+      return;
+    }
     openAssistedVoiceRef.current();
   };
   startupMissRef.current = () => {
@@ -8356,7 +8372,7 @@ export default function App() {
                 写真・動画を送る
               </button>
             </div>
-          ) : isReplyPanelOpen && replyMode === "voice" && visualSupportEnabled ? (
+          ) : isReplyPanelOpen && replyMode === "voice" && visualSupportEnabled && !iphonePlainVoice ? (
             createPortal(
               <div
                 aria-label="話して返事する"
@@ -8510,8 +8526,10 @@ export default function App() {
               />
               <div
                 className={`writing-panel voice-panel writing-panel--sheet${
-                  visualSupportEnabled ? " writing-panel--assisted" : ""
-                }`}
+                  visualSupportEnabled && !iphonePlainVoice
+                    ? " writing-panel--assisted"
+                    : ""
+                }${iphonePlainVoice ? " voice-panel--iphone-talk" : ""}`}
                 role="dialog"
                 aria-modal="true"
                 aria-label="話して返事する"
@@ -8565,20 +8583,22 @@ export default function App() {
                     );
                   }}
                 />
-                <button
-                  className="keyboard-mic-button"
-                  onClick={() => {
-                    setVoiceCancelSignal((signal) => signal + 1);
-                    setVoiceInputStatus(
-                      "キーボードに出たマイクを押してお話しください。話した文字は、下の欄に入ります。",
-                    );
-                    voiceDraftRef.current?.focus();
-                  }}
-                  type="button"
-                >
-                  キーボードのマイクで話す
-                </button>
-                {visualSupportEnabled && (
+                {!iphonePlainVoice && (
+                  <button
+                    className="keyboard-mic-button"
+                    onClick={() => {
+                      setVoiceCancelSignal((signal) => signal + 1);
+                      setVoiceInputStatus(
+                        "キーボードに出たマイクを押してお話しください。話した文字は、下の欄に入ります。",
+                      );
+                      voiceDraftRef.current?.focus();
+                    }}
+                    type="button"
+                  >
+                    キーボードのマイクで話す
+                  </button>
+                )}
+                {visualSupportEnabled && !iphonePlainVoice && (
                   <p className="visual-voice-command-help" role="status">
                     文章を話した後「送信」と言うと確認します。読み上げ後に「はい、送信」で送信、「修正」で言い直し、「取り消し」で中止できます。
                   </p>

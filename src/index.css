@@ -5830,6 +5830,10 @@ input:focus-visible {
   cursor: default;
 }
 
+.voice-panel--iphone-talk .voice-input__button {
+  min-height: 140px;
+}
+
 .keyboard-mic-button {
   width: 100%;
   min-height: 64px;
