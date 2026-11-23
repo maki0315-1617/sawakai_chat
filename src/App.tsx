@@ -7456,28 +7456,6 @@ export default function App() {
       voicePanelRef.current &&
       !showConfirmation
     ) {
-      if (isIphoneDevice()) {
-        const message = text
-          .replace(/返事を話してください。?/g, "")
-          .replace(/終わったら、終わり、と言ってください。?/g, "")
-          .replace(/終わったら、上の赤いボタンを押してください。?/g, "")
-          .replace(/上の赤いボタンを押してください。?/g, "")
-          .replace(/マイクの準備ができました。[^。]*。?/g, "")
-          .replace(/^(どうぞ。?)+/g, "")
-          .replace(/(どうぞ。?)+$/g, "")
-          .trim();
-        if (!message) return;
-        const finished = finishedReply(message);
-        const reply =
-          finished.done && !("send" in finished && finished.send)
-            ? finished.body.trim()
-            : message;
-        if (!reply) return;
-        setDraft(reply);
-        setVoiceConfirmationAutoStart(false);
-        prepareMessage(reply);
-        return;
-      }
       const sendContent = spokenSendContent(text);
       if (sendContent !== null) {
         const message = sendContent || draft.trim();
@@ -8389,7 +8367,6 @@ export default function App() {
                 <VoiceInput
                   apiRoot={apiRoot}
                   cancelSignal={voiceCancelSignal}
-                  confirmWithButton={isIphoneDevice()}
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
                   onCue={(done) => {
@@ -8397,9 +8374,7 @@ export default function App() {
                     assistedShortCueRef.current = false;
                     const cue = short
                       ? "どうぞ"
-                      : isIphoneDevice()
-                        ? "返事を話してください。終わったら、上の赤いボタンを押してください。どうぞ。"
-                        : "返事を話してください。終わったら、終わり、と言ってください。どうぞ。";
+                      : "返事を話してください。終わったら、終わり、と言ってください。どうぞ。";
                     let armed = false;
                     const finish = () => {
                       if (armed) return;
@@ -8409,7 +8384,7 @@ export default function App() {
                     if (!speakJapanese(cue, finish, finish)) finish();
                     window.setTimeout(
                       finish,
-                      short ? 2500 : isIphoneDevice() ? 20000 : 12000,
+                      short ? 2500 : 12000,
                     );
                   }}
                   autoStart={
@@ -8434,8 +8409,6 @@ export default function App() {
                           : status === "listening"
                             ? showConfirmation
                               ? "聞いています。「送信」「修正」「取り消し」とお話しください。"
-                              : isIphoneDevice()
-                              ? "聞いています。終わったら、上の赤いボタンを押してください。"
                               : "聞いています。終わったら、終わり、と言ってください。"
                             : status === "sending"
                               ? "文字にしています。少しお待ちください。"
@@ -8456,9 +8429,7 @@ export default function App() {
                 </button>
                 <div className="assisted-voice__body">
                   <p className="writing-panel__lead" role="status">
-                    {isIphoneDevice()
-                      ? "返事を話します。終わったら、上の赤いボタンを押してください。青いボタンで閉じます。"
-                      : "「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"}
+                    「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。
                   </p>
                   {voiceInputStatus && (
                     <p className="voice-input__status" role="status">

@@ -19,8 +19,6 @@ type VoiceInputProps = {
   cancelSignal?: number;
   /** 視覚サポートの返事だけ。「終わり」まで切らずに聞く */
   holdForEnd?: boolean;
-  /** iPhoneの返事。赤いボタンを押したとき確認へ進む */
-  confirmWithButton?: boolean;
   onCue?: (done: () => void) => void;
   startRef?: MutableRefObject<(() => void) | null>;
   restartSignal?: number;
@@ -252,7 +250,7 @@ export function finishedReply(text: string, loose = true) {
     const sent = trailingSendBody(compact.replace(/[。、．.!！?？]/g, ""));
     if (sent) return { done: true, body: text.trim(), send: true };
   }
-  if (isDesktopDevice()) {
+  if (isDesktopDevice() || isIphoneDevice()) {
     const body = desktopEndBody(compact, loose);
     if (body !== null) return { done: true, body };
     return { done: false, body: text.trim() };
@@ -324,7 +322,6 @@ export default function VoiceInput({
   onStatusChange,
   cancelSignal = 0,
   holdForEnd = false,
-  confirmWithButton = false,
   onCue,
   startRef,
   restartSignal = 0,
@@ -358,8 +355,6 @@ export default function VoiceInput({
   onCueRef.current = onCue;
   const holdForEndRef = useRef(holdForEnd);
   holdForEndRef.current = holdForEnd;
-  const confirmWithButtonRef = useRef(confirmWithButton);
-  confirmWithButtonRef.current = confirmWithButton;
   const heardRef = useRef("");
   const deliveredRef = useRef(false);
   const recordArmedRef = useRef(true);
@@ -586,16 +581,11 @@ export default function VoiceInput({
         const elapsed = now - (armedAtRef.current || startedAt);
         setSeconds(Math.floor(elapsed / 1000));
         const heardVoice = lastVoiceAt > 0;
-        const silenceMs = assistedIphone ? 4500 : silenceStopMs;
-        if (confirmWithButtonRef.current) {
-          if (elapsed >= maxSeconds * 1000) finishRef.current?.();
-          return;
-        }
         if (
           elapsed >= maxSeconds * 1000 ||
           (!holdForEndRef.current &&
             heardVoice &&
-            now - lastVoiceAt > silenceMs)
+            now - lastVoiceAt > silenceStopMs)
         ) {
           finishRef.current?.();
         }
@@ -1137,11 +1127,9 @@ export default function VoiceInput({
         type="button"
       >
         {state === "listening"
-          ? confirmWithButton
-            ? "確認する"
-            : holdForEnd
-              ? `終わり、と言う（${seconds}秒）`
-              : `⏹ 話し終わったら押す（${seconds}秒）`
+          ? holdForEnd
+            ? `終わり、と言う（${seconds}秒）`
+            : `⏹ 話し終わったら押す（${seconds}秒）`
           : state === "starting"
             ? "🎤 マイクを準備しています…"
           : state === "sending"
@@ -1152,11 +1140,9 @@ export default function VoiceInput({
         <p className="voice-input__status" role="status">
           {state === "starting"
             ? "マイクの準備をしています。"
-            : confirmWithButton
-              ? "聞いています。終わったら、この赤いボタンを押してください。"
-              : holdForEnd
-                ? "聞いています。終わったら、終わり、と言ってください。"
-                : "🔴 聞いています。ゆっくり話してください。"}
+            : holdForEnd
+              ? "聞いています。終わったら、終わり、と言ってください。"
+              : "🔴 聞いています。ゆっくり話してください。"}
           <button className="voice-input__cancel" onClick={cancel} type="button">
             やめる
           </button>
