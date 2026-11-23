@@ -7347,12 +7347,13 @@ export default function App() {
         .replace(/返事/g, "へんじ")
         .replace(/話して/g, "はなして")
         .replace(/言って/g, "いって");
-      const saidEnd = /(おわりです|おわりました|おわります|おわり)$/.test(folded);
-      const heardGuidance =
-        /おわったら|いってください|へんじをはなして|といって/.test(folded) ||
-        /^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(folded);
-      const body = finishedReply(text).body.trim();
-      if (!saidEnd || !body || heardGuidance) return;
+      const saidEnd = /(おわりです|おわりました|おわります|おわり)[ねよ]?$/.test(folded);
+      const body = finishedReply(text).body
+        .replace(/返事を話してください。?/g, "")
+        .replace(/終わったら、終わり、と言ってください。?/g, "")
+        .replace(/マイクの準備ができました。[^。]*どうぞ。?/g, "")
+        .trim();
+      if (!saidEnd || !body) return;
       setDraft(body);
       setVoiceConfirmationAutoStart(false);
       prepareMessage(body);

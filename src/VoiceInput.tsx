@@ -129,21 +129,30 @@ function foldSpeech(text: string) {
     .replace(/[。、．.!！?？]/g, "");
 }
 
-/** 案内文そのもの。ここにある「終わり」は、使用者の合図ではない */
+function replyAfterPrompt(text: string) {
+  return foldSpeech(text)
+    .replace(/へんじをはなしてください/g, "")
+    .replace(/おわったら/g, "")
+    .replace(/おわりといってください/g, "")
+    .replace(/といってください/g, "")
+    .replace(/いってください/g, "")
+    .replace(/マイクのじゅんびができました/g, "")
+    .replace(/マイクの準備ができました/g, "")
+    .replace(/どうぞ/g, "");
+}
+
+/** 案内文だけ。使用者の返事が無い */
 function isReplyGuidance(text: string) {
-  const value = foldSpeech(text);
-  if (!value) return false;
-  return /おわったら|いってください|へんじをはなして|マイクのじゅんび|マイクの準備|といって/.test(
-    value,
-  );
+  const value = replyAfterPrompt(text);
+  return value.length === 0;
 }
 
 /** 使用者が返事の最後に「終わり」と言ったときだけ真 */
 function userSaidEnd(text: string) {
-  if (!text.trim() || isReplyGuidance(text)) return false;
-  const value = foldSpeech(text);
-  if (/^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(value)) return false;
-  return /(おわりです|おわりました|おわります|おわり)$/.test(value);
+  const value = replyAfterPrompt(text);
+  if (!value) return false;
+  if (/^(おわりです|おわりました|おわります|おわり)+[ねよ]?$/.test(value)) return false;
+  return /(おわりです|おわりました|おわります|おわり)[ねよ]?$/.test(value);
 }
 
 /** 視覚サポートの確認で、発話全体が「送信」の指示か */
@@ -667,7 +676,6 @@ export default function VoiceInput({
     let utterance = "";
     let ready = false;
     let rearming = false;
-    let acceptEndAt = 0;
     const readResults = (
       results: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }>,
     ) => {
@@ -685,15 +693,7 @@ export default function VoiceInput({
       const spoken = readResults(event.results);
       utterance = `${spoken.finals}${spoken.interim}`.trim();
       const combined = `${carried}${utterance}`.trim();
-      if (
-        !combined ||
-        isReplyGuidance(combined) ||
-        /^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(foldSpeech(combined))
-      ) {
-        utterance = "";
-        return;
-      }
-      if (Date.now() < acceptEndAt && userSaidEnd(combined)) {
+      if (!combined || isReplyGuidance(combined)) {
         utterance = "";
         return;
       }
@@ -737,11 +737,7 @@ export default function VoiceInput({
       }
     };
     const restart = () => {
-      if (
-        heardRef.current.trim() &&
-        userSaidEnd(heardRef.current) &&
-        Date.now() >= acceptEndAt
-      ) {
+      if (heardRef.current.trim() && userSaidEnd(heardRef.current)) {
         const held = textToHold(heardRef.current, true);
         if (held.done && held.text.trim()) {
           deliverHeld(heardRef.current);
@@ -817,7 +813,6 @@ export default function VoiceInput({
           return;
         }
         ready = true;
-        acceptEndAt = Date.now() + 1500;
         try {
           recognition.start();
           setState("listening");
@@ -838,7 +833,7 @@ export default function VoiceInput({
     timerRef.current = window.setInterval(() => {
       const elapsed = Date.now() - startedAt;
       setSeconds(Math.floor(elapsed / 1000));
-      if (deliveredRef.current || Date.now() < acceptEndAt) return;
+      if (deliveredRef.current) return;
       if (!heardRef.current.trim() || !userSaidEnd(heardRef.current)) return;
       const held = textToHold(heardRef.current, true);
       if (held.done && held.text.trim()) deliverHeld(heardRef.current);
