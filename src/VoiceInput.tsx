@@ -399,8 +399,10 @@ export default function VoiceInput({
     releaseIphoneAudioSession();
   };
 
+  const deviceStopRef = useRef(false);
   const stop = () => {
-    if (!recordArmedRef.current) return;
+    deviceStopRef.current = true;
+    if (!recordArmedRef.current && !recognitionRef.current) return;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       return;
@@ -505,13 +507,13 @@ export default function VoiceInput({
     if (!Context) return;
     const hearOnIphone = isIphoneDevice() && Boolean(onCueRef.current);
     const plainIphone = isIphoneDevice() && iphonePlainVoice;
-    if (plainIphone) holdIphoneReplyMic(true);
-    if (hearOnIphone || plainIphone) ensureIphoneReplyMic();
+    if (plainIphone) {
+      holdIphoneReplyMic(true);
+      openMicSession(false);
+    } else if (hearOnIphone) ensureIphoneReplyMic();
     else openMicSession(assistedMicRef.current && replyReadyRef.current);
     const assistedIphone =
-      hearOnIphone ||
-      plainIphone ||
-      (assistedMicRef.current && isIphoneDevice());
+      hearOnIphone || (assistedMicRef.current && isIphoneDevice());
     let context: AudioContext;
     try {
       context = new Context();
@@ -567,7 +569,7 @@ export default function VoiceInput({
     };
     try {
       let stream = await requestMic();
-      if (hearOnIphone || plainIphone) {
+      if (hearOnIphone) {
         const track = stream.getAudioTracks()[0];
         if (!track || track.readyState !== "live") {
           stream.getTracks().forEach((item) => item.stop());
@@ -733,6 +735,100 @@ export default function VoiceInput({
     }
     setSeconds(0);
     setState("listening");
+    timerRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      setSeconds(Math.floor(elapsed / 1000));
+      if (elapsed >= maxSeconds * 1000) recognition.stop();
+    }, 250);
+  };
+
+  // iPhoneの「話して入力」は、録音ではなく端末の聞き取りで欄へ入れる
+  const beginPlainIphone = () => {
+    const Recognition = getDeviceRecognition();
+    if (!Recognition) {
+      void begin();
+      return;
+    }
+    holdIphoneReplyMic(true);
+    openMicSession(false);
+    deviceStopRef.current = false;
+    setError("");
+    const generation = ++generationRef.current;
+    const recognition = new Recognition();
+    recognition.lang = "ja-JP";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognitionRef.current = recognition;
+    cancelledRef.current = false;
+    let recognizedText = "";
+    let failed = false;
+    let restarts = 0;
+    let delivered = false;
+    const startedAt = Date.now();
+    const deliver = () => {
+      if (delivered || generation !== generationRef.current) return;
+      delivered = true;
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      recognitionRef.current = null;
+      holdIphoneReplyMic(false);
+      releaseIphoneAudioSession();
+      setState("idle");
+      const text = recognizedText.trim();
+      if (text && !failed && !cancelledRef.current) onTextRef.current(text);
+      else if (!failed && !cancelledRef.current) {
+        setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
+      }
+    };
+    recognition.onresult = (event) => {
+      if (generation !== generationRef.current || cancelledRef.current) return;
+      const text = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join("")
+        .trim();
+      if (text) recognizedText = text;
+    };
+    recognition.onerror = (event) => {
+      if (generation !== generationRef.current || cancelledRef.current) return;
+      if (event.error === "aborted" || event.error === "no-speech") return;
+      failed = true;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
+      } else {
+        setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
+      }
+    };
+    recognition.onend = () => {
+      if (generation !== generationRef.current) return;
+      if (cancelledRef.current) {
+        holdIphoneReplyMic(false);
+        releaseIphoneAudioSession();
+        return;
+      }
+      if (!deviceStopRef.current && !recognizedText && !failed && restarts < 2) {
+        restarts += 1;
+        openMicSession(false);
+        try {
+          recognition.start();
+          return;
+        } catch {
+          // 聞き取れなければ、下で案内する
+        }
+      }
+      window.setTimeout(deliver, 200);
+    };
+    try {
+      recognition.start();
+    } catch {
+      holdIphoneReplyMic(false);
+      releaseIphoneAudioSession();
+      recognitionRef.current = null;
+      setError("マイクを開始できませんでした。もう一度「話して入力」を押してください。");
+      return;
+    }
+    setSeconds(0);
+    setState("listening");
+    recordArmedRef.current = true;
     timerRef.current = window.setInterval(() => {
       const elapsed = Date.now() - startedAt;
       setSeconds(Math.floor(elapsed / 1000));
@@ -1002,6 +1098,10 @@ export default function VoiceInput({
     recordArmedRef.current = true;
     armedAtRef.current = 0;
     onListeningStartRef.current?.();
+    if (isIphoneDevice() && iphonePlainVoice) {
+      beginPlainIphone();
+      return;
+    }
     if (Date.now() < deviceModeUntil || !canRecord) beginDevice();
     else {
       if (isIphoneDevice() && onCueRef.current) holdIphoneReplyMic(true);
