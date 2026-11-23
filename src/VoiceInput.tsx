@@ -119,6 +119,12 @@ function compactSpeech(text: string) {
     .replace(/[\s　]/g, "");
 }
 
+/** 案内文そのもの。中の「終わり」では返事を終えない */
+function isReplyGuidance(text: string) {
+  const value = compactSpeech(text).replace(/[。、．.!！?？]/g, "");
+  return /終わったら|言ってください|言って下さい|返事を話して|マイクの準備/.test(value);
+}
+
 /** 視覚サポートの確認で、発話全体が「送信」の指示か */
 export function isSpokenSend(text: string) {
   let compact = compactSpeech(text).replace(/[。、．.!！?？]/g, "");
@@ -658,7 +664,10 @@ export default function VoiceInput({
       const spoken = readResults(event.results);
       utterance = `${spoken.finals}${spoken.interim}`.trim();
       const combined = `${carried}${utterance}`.trim();
-      if (!combined) return;
+      if (!combined || isReplyGuidance(combined)) {
+        utterance = "";
+        return;
+      }
       heardRef.current = combined;
       const last = event.results[event.results.length - 1];
       const held = textToHold(combined, Boolean(last?.isFinal));
@@ -768,16 +777,17 @@ export default function VoiceInput({
       ) {
         return;
       }
-      ready = true;
       carried = "";
       utterance = "";
       heardRef.current = "";
+      ready = false;
       rearming = true;
       try {
         recognition.abort();
       } catch {
         rearming = false;
       }
+      // 案内の「終わり」を返事と取らないよう、読み上げが消えてから聞き始める
       window.setTimeout(() => {
         rearming = false;
         if (
@@ -789,6 +799,7 @@ export default function VoiceInput({
         ) {
           return;
         }
+        ready = true;
         try {
           recognition.start();
           setState("listening");
@@ -797,7 +808,7 @@ export default function VoiceInput({
           setState("idle");
           setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
         }
-      }, 300);
+      }, desktop ? 500 : 1000);
     };
     try {
       if (!deferMic) recognition.start();

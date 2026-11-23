@@ -7343,7 +7343,10 @@ export default function App() {
         return;
       }
       const body = finishedReply(text).body.trim();
-      if (!body) {
+      const heardGuidance = /終わったら|返事を話して|言ってください|言って下さい/.test(
+        command,
+      );
+      if (!body || heardGuidance) {
         assistedShortCueRef.current = true;
         window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
         return;
