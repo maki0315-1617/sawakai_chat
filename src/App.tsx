@@ -7773,8 +7773,8 @@ export default function App() {
       className="iphone-tap-guide"
       type="button"
       onClick={() => {
-        if (guideSpeechBusy()) return;
         if (!iphoneChatWindowRef.current || iphoneChatMatchedRef.current) return;
+        endVisualGuidance();
         setIphoneChatRetap(false);
         iphoneRetapShownRef.current = false;
         window.clearTimeout(iphoneWindowTimerRef.current);
