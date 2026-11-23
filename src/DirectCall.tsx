@@ -592,10 +592,11 @@ export default function DirectCall({
 
   const showNotice = (message: string) => {
     if (!message) return;
-    if (visualSupportRef.current) {
+    if (visualSupportRef.current && !isIphoneDevice()) {
       announceRef.current(message);
       return;
     }
+    if (visualSupportRef.current) announceRef.current(message);
     setNotice(message);
   };
 
@@ -1168,7 +1169,7 @@ export default function DirectCall({
       window.clearTimeout(releaseTimer);
       releaseTimer = window.setTimeout(resumeRing, 9000);
       const lead = iphone
-        ? "出るときは、下の緑を押します。出ないときは、一番上の、出ない、を押してください。"
+        ? "右を押すと出ます。左を押すと出ません。"
         : "出ます、または、はい、と言うと出ます。出ないときは、一番上の、出ない、を押してください。";
       const line = `${peer}さんから電話です。${lead}`;
       const onSpoken = () => {
@@ -1409,7 +1410,7 @@ export default function DirectCall({
   }, [missedPrompt, call, iphoneSpeechReady]);
 
   useEffect(() => {
-    if (phase !== "calling" || !visualSupportEnabled) return;
+    if (phase !== "calling" || !visualSupportEnabled || isIphoneDevice()) return;
     const message =
       "呼び出し中です。やめるときは、一番上の、やめる、を押してください。";
     let timer = 0;
@@ -1420,7 +1421,7 @@ export default function DirectCall({
   }, [phase, visualSupportEnabled]);
 
   useEffect(() => {
-    if (phase !== "incall" || !visualSupportEnabled) return;
+    if (phase !== "incall" || !visualSupportEnabled || isIphoneDevice()) return;
     const message =
       "通話がつながりました。終わるときは、一番上の、電話を切る、を押してください。";
     let timer = 0;
@@ -1857,6 +1858,7 @@ export default function DirectCall({
 
   const topEndVisible =
     visualSupportEnabled &&
+    !isIphoneDevice() &&
     !!call &&
     (phase === "calling" ||
       phase === "incoming" ||
@@ -2170,12 +2172,12 @@ export default function DirectCall({
             <p className="dm-screen__hint">
               {visualSupportEnabled
                 ? isIphoneDevice()
-                  ? "出るときは、下の緑を押します。出ないときは、一番上の、出ない、を押してください。1回の通話は3分です。"
+                  ? "右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
                   : "出ます、または、はいと言うと出ます。出ないときは、一番上の、出ない、を押してください。1回の通話は3分です。"
                 : "1回の通話は3分までです"}
             </p>
           )}
-          {phase === "incoming" && visualSupportEnabled ? (
+          {phase === "incoming" && visualSupportEnabled && !isIphoneDevice() ? (
             <div className="dm-screen__sides">
               <button
                 className="dm-side dm-side--answer dm-side--full"
@@ -2188,6 +2190,37 @@ export default function DirectCall({
                 }}
                 type="button"
               >
+                出る
+              </button>
+            </div>
+          ) : phase === "incoming" && visualSupportEnabled ? (
+            <div className="dm-screen__sides">
+              <button
+                className="dm-side dm-side--decline"
+                onClick={() => {
+                  answerYesRef.current?.cancel();
+                  answerYesRef.current = null;
+                  incomingChoiceRef.current = true;
+                  announceRef.current("出ません。");
+                  void hangUp();
+                }}
+                type="button"
+              >
+                <small>左</small>
+                出ない
+              </button>
+              <button
+                className="dm-side dm-side--answer"
+                onClick={() => {
+                  answerYesRef.current?.cancel();
+                  answerYesRef.current = null;
+                  incomingChoiceRef.current = true;
+                  announceRef.current("出ます。この通話は3分です。");
+                  void answer();
+                }}
+                type="button"
+              >
+                <small>右</small>
                 出る
               </button>
             </div>
@@ -2278,7 +2311,7 @@ export default function DirectCall({
         </div>
       )}
 
-      {notice && !visualSupportEnabled && (
+      {notice && (!visualSupportEnabled || isIphoneDevice()) && (
         <div className="dm-notice-backdrop">
           <section
             aria-labelledby="dm-notice-title"
