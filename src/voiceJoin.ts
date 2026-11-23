@@ -482,6 +482,160 @@ export function listenForChatStart(handlers: {
 }
 
 /**
+ * Androidは、同じ認識を止めて開き直すとマイクが戻らない。
+ * 案内のあとは新しい認識を、区切らずに聞き続ける。
+ */
+function listenAndroidStartup(handlers: {
+  onMatch: (text?: string) => void;
+  onFailed: () => void;
+  onUnrecognized?: () => void;
+  accept?: (text: string) => boolean;
+}): { stop: () => void; prime: () => void; arm: () => void; listenNow: () => void } {
+  const RecognitionClass = getRecognitionClass();
+  const noop = { stop() {}, prime() {}, arm() {}, listenNow() {} };
+  if (!RecognitionClass) {
+    return {
+      ...noop,
+      arm() {
+        handlers.onFailed();
+      },
+      listenNow() {
+        handlers.onFailed();
+      },
+    };
+  }
+  const acceptText = (text: string) =>
+    handlers.accept ? handlers.accept(text) : isSpokenChatStart(text);
+  let stopped = false;
+  let matched = false;
+  let ready = false;
+  let generation = 0;
+  let current: Recognition | null = null;
+  const start = () => {
+    if (stopped || matched || !ready) return;
+    const token = ++generation;
+    const recognition = new RecognitionClass();
+    current = recognition;
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      if (token !== generation || !ready || stopped || matched) return;
+      const results = event.results as ArrayLike<
+        ArrayLike<{ transcript: string }> & { isFinal?: boolean }
+      >;
+      const latest = results[results.length - 1];
+      const text = latest?.[0]?.transcript ?? "";
+      if (!text.trim()) return;
+      if (acceptText(text)) {
+        matched = true;
+        ready = false;
+        generation += 1;
+        try {
+          recognition.abort();
+        } catch {
+          // already stopped
+        }
+        handlers.onMatch(text);
+        return;
+      }
+      if (!handlers.onUnrecognized || !latest?.isFinal) return;
+      ready = false;
+      generation += 1;
+      try {
+        recognition.abort();
+      } catch {
+        // already stopped
+      }
+      handlers.onUnrecognized();
+    };
+    recognition.onerror = (event) => {
+      if (token !== generation || stopped || matched) return;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        stopped = true;
+        ready = false;
+        handlers.onFailed();
+      }
+    };
+    recognition.onend = () => {
+      if (token !== generation || stopped || matched || !ready) return;
+      window.setTimeout(() => {
+        if (token !== generation || stopped || matched || !ready) return;
+        start();
+      }, 300);
+    };
+    try {
+      recognition.start();
+    } catch {
+      window.setTimeout(() => {
+        if (token !== generation || stopped || matched || !ready) return;
+        start();
+      }, 400);
+    }
+  };
+  const primeOnce = () => {
+    if (stopped || matched) return;
+    try {
+      const recognition = new RecognitionClass();
+      current = recognition;
+      recognition.lang = "ja-JP";
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.onresult = () => undefined;
+      recognition.onerror = () => undefined;
+      recognition.onend = () => undefined;
+      recognition.onstart = () => {
+        try {
+          recognition.abort();
+        } catch {
+          // 許可だけ確認して、案内のあいだは結果を使わない
+        }
+      };
+      recognition.start();
+    } catch {
+      // 案内のあと、arm でもう一度開く
+    }
+  };
+  return {
+    stop() {
+      stopped = true;
+      ready = false;
+      generation += 1;
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+    },
+    prime() {
+      primeOnce();
+    },
+    arm() {
+      if (stopped || matched) return;
+      ready = true;
+      generation += 1;
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+      window.setTimeout(start, 300);
+    },
+    listenNow() {
+      if (stopped || matched) return;
+      ready = true;
+      generation += 1;
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+      start();
+    },
+  };
+}
+
+/**
  * 話してチャットの入力と同じ聞き方です。
  * まずマイクを開き、案内が終わってから止めて、300ミリ秒後にもう一度開きます。
  * 電話では区切って聞き、途中の文字も見ます。案内のあいだの結果は使いません。
@@ -505,6 +659,7 @@ export function listenLikeChatInput(handlers: {
       },
     };
   }
+  if (isAndroidDevice()) return listenAndroidStartup(handlers);
   const desktop = isDesktopDevice();
   const recognition = new RecognitionClass();
   let stopped = false;

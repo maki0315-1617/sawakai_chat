@@ -13,6 +13,7 @@ import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput, { finishedReply, isSpokenSend, spokenSendContent } from "./VoiceInput";
 import {
   failureMessage,
+  isAndroidDevice,
   isDesktopDevice,
   isIphoneDevice,
   isVoiceSupported,
@@ -6069,6 +6070,10 @@ export default function App() {
         startChatListenRef.current();
         return;
       }
+      if (isAndroidDevice()) {
+        iphoneHeldListenRef.current?.prime();
+        return;
+      }
       primeDesktopMicrophone();
     };
     document.addEventListener("pointerdown", stopOnAction, true);
@@ -7090,6 +7095,7 @@ export default function App() {
     startupActiveRef.current = true;
     startupRetryRef.current = false;
     if (isDesktopDevice()) primeDesktopMicrophone();
+    if (isAndroidDevice()) iphoneHeldListenRef.current?.prime();
     const started = Date.now();
     let idleSince = 0;
     let sawSpeech = false;
@@ -7169,6 +7175,7 @@ export default function App() {
       ensureCommand();
       iphoneHeldListenRef.current?.listenNow();
     };
+    if (isAndroidDevice()) ensureCommand();
     const openWindow = () => {
       if (startupDoneRef.current || iphoneChatWindowRef.current) return;
       if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
