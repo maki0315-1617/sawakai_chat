@@ -7342,21 +7342,28 @@ export default function App() {
         }
         return;
       }
-      const folded = command
-        .replace(/終わ/g, "おわ")
-        .replace(/返事/g, "へんじ")
-        .replace(/話して/g, "はなして")
-        .replace(/言って/g, "いって");
-      const saidEnd = /(おわりです|おわりました|おわります|おわり)[ねよ]?$/.test(folded);
-      const body = finishedReply(text).body
+      const source = text
         .replace(/返事を話してください。?/g, "")
         .replace(/終わったら、終わり、と言ってください。?/g, "")
-        .replace(/マイクの準備ができました。[^。]*どうぞ。?/g, "")
+        .replace(/マイクの準備ができました。[^。]*。?/g, "")
         .trim();
-      if (!saidEnd || !body) return;
-      setDraft(body);
-      setVoiceConfirmationAutoStart(false);
-      prepareMessage(body);
+      if (!source) return;
+      const finished = finishedReply(source);
+      const body = finished.body
+        .replace(/^(どうぞ。?)+/g, "")
+        .replace(/(どうぞ。?)+$/g, "")
+        .trim();
+      if (finished.done && !("send" in finished && finished.send)) {
+        const message = [draft.trim(), body].filter(Boolean).join("\n").slice(0, 500);
+        if (!message) return;
+        setDraft(message);
+        setVoiceConfirmationAutoStart(false);
+        prepareMessage(message);
+        return;
+      }
+      if (body) {
+        setDraft([draft.trim(), body].filter(Boolean).join("\n").slice(0, 500));
+      }
       return;
     }
 
@@ -8259,7 +8266,6 @@ export default function App() {
                 <VoiceInput
                   apiRoot={apiRoot}
                   cancelSignal={voiceCancelSignal}
-                  holdForEnd={!showConfirmation}
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
                   onCue={(done) => {

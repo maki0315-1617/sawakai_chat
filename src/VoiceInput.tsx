@@ -352,7 +352,8 @@ export default function VoiceInput({
   holdForEndRef.current = holdForEnd;
   const heardRef = useRef("");
   const deliveredRef = useRef(false);
-  const lastRestartRef = useRef(0);
+  const lastRestartRef = useRef(restartSignal);
+  const mountedRef = useRef(true);
   const generationRef = useRef(0);
 
   useEffect(() => {
@@ -888,6 +889,31 @@ export default function VoiceInput({
     else void begin();
   };
 
+  // 視覚サポートの返事は、オフの「話して入力」と同じ録音で聞く。案内のあとで開始する。
+  const startStandard = () => {
+    if (disabled) return;
+    if (localStorage.getItem(consentKey) !== "agreed") {
+      setNeedsConsent(true);
+      return;
+    }
+    cancel();
+    const sessionAtStart = sessionRef.current;
+    const listen = () => {
+      if (!mountedRef.current || sessionRef.current !== sessionAtStart) return;
+      startListening();
+    };
+    if (navigator.mediaDevices?.getUserMedia) {
+      void navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          stream.getTracks().forEach((track) => track.stop());
+        })
+        .catch(() => undefined);
+    }
+    if (onCueRef.current) onCueRef.current(listen);
+    else listen();
+  };
+
   useEffect(() => {
     if (!autoStart || holdForEnd) {
       autoStartConsumedRef.current = false;
@@ -929,14 +955,16 @@ export default function VoiceInput({
   if (startRef) {
     startRef.current = () => {
       if (holdForEndRef.current) startAssisted(true);
+      else startStandard();
     };
   }
 
   useEffect(() => {
-    if (!holdForEnd || restartSignal === 0) return;
+    if (restartSignal === 0) return;
     if (lastRestartRef.current === restartSignal) return;
     lastRestartRef.current = restartSignal;
-    startAssisted(true, true);
+    if (holdForEnd) startAssisted(true, true);
+    else startStandard();
   }, [restartSignal, holdForEnd]);
 
   useEffect(() => {
@@ -961,6 +989,7 @@ export default function VoiceInput({
 
   useEffect(
     () => () => {
+      mountedRef.current = false;
       cancelledRef.current = true;
       abortRef.current?.abort();
       recognitionRef.current?.abort();
@@ -1066,7 +1095,7 @@ export default function VoiceInput({
                   localStorage.setItem(consentKey, "agreed");
                   setNeedsConsent(false);
                   if (holdForEnd) startAssisted(true);
-                  else startListening();
+                  else startStandard();
                 }}
               >
                 同意して使う
