@@ -6191,7 +6191,19 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!showConfirmation || !visualSupportEnabled || iphonePlainVoiceRef.current) return;
+    if (!showConfirmation || !visualSupportEnabled) return;
+    if (iphonePlainVoiceRef.current) {
+      let active = true;
+      const timer = window.setTimeout(() => {
+        if (!active) return;
+        useIphoneSpeaker();
+        speakJapanese(`送信前の確認です。内容は、${pendingMessage}。送るを押すと送信します。`);
+      }, 150);
+      return () => {
+        active = false;
+        window.clearTimeout(timer);
+      };
+    }
     let active = true;
     setVoiceConfirmationAutoStart(false);
     const timer = window.setTimeout(() => {
@@ -7269,6 +7281,17 @@ export default function App() {
   };
   armChatStartRef.current = armIphoneChatStart;
 
+  const openIphoneTalk = () => {
+    setHeaderToolsCollapsed(true);
+    setIphonePlainVoice(true);
+    setVoiceAutoMode(false);
+    setVoiceConfirmationAutoStart(false);
+    setReplyModeState("voice");
+    localStorage.setItem(replyModeStorageKey, "voice");
+    trackEvent("reply_mode_voice");
+    setIsReplyPanelOpen(true);
+  };
+
   startupHeardRef.current = (text) => {
     if (!startupActiveRef.current || startupDoneRef.current) return;
     const choice = startupChoice(text);
@@ -7288,14 +7311,7 @@ export default function App() {
       return;
     }
     if (isIphoneDevice()) {
-      setHeaderToolsCollapsed(true);
-      setIphonePlainVoice(true);
-      setVoiceAutoMode(false);
-      setVoiceConfirmationAutoStart(false);
-      setReplyModeState("voice");
-      localStorage.setItem(replyModeStorageKey, "voice");
-      trackEvent("reply_mode_voice");
-      setIsReplyPanelOpen(true);
+      openIphoneTalk();
       return;
     }
     openAssistedVoiceRef.current();
@@ -7418,6 +7434,7 @@ export default function App() {
       const next = `${draft ? `${draft}\n` : ""}${text}`.slice(0, 500);
       setDraft(next);
       setVoiceConfirmationAutoStart(false);
+      useIphoneSpeaker();
       speakDraft(next);
       return;
     }
@@ -8566,6 +8583,7 @@ export default function App() {
                 <VoiceInput
                   apiRoot={apiRoot}
                   cancelSignal={voiceCancelSignal}
+                  iphonePlainVoice={iphonePlainVoice}
                   autoStart={
                     visualSupportEnabled &&
                     !iphonePlainVoice &&
@@ -8759,7 +8777,14 @@ export default function App() {
           {visualSupportEnabled && (
             <button
               className="talk-chat-button"
-              onClick={() => selectReplyMode("voice")}
+              onClick={() => {
+                if (isIphoneDevice()) {
+                  stopStartupChoiceRef.current();
+                  openIphoneTalk();
+                  return;
+                }
+                selectReplyMode("voice");
+              }}
               type="button"
             >
               話してチャット

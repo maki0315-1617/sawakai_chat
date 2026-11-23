@@ -22,6 +22,8 @@ type VoiceInputProps = {
   onCue?: (done: () => void) => void;
   startRef?: MutableRefObject<(() => void) | null>;
   restartSignal?: number;
+  /** iPhoneの視覚サポートで、オフの「話す」と同じ録音にする */
+  iphonePlainVoice?: boolean;
 };
 
 type State = "idle" | "starting" | "listening" | "sending";
@@ -326,6 +328,7 @@ export default function VoiceInput({
   onCue,
   startRef,
   restartSignal = 0,
+  iphonePlainVoice = false,
 }: VoiceInputProps) {
   const [state, setState] = useState<State>("idle");
   const [seconds, setSeconds] = useState(0);
@@ -501,10 +504,14 @@ export default function VoiceInput({
     const Context = getAudioContextClass();
     if (!Context) return;
     const hearOnIphone = isIphoneDevice() && Boolean(onCueRef.current);
-    if (hearOnIphone) ensureIphoneReplyMic();
+    const plainIphone = isIphoneDevice() && iphonePlainVoice;
+    if (plainIphone) holdIphoneReplyMic(true);
+    if (hearOnIphone || plainIphone) ensureIphoneReplyMic();
     else openMicSession(assistedMicRef.current && replyReadyRef.current);
     const assistedIphone =
-      hearOnIphone || (assistedMicRef.current && isIphoneDevice());
+      hearOnIphone ||
+      plainIphone ||
+      (assistedMicRef.current && isIphoneDevice());
     let context: AudioContext;
     try {
       context = new Context();
@@ -538,7 +545,7 @@ export default function VoiceInput({
         };
     try {
       let stream = await navigator.mediaDevices.getUserMedia({ audio });
-      if (hearOnIphone) {
+      if (hearOnIphone || plainIphone) {
         const track = stream.getAudioTracks()[0];
         if (!track || track.readyState !== "live") {
           stream.getTracks().forEach((item) => item.stop());
