@@ -1,5 +1,5 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
-import { isDesktopDevice } from "./voiceJoin";
+import { isDesktopDevice, isIphoneDevice } from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -353,6 +353,8 @@ export default function VoiceInput({
   const deliveredRef = useRef(false);
   const recordArmedRef = useRef(true);
   const armedAtRef = useRef(0);
+  const assistedMicRef = useRef(false);
+  const replyReadyRef = useRef(false);
   const lastRestartRef = useRef(restartSignal);
   const mountedRef = useRef(true);
   const generationRef = useRef(0);
@@ -451,12 +453,28 @@ export default function VoiceInput({
     }
   };
 
+  const openMicSession = (recording: boolean) => {
+    if (!isIphoneDevice()) return;
+    try {
+      const session = (
+        navigator as unknown as { audioSession?: { type: string } }
+      ).audioSession;
+      if (!session) return;
+      // 案内のあいだはスピーカーで読む。読み上げが終わってからマイクを聞き直す
+      session.type = recording ? "play-and-record" : "auto";
+    } catch {
+      // 古いiPhoneには音声セッションの切り替えがない
+    }
+  };
+
   // iPhoneでは、ボタンを押した直後（同じ操作の中）で音声を準備する必要がある
   const begin = async () => {
     const generation = ++generationRef.current;
     setError("");
     const Context = getAudioContextClass();
     if (!Context) return;
+    openMicSession(assistedMicRef.current && replyReadyRef.current);
+    const assistedIphone = assistedMicRef.current && isIphoneDevice();
     let context: AudioContext;
     try {
       context = new Context();
@@ -475,11 +493,17 @@ export default function VoiceInput({
     setState("starting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: assistedIphone
+          ? {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: true,
+            }
+          : {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
       });
       streamRef.current = stream;
       if (cancelledRef.current) {
@@ -537,6 +561,10 @@ export default function VoiceInput({
       setState("listening");
       timerRef.current = window.setInterval(() => {
         const now = Date.now();
+        if (assistedIphone && recordArmedRef.current && context.state !== "running") {
+          openMicSession(true);
+          void context.resume().catch(() => undefined);
+        }
         if (!recordArmedRef.current) {
           setSeconds(0);
           return;
@@ -888,6 +916,8 @@ export default function VoiceInput({
   };
 
   const startListening = () => {
+    assistedMicRef.current = false;
+    replyReadyRef.current = false;
     recordArmedRef.current = true;
     armedAtRef.current = 0;
     onListeningStartRef.current?.();
@@ -903,14 +933,9 @@ export default function VoiceInput({
       setNeedsConsent(true);
       return;
     }
-    try {
-      const session = (
-        navigator as unknown as { audioSession?: { type: string } }
-      ).audioSession;
-      if (session?.type === "playback") session.type = "auto";
-    } catch {
-      // 古いiPhoneには音声セッションの切り替えがない
-    }
+    assistedMicRef.current = true;
+    replyReadyRef.current = false;
+    openMicSession(false);
     cancel();
     const sessionAtStart = sessionRef.current;
     const stillOpen = () =>
@@ -918,17 +943,50 @@ export default function VoiceInput({
     if (Date.now() < deviceModeUntil || !canRecord) {
       const listen = () => {
         if (!stillOpen()) return;
+        assistedMicRef.current = false;
         startListening();
       };
       if (onCueRef.current) onCueRef.current(listen);
       else listen();
       return;
     }
-    const arm = () => {
+    const enable = () => {
       if (!stillOpen()) return;
       chunksRef.current = [];
       recordArmedRef.current = true;
       armedAtRef.current = Date.now();
+    };
+    const arm = () => {
+      if (!stillOpen()) return;
+      if (!isIphoneDevice()) {
+        enable();
+        return;
+      }
+      window.setTimeout(() => {
+        void (async () => {
+          if (!stillOpen()) return;
+          replyReadyRef.current = true;
+          openMicSession(true);
+          const context = contextRef.current;
+          if (context && context.state !== "running") {
+            try {
+              await context.resume();
+            } catch {
+              // 下でマイクを開き直す
+            }
+          }
+          const track = streamRef.current?.getAudioTracks()[0];
+          if (!streamRef.current) {
+            enable();
+            return;
+          }
+          if (!track || track.readyState === "ended" || context?.state === "closed") {
+            cleanup();
+            await begin();
+          }
+          enable();
+        })();
+      }, 350);
     };
     recordArmedRef.current = false;
     armedAtRef.current = 0;
