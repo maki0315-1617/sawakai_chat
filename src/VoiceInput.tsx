@@ -29,6 +29,7 @@ type State = "idle" | "starting" | "listening" | "sending";
 const maxSeconds = 60;
 const silenceStopMs = 3000;
 const speechLevel = 0.02;
+let iphoneReplyMicGranted = false;
 const targetRate = 16000;
 const consentKey = "sawakai-voice-input-consent";
 const deviceFallbackMs = 5 * 60 * 1000;
@@ -359,6 +360,8 @@ export default function VoiceInput({
   const deliveredRef = useRef(false);
   const recordArmedRef = useRef(true);
   const armedAtRef = useRef(0);
+  const ignoreVoiceUntilRef = useRef(0);
+  const armTimerRef = useRef(0);
   const assistedMicRef = useRef(false);
   const replyReadyRef = useRef(false);
   const lastRestartRef = useRef(restartSignal);
@@ -377,6 +380,8 @@ export default function VoiceInput({
 
   const cleanup = () => {
     holdIphoneReplyMic(false);
+    window.clearTimeout(armTimerRef.current);
+    armTimerRef.current = 0;
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
     timerRef.current = null;
     if (nodeRef.current) {
@@ -491,6 +496,10 @@ export default function VoiceInput({
       setError("音声入力を準備できませんでした。もう一度お試しください。");
       return;
     }
+    if (generation !== generationRef.current) {
+      void context.close().catch(() => undefined);
+      return;
+    }
     contextRef.current = context;
     void context.resume().catch((reason) =>
       console.error("音声入力の準備を再試行します", reason),
@@ -513,16 +522,22 @@ export default function VoiceInput({
               autoGainControl: true,
             },
       });
-      streamRef.current = stream;
-      if (cancelledRef.current) {
-        cleanup();
-        setState("idle");
+      if (cancelledRef.current || generation !== generationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        void context.close().catch(() => undefined);
+        if (contextRef.current === context) contextRef.current = null;
+        if (generation === generationRef.current) setState("idle");
         return;
       }
+      streamRef.current = stream;
+      if (assistedIphone) iphoneReplyMicGranted = true;
       if (context.state !== "running") await context.resume();
-      if (cancelledRef.current) {
-        cleanup();
-        setState("idle");
+      if (cancelledRef.current || generation !== generationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        void context.close().catch(() => undefined);
+        if (streamRef.current === stream) streamRef.current = null;
+        if (contextRef.current === context) contextRef.current = null;
+        if (generation === generationRef.current) setState("idle");
         return;
       }
       const source = context.createMediaStreamSource(stream);
@@ -539,6 +554,7 @@ export default function VoiceInput({
       let peakNow = 0;
       node.onaudioprocess = (event) => {
         if (stoppedRef.current || !recordArmedRef.current) return;
+        if (Date.now() < ignoreVoiceUntilRef.current) return;
         const data = event.inputBuffer.getChannelData(0);
         chunksRef.current.push(new Float32Array(data));
         let peak = 0;
@@ -591,6 +607,7 @@ export default function VoiceInput({
         }
       }, 250);
     } catch (reason) {
+      if (generation !== generationRef.current) return;
       cleanup();
       setState("idle");
       if (cancelledRef.current) return;
@@ -935,7 +952,7 @@ export default function VoiceInput({
   };
 
   // 視覚サポートの返事は、オフの「話して入力」と同じ録音で聞く。
-  // マイクはボタンを押した瞬間に開く。案内が終わるまで声は捨て、そのあとで返事を録る。
+  // iPhoneは案内が終わってからマイクを開く。繰り返しても、前の録音が次の開始をずらさない。
   const startStandard = () => {
     if (disabled) return;
     if (localStorage.getItem(consentKey) !== "agreed") {
@@ -946,7 +963,6 @@ export default function VoiceInput({
     replyReadyRef.current = false;
     openMicSession(false);
     cancel();
-    if (isIphoneDevice()) holdIphoneReplyMic(true);
     const sessionAtStart = sessionRef.current;
     const stillOpen = () =>
       mountedRef.current && sessionRef.current === sessionAtStart;
@@ -963,9 +979,45 @@ export default function VoiceInput({
     const enable = () => {
       if (!stillOpen()) return;
       chunksRef.current = [];
+      if (isIphoneDevice()) ignoreVoiceUntilRef.current = Date.now() + 300;
       recordArmedRef.current = true;
       armedAtRef.current = Date.now();
+      replyReadyRef.current = true;
       setState("listening");
+    };
+    const waitForLiveTrack = async () => {
+      const started = Date.now();
+      while (Date.now() - started < 2500) {
+        if (!stillOpen()) return false;
+        const track = streamRef.current?.getAudioTracks()[0];
+        const context = contextRef.current;
+        if (track?.readyState === "live" && context?.state === "running") return true;
+        if (context && context.state !== "running" && context.state !== "closed") {
+          try {
+            await context.resume();
+          } catch {
+            // 次の確認で開き直す
+          }
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      return false;
+    };
+    const openReplyMic = async () => {
+      holdIphoneReplyMic(true);
+      replyReadyRef.current = false;
+      openMicSession(true);
+      await begin();
+      if (!stillOpen()) return false;
+      if (await waitForLiveTrack()) return true;
+      cleanup();
+      if (!stillOpen()) return false;
+      holdIphoneReplyMic(true);
+      replyReadyRef.current = false;
+      openMicSession(true);
+      await begin();
+      if (!stillOpen()) return false;
+      return waitForLiveTrack();
     };
     const arm = () => {
       if (!stillOpen()) return;
@@ -973,36 +1025,52 @@ export default function VoiceInput({
         enable();
         return;
       }
-      window.setTimeout(() => {
-        void (async () => {
-          if (!stillOpen()) return;
-          replyReadyRef.current = true;
-          openMicSession(true);
-          const context = contextRef.current;
-          if (context && context.state !== "running") {
-            try {
-              await context.resume();
-            } catch {
-              // 下でマイクを開き直す
-            }
-          }
-          const track = streamRef.current?.getAudioTracks()[0];
-          if (!streamRef.current) {
-            enable();
-            return;
-          }
-          if (!track || track.readyState === "ended" || context?.state === "closed") {
-            cleanup();
-            holdIphoneReplyMic(true);
-            await begin();
-          }
-          enable();
-        })();
-      }, 800);
+      window.clearTimeout(armTimerRef.current);
+      void (async () => {
+        if (!stillOpen()) return;
+        const live = await openReplyMic();
+        if (!stillOpen()) return;
+        if (!live) {
+          setState("idle");
+          setError("マイクを使えませんでした。もう一度、話して入力を押してください。");
+          return;
+        }
+        // セッション切替の音を返事に入れない
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        if (!stillOpen()) return;
+        enable();
+      })();
     };
     recordArmedRef.current = false;
     armedAtRef.current = 0;
+    ignoreVoiceUntilRef.current = 0;
     onListeningStartRef.current?.();
+    if (isIphoneDevice()) {
+      // 前の録音を閉じてから案内を読む。マイクは案内のあとで開くので、繰り返しても開始がずれない。
+      holdIphoneReplyMic(false);
+      openMicSession(false);
+      setState("starting");
+      const promptDone = iphoneReplyMicGranted
+        ? Promise.resolve()
+        : navigator.mediaDevices
+            .getUserMedia({ audio: true })
+            .then((stream) => {
+              iphoneReplyMicGranted = true;
+              stream.getTracks().forEach((track) => track.stop());
+            })
+            .catch(() => undefined);
+      const armAfterCue = () => {
+        if (!stillOpen()) return;
+        window.clearTimeout(armTimerRef.current);
+        void (async () => {
+          await promptDone;
+          arm();
+        })();
+      };
+      if (onCueRef.current) onCueRef.current(armAfterCue);
+      else armAfterCue();
+      return;
+    }
     void begin();
     if (onCueRef.current) onCueRef.current(arm);
     else arm();
@@ -1070,6 +1138,7 @@ export default function VoiceInput({
   const cancel = () => {
     cancelledRef.current = true;
     sessionRef.current += 1;
+    generationRef.current += 1;
     if (abortRef.current) abortRef.current.abort();
     if (recognitionRef.current) recognitionRef.current.abort();
     else finishRef.current?.();
@@ -1085,6 +1154,7 @@ export default function VoiceInput({
     const release = () => {
       cancelledRef.current = true;
       sessionRef.current += 1;
+      generationRef.current += 1;
       abortRef.current?.abort();
       recognitionRef.current?.abort();
       stoppedRef.current = true;

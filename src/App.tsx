@@ -8376,16 +8376,37 @@ export default function App() {
                       ? "どうぞ"
                       : "返事を話してください。終わったら、終わり、と言ってください。どうぞ。";
                     let armed = false;
+                    let backupTimer = 0;
                     const finish = () => {
                       if (armed) return;
                       armed = true;
+                      window.clearTimeout(backupTimer);
                       done();
                     };
-                    if (!speakJapanese(cue, finish, finish)) finish();
-                    window.setTimeout(
-                      finish,
-                      short ? 2500 : 12000,
-                    );
+                    if (isIphoneDevice()) endVisualGuidance();
+                    if (!speakJapanese(cue, finish, finish)) {
+                      finish();
+                      return;
+                    }
+                    if (!isIphoneDevice()) {
+                      backupTimer = window.setTimeout(finish, short ? 2500 : 12000);
+                      return;
+                    }
+                    const started = Date.now();
+                    let sawSpeech = false;
+                    const backup = () => {
+                      if (armed) return;
+                      const synth = window.speechSynthesis;
+                      const busy = synth.speaking || synth.pending;
+                      if (busy) sawSpeech = true;
+                      const elapsed = Date.now() - started;
+                      if ((!sawSpeech && elapsed < 8000) || (busy && elapsed < 20000)) {
+                        backupTimer = window.setTimeout(backup, 300);
+                        return;
+                      }
+                      finish();
+                    };
+                    backupTimer = window.setTimeout(backup, 300);
                   }}
                   autoStart={
                     showConfirmation &&
