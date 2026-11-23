@@ -6184,15 +6184,15 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!showConfirmation || !visualSupportEnabled) return;
+    const voiceReply = voicePanelRef.current;
+    if (!showConfirmation || (!visualSupportEnabled && !voiceReply)) return;
     let active = true;
     setVoiceConfirmationAutoStart(false);
     const timer = window.setTimeout(() => {
       confirmationHeadingRef.current?.focus();
-      const voiceReply = voicePanelRef.current;
       speakJapanese(
         voiceReply
-          ? `返信の確認です。内容は、${pendingMessage}。送信する場合は「送信」、やめる場合は「取り消し」とお話しください。声で答える場合は画面の「声で答える」を押してください。送信は5秒後に実行されます。`
+          ? `返信の確認です。内容は、${pendingMessage}。画面の「声で答える」を押してから、「送信」か「取り消し」とお話しください。送信は5秒後に実行されます。`
           : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         undefined,
         () => {
@@ -6208,7 +6208,13 @@ export default function App() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [showConfirmation, visualSupportEnabled, pendingMessage]);
+  }, [
+    showConfirmation,
+    visualSupportEnabled,
+    pendingMessage,
+    replyMode,
+    isReplyPanelOpen,
+  ]);
 
   const joinGroupCallByButton = () => {
     if (showVoiceRef.current || dmInCallRef.current || dmIncoming) return;
@@ -7409,8 +7415,8 @@ export default function App() {
     trackEvent("send_undone");
   };
 
-  const isAssistedVoiceConfirmation =
-    visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen;
+  const isVoiceReplyConfirmation =
+    replyMode === "voice" && isReplyPanelOpen;
 
   const confirmVoiceSend = () => {
     if (sendMessage()) {
@@ -7433,7 +7439,10 @@ export default function App() {
       .normalize("NFKC")
       .replace(/[\s。、．.!！?？]/g, "");
 
-    if (visualSupportEnabledRef.current && showConfirmation) {
+    if (
+      showConfirmation &&
+      (visualSupportEnabledRef.current || voicePanelRef.current)
+    ) {
       setVoiceConfirmationAutoStart(false);
       const hasSendCommand = /送信|そうしん/.test(command);
       const hasCancelCommand = /取り消し|取消|キャンセル/.test(command);
@@ -8557,6 +8566,7 @@ export default function App() {
                 <VoiceInput
                   apiRoot={apiRoot}
                   cancelSignal={voiceCancelSignal}
+                  startRef={assistedVoiceStartRef}
                   autoStart={
                     visualSupportEnabled &&
                     voiceAutoMode &&
@@ -8926,11 +8936,11 @@ export default function App() {
             aria-labelledby="confirm-title"
             aria-modal="true"
             className={`confirm-dialog${
-              isAssistedVoiceConfirmation ? " confirm-dialog--voice" : ""
+              isVoiceReplyConfirmation ? " confirm-dialog--voice" : ""
             }`}
             role="dialog"
           >
-            {!isAssistedVoiceConfirmation && (
+            {!isVoiceReplyConfirmation && (
               <button
                 aria-label="確認画面を閉じる"
                 className="dialog-close"
@@ -8939,16 +8949,39 @@ export default function App() {
                 <CloseIcon />
               </button>
             )}
-            {!isAssistedVoiceConfirmation && (
+            {!isVoiceReplyConfirmation && (
               <p className="dialog-eyebrow">送信前の確認</p>
             )}
             <h2 id="confirm-title" ref={confirmationHeadingRef} tabIndex={-1}>
-              {isAssistedVoiceConfirmation
+              {isVoiceReplyConfirmation
                 ? "内容を確認してください"
                 : "この返事を送りますか？"}
             </h2>
+            {isVoiceReplyConfirmation && (
+              <>
+                <button
+                  aria-label="声で答える"
+                  className="voice-confirmation-start"
+                  disabled={showVoice || dmInCall || voiceInputBusy}
+                  onClick={() => {
+                    setVoiceAutoMode(false);
+                    setVoiceConfirmationAutoStart(false);
+                    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+                    assistedVoiceStartRef.current?.();
+                  }}
+                  type="button"
+                >
+                  声で答える
+                </button>
+                {voiceInputStatus && (
+                  <p className="voice-confirmation-status" role="status">
+                    {voiceInputStatus}
+                  </p>
+                )}
+              </>
+            )}
             <div className="message-preview">{pendingMessage}</div>
-            {isAssistedVoiceConfirmation ? (
+            {isVoiceReplyConfirmation ? (
               <div
                 aria-label="声で伝える言葉"
                 className="voice-command-choices"
@@ -8966,37 +8999,17 @@ export default function App() {
                 「送る」を押すまで、自動で送信されることはありません。
               </p>
             )}
-            {isAssistedVoiceConfirmation && (
-              <>
-                {voiceInputStatus && (
-                  <p className="voice-confirmation-status" role="status">
-                    {voiceInputStatus}
-                  </p>
-                )}
-                <button
-                  className="read-aloud-button"
-                  disabled={!pendingMessage.trim()}
-                  onClick={readConfirmationAloud}
-                  type="button"
-                >
-                  {isSpeakingDraft ? "読み上げを止める" : "内容をもう一度聞く"}
-                </button>
-                <button
-                  className="read-aloud-button"
-                  disabled={showVoice || dmInCall || voiceInputBusy}
-                  onClick={() => {
-                    setVoiceAutoMode(false);
-                    setVoiceConfirmationAutoStart(false);
-                    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-                    assistedVoiceStartRef.current?.();
-                  }}
-                  type="button"
-                >
-                  声で答える
-                </button>
-              </>
+            {isVoiceReplyConfirmation && (
+              <button
+                className="read-aloud-button"
+                disabled={!pendingMessage.trim()}
+                onClick={readConfirmationAloud}
+                type="button"
+              >
+                {isSpeakingDraft ? "読み上げを止める" : "内容をもう一度聞く"}
+              </button>
             )}
-            {!isAssistedVoiceConfirmation && (
+            {!isVoiceReplyConfirmation && (
               <div className="dialog-actions">
                 <button
                   className="dialog-button dialog-button--back"

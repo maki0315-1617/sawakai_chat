@@ -5019,6 +5019,26 @@ input:focus-visible {
 
 .confirm-dialog--voice h2 {
   margin-right: 0;
+  font-size: 30px;
+}
+
+.voice-confirmation-start {
+  width: 100%;
+  min-height: 84px;
+  padding: 16px;
+  color: #ffffff;
+  background: #0b6b4f;
+  border: 3px solid #084e3a;
+  border-radius: 16px;
+  cursor: pointer;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: clamp(26px, 7vw, 34px);
+  font-weight: 800;
+}
+
+.voice-confirmation-start:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .dialog-actions {
