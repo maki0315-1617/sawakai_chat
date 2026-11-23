@@ -461,6 +461,100 @@ export function listenForChatStart(handlers: {
   };
 }
 
+/**
+ * iPhoneでは、タップの中でマイクを開き、案内が終わるまで結果を捨てます。
+ * 案内でマイクが止まっても、次のタップで同じ聞き取りをやり直します。
+ */
+export function listenForIphoneChatStart(handlers: {
+  gate: () => boolean;
+  onMatch: () => void;
+  onLost: () => void;
+}): { stop: () => void } {
+  const RecognitionClass = getRecognitionClass();
+  if (!RecognitionClass) {
+    handlers.onLost();
+    return { stop() {} };
+  }
+  let stopped = false;
+  let matched = false;
+  let lost = false;
+  let current: Recognition | null = null;
+  const lose = () => {
+    if (stopped || matched || lost) return;
+    lost = true;
+    stopped = true;
+    try {
+      current?.abort();
+    } catch {
+      // already stopped
+    }
+    handlers.onLost();
+  };
+  const start = () => {
+    if (stopped || matched) return;
+    const recognition = new RecognitionClass();
+    current = recognition;
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      if (stopped || matched || !handlers.gate()) return;
+      const rich = event as unknown as {
+        resultIndex?: number;
+        results: ArrayLike<
+          ArrayLike<{ transcript: string }> & { isFinal?: boolean }
+        >;
+      };
+      const from = rich.resultIndex ?? 0;
+      for (let index = from; index < rich.results.length; index += 1) {
+        const text = rich.results[index]?.[0]?.transcript ?? "";
+        if (!isSpokenChatStart(text)) continue;
+        matched = true;
+        stopped = true;
+        try {
+          recognition.abort();
+        } catch {
+          // already stopped
+        }
+        handlers.onMatch();
+        return;
+      }
+    };
+    recognition.onerror = (event) => {
+      if (stopped || matched) return;
+      if (
+        event.error === "not-allowed" ||
+        event.error === "service-not-allowed"
+      ) {
+        lose();
+      }
+    };
+    recognition.onend = () => {
+      if (stopped || matched) return;
+      window.setTimeout(() => {
+        if (stopped || matched) return;
+        start();
+      }, 250);
+    };
+    try {
+      recognition.start();
+    } catch {
+      lose();
+    }
+  };
+  start();
+  return {
+    stop() {
+      stopped = true;
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+    },
+  };
+}
+
 /** 不在着信の「かけ直しますか」で、はい・かける、を受けます。案内文そのものは除きます。 */
 export function isSpokenCallYes(text: string) {
   const value = normalizeSpeech(text);
