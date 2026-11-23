@@ -1048,11 +1048,11 @@ export default function DirectCall({
           const voiceInstead =
             isIphoneDevice() && visualSupportRef.current && !document.hidden;
           if (voiceInstead) return;
-          notify(
-            `${item.peer}さんから電話がありました`,
+            notify(
+              `${item.peer}さんから電話がありました`,
             `${formatDateTime(item.createdAt)}${countNote}`,
             `dm-missed-${item.id}`,
-          );
+            );
         });
       } catch {
         if (!guideCheckedRef.current) {
@@ -2265,13 +2265,13 @@ export default function DirectCall({
                 </>
               )}
               {!topEndVisible && (
-                <button
-                  className="dm-big-button dm-big-button--end"
-                  onClick={() => void hangUp()}
+              <button
+                className="dm-big-button dm-big-button--end"
+                onClick={() => void hangUp()}
                   type="button"
-                >
-                  {phase === "calling" ? "やめる" : "電話を切る"}
-                </button>
+              >
+                {phase === "calling" ? "やめる" : "電話を切る"}
+              </button>
               )}
             </div>
           )}

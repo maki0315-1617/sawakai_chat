@@ -480,14 +480,31 @@ export default function VoiceInput({
     }
   };
 
+  // 再生のままだと「終わり」「送信」が録音されない。一度だけ録音へ戻す
+  const ensureIphoneReplyMic = () => {
+    if (!isIphoneDevice()) return;
+    try {
+      const session = (
+        navigator as unknown as { audioSession?: { type: string } }
+      ).audioSession;
+      if (!session || session.type === "play-and-record") return;
+      session.type = "play-and-record";
+    } catch {
+      // 古いiPhoneには音声セッションの切り替えがない
+    }
+  };
+
   // iPhoneでは、ボタンを押した直後（同じ操作の中）で音声を準備する必要がある
   const begin = async () => {
     const generation = ++generationRef.current;
     setError("");
     const Context = getAudioContextClass();
     if (!Context) return;
-    openMicSession(assistedMicRef.current && replyReadyRef.current);
-    const assistedIphone = assistedMicRef.current && isIphoneDevice();
+    const hearOnIphone = isIphoneDevice() && Boolean(onCueRef.current);
+    if (hearOnIphone) ensureIphoneReplyMic();
+    else openMicSession(assistedMicRef.current && replyReadyRef.current);
+    const assistedIphone =
+      hearOnIphone || (assistedMicRef.current && isIphoneDevice());
     let context: AudioContext;
     try {
       context = new Context();
@@ -508,20 +525,27 @@ export default function VoiceInput({
     stoppedRef.current = false;
     chunksRef.current = [];
     setState("starting");
+    const audio = assistedIphone
+      ? {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        }
+      : {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        };
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: assistedIphone
-          ? {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: true,
-            }
-          : {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-      });
+      let stream = await navigator.mediaDevices.getUserMedia({ audio });
+      if (hearOnIphone) {
+        const track = stream.getAudioTracks()[0];
+        if (!track || track.readyState !== "live") {
+          stream.getTracks().forEach((item) => item.stop());
+          ensureIphoneReplyMic();
+          stream = await navigator.mediaDevices.getUserMedia({ audio });
+        }
+      }
       if (cancelledRef.current || generation !== generationRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         void context.close().catch(() => undefined);
@@ -948,7 +972,10 @@ export default function VoiceInput({
     armedAtRef.current = 0;
     onListeningStartRef.current?.();
     if (Date.now() < deviceModeUntil || !canRecord) beginDevice();
-    else void begin();
+    else {
+      if (isIphoneDevice() && onCueRef.current) holdIphoneReplyMic(true);
+      void begin();
+    }
   };
 
   // 視覚サポートの返事は、オフの「話して入力」と同じ録音で聞く。
