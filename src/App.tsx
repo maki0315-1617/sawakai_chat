@@ -13,7 +13,6 @@ import DirectCall, { type DirectCallControl } from "./DirectCall";
 import VoiceInput, { finishedReply, isSpokenSend, spokenSendContent } from "./VoiceInput";
 import {
   failureMessage,
-  isAndroidDevice,
   isDesktopDevice,
   isIphoneDevice,
   isVoiceSupported,
@@ -520,8 +519,15 @@ const textSizeStorageKey = "sawakai-text-size";
 const analyticsStorageKey = "sawakai-analytics";
 const themeStorageKey = "sawakai-theme";
 const visualSupportStorageKey = "sawakai-visual-support";
-const visualCallGuide =
-  "グループ通話は、画面の一番上の緑のボタンを一度押します。その下の青いボタンで、1対1の電話をします。電話が来たら、右を押すと出て、左を押すと出ません。";
+const visualCallButtons =
+  "グループ通話は、画面の一番上の緑のボタンを一度押します。その下の青いボタンで、1対1の電話をします。";
+const visualChatButtonGuide = "チャットは一番下の赤いボタンです。";
+const visualIncomingGuide =
+  "電話が来たら、右を押すと出て、左を押すと出ません。";
+const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
+const visualLoggedInGuide = `${visualCallButtons}${visualChatButtonGuide}${visualIncomingGuide}チャットは、話す、または、チャット、と言ってください。`;
+const visualListenCue =
+  "マイクの準備ができました。話す、または、チャット、と言ってください。どうぞ。";
 const replyModeStorageKey = "sawakai-reply-mode";
 type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
@@ -5966,10 +5972,8 @@ export default function App() {
     if (!shouldAnnounceStartupRef.current) return;
     shouldAnnounceStartupRef.current = false;
     if (localStorage.getItem(visualSupportStorageKey) !== "enabled") return;
-    const text = `茶話会アプリが起動しました。${visualCallGuide}${
-      token && profile
-        ? "チャットは、話す、または、チャット、と言ってください。"
-        : ""
+    const text = `茶話会アプリが起動しました。${
+      token && profile ? visualLoggedInGuide : visualCallGuide
     }`;
     if (isIphoneDevice()) {
       setIphoneTapGuide(true);
@@ -6071,18 +6075,7 @@ export default function App() {
   }, [iphoneChatTapReady]);
 
   const startSendListening = (start: () => void) => {
-    if (!isDesktopDevice() || !voicePanelRef.current) {
-      start();
-      return;
-    }
-    let started = false;
-    const go = () => {
-      if (started) return;
-      started = true;
-      start();
-    };
-    if (!speakJapanese("どうぞ", go, go)) go();
-    window.setTimeout(go, 2500);
+    start();
   };
 
   useEffect(() => {
@@ -6094,9 +6087,7 @@ export default function App() {
       const voiceReply = voicePanelRef.current;
       speakJapanese(
         voiceReply
-          ? isDesktopDevice()
-            ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」と、このあと「どうぞ」と言ってからお話しください。`
-            : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
+          ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
           : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         () => {
           if (
@@ -7047,9 +7038,9 @@ export default function App() {
     const startListening = () => {
       if (!iphoneChatWindowRef.current || iphoneChatListenRef.current) return;
       allowIphoneChatMic();
-      let handle: { stop: () => void } | null = null;
-      handle = listenForChatStart({
+      iphoneChatListenRef.current = listenForChatStart({
         gate: () => {
+          if (guideSpeechBusy()) return false;
           if (!iphoneChatWindowRef.current) return false;
           if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
             return false;
@@ -7063,11 +7054,7 @@ export default function App() {
           allowChatTap();
           openAssistedVoiceRef.current();
         },
-        onFailed: () => {
-          if (iphoneChatListenRef.current === handle) iphoneChatListenRef.current = null;
-        },
       });
-      iphoneChatListenRef.current = handle;
       window.clearTimeout(windowTimer);
       windowTimer = window.setTimeout(finishWindow, 8000);
     };
@@ -7089,8 +7076,8 @@ export default function App() {
         began = true;
         window.setTimeout(startListening, isIphoneDevice() ? 400 : 200);
       };
-      if (!speakJapanese("どうぞ", afterCue, afterCue)) afterCue();
-      window.setTimeout(afterCue, 2500);
+      if (!speakJapanese(visualListenCue, afterCue, afterCue)) afterCue();
+      window.setTimeout(afterCue, 12000);
     };
     const wait = () => {
       if (!iphoneChatArmedRef.current || iphoneChatWindowRef.current) return;
@@ -7234,9 +7221,7 @@ export default function App() {
       } else {
         speakJapanese(
           voicePanelRef.current
-            ? isDesktopDevice()
-              ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」と、このあと「どうぞ」と言ってからお話しください。"
-              : "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。"
+            ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。"
             : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。",
           () => {
             if (!voiceAutoMode) return;
@@ -7516,7 +7501,7 @@ export default function App() {
         if (!spokeMissed) {
           speakJapanese(
             inChat
-              ? `茶話会アプリが起動しました。${visualCallGuide}チャットは、話す、または、チャット、と言ってください。`
+              ? `茶話会アプリが起動しました。${visualLoggedInGuide}`
               : `茶話会アプリが起動しました。${visualCallGuide}`,
           );
         }
@@ -8113,10 +8098,9 @@ export default function App() {
                   onCue={(done) => {
                     const short = assistedShortCueRef.current;
                     assistedShortCueRef.current = false;
-                    const cue =
-                      !short && isAndroidDevice()
-                        ? "どうぞ。ピーッと鳴ってから、返事を話してください。もう一度ピーッと鳴ってから、終わり、と言ってください。"
-                        : "どうぞ";
+                    const cue = short
+                      ? "どうぞ"
+                      : "返事を話してください。終わったら、終わり、と言ってください。どうぞ。";
                     let armed = false;
                     const finish = () => {
                       if (armed) return;
@@ -8124,7 +8108,7 @@ export default function App() {
                       done();
                     };
                     if (!speakJapanese(cue, finish, finish)) finish();
-                    if (short) window.setTimeout(finish, 2500);
+                    window.setTimeout(finish, short ? 2500 : 12000);
                   }}
                   autoStart={
                     showConfirmation &&
@@ -8148,9 +8132,7 @@ export default function App() {
                           : status === "listening"
                             ? showConfirmation
                               ? "聞いています。「送信」「修正」「取り消し」とお話しください。"
-                              : isAndroidDevice()
-                                ? "聞いています。ピーッと鳴ってから、終わり、と言ってください。"
-                                : "聞いています。終わったら、終わり、と言ってください。"
+                              : "聞いています。終わったら、終わり、と言ってください。"
                             : status === "sending"
                               ? "文字にしています。少しお待ちください。"
                               : ""),
@@ -8170,9 +8152,7 @@ export default function App() {
                 </button>
                 <div className="assisted-voice__body">
                   <p className="writing-panel__lead" role="status">
-                    {isAndroidDevice()
-                      ? "ピーッと鳴ってから返事を話します。もう一度ピーッと鳴ってから、「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"
-                      : "「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。"}
+                    「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。
                   </p>
                   {voiceInputStatus && (
                     <p className="voice-input__status" role="status">
@@ -8642,9 +8622,7 @@ export default function App() {
             <div className="message-preview">{pendingMessage}</div>
             <p className="dialog-note">
               {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen
-                ? isDesktopDevice()
-                  ? "「どうぞ」のあとで、「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
-                  : "「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
+                ? "「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
                 : "「送る」を押すまで、自動で送信されることはありません。"}
             </p>
             {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen && (
@@ -8655,10 +8633,6 @@ export default function App() {
                   disabled={showVoice || dmInCall || voiceInputBusy}
                   onClick={() => {
                     setVoiceAutoMode(true);
-                    if (isDesktopDevice()) {
-                      startSendListening(() => setVoiceConfirmationAutoStart(true));
-                      return;
-                    }
                     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
                     setVoiceConfirmationAutoStart(true);
                   }}
