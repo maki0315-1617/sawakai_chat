@@ -689,8 +689,9 @@ function listenAndroidStartup(handlers: {
 }
 
 /**
- * iPhoneの初期画面です。案内のあいだはマイクを閉じ、聞くときだけ開きます。
- * 聞き終わったら上部のマイク表示を消します。開けなければ、もう一度タップしてもらいます。
+ * iPhoneの初期画面です。案内のあいだはマイクを開かず、案内のあと一度だけ開きます。
+ * その開始がすぐに終わるときは、待たずに次の開始で聞きます。
+ * 開けなければ、もう一度タップしてもらいます。
  */
 function listenIphoneStartup(handlers: {
   onMatch: (text?: string) => void;
@@ -718,12 +719,10 @@ function listenIphoneStartup(handlers: {
   let ready = false;
   let live = false;
   let failed = false;
-  let warmed = false;
   let restarts = 0;
   let current: Recognition | null = null;
   let watch = 0;
   let restartTimer = 0;
-  let readyAt = 0;
   const acceptTextNow = acceptText;
   const abortCurrent = () => {
     window.clearTimeout(watch);
@@ -760,7 +759,6 @@ function listenIphoneStartup(handlers: {
     };
     recognition.onresult = (event) => {
       if (!ready || stopped || matched || current !== recognition) return;
-      if (Date.now() - readyAt < 300) return;
       const results = event.results as ArrayLike<
         ArrayLike<{ transcript: string }> & { isFinal?: boolean }
       >;
@@ -803,7 +801,8 @@ function listenIphoneStartup(handlers: {
       restartTimer = window.setTimeout(() => {
         if (stopped || matched || !ready || failed) return;
         start();
-      }, 300);
+        expectStart();
+      }, 0);
     };
     try {
       recognition.start();
@@ -823,7 +822,6 @@ function listenIphoneStartup(handlers: {
     if (stopped || matched) return;
     failed = false;
     ready = true;
-    readyAt = Date.now();
     restarts = 0;
     if (live) return;
     start();
@@ -840,29 +838,7 @@ function listenIphoneStartup(handlers: {
   return {
     stop,
     prime() {
-      if (stopped || matched || warmed || live) return;
-      warmed = true;
-      const recognition = new RecognitionClass();
-      recognition.lang = "ja-JP";
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.onresult = () => undefined;
-      recognition.onerror = () => undefined;
-      recognition.onend = () => {
-        releaseIphoneAudioSession();
-      };
-      recognition.onstart = () => {
-        try {
-          recognition.abort();
-        } catch {
-          // 許可だけ確認して、案内のあいだはマイク表示を消す
-        }
-      };
-      try {
-        recognition.start();
-      } catch {
-        releaseIphoneAudioSession();
-      }
+      // タップで一度開いて閉じると、案内のあとにもう一度消えないと聞けない。
     },
     arm,
     listenNow: arm,
