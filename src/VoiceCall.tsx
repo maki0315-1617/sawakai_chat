@@ -5,6 +5,7 @@ import VoiceGame from "./VoiceGame";
 import VoiceWordGame from "./VoiceWordGame";
 import VoiceTurnGame from "./VoiceTurnGame";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
+import { isIphoneDevice } from "./voiceJoin";
 
 type VoiceCallProps = {
   apiRoot: string;
@@ -142,6 +143,16 @@ export default function VoiceCall({
           if (roomRef.current === room) leave();
         });
       await room.connect(result.url, result.token);
+      if (isIphoneDevice()) {
+        try {
+          const session = (
+            navigator as unknown as { audioSession?: { type: string } }
+          ).audioSession;
+          if (session?.type === "playback") session.type = "play-and-record";
+        } catch {
+          // 古いiPhoneには音声セッションの切り替えがない
+        }
+      }
       await room.localParticipant.setMicrophoneEnabled(true);
       refreshParticipants(room);
       setStatus("connected");
