@@ -17,13 +17,11 @@ import {
   isDesktopDevice,
   isIphoneDevice,
   isVoiceSupported,
-  listenForChatStart,
   listenLikeChatInput,
   releaseAllMicrophones,
   startupChoice,
   listenOnce,
   primeDesktopMicrophone,
-  unlockSpeechRecognition,
   normalizeInviteCode,
   normalizeName,
   type VoiceSession,
@@ -528,8 +526,6 @@ const visualCallButtons =
 const visualIncomingGuide =
   "電話が来たら、出るときは下の緑を押します。出ないときは、一番上の、出ない、を押してください。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
-const visualCallGuideIphone =
-  "グループ通話は、画面の一番上の緑のボタンを一度押します。その下の青いボタンで、1対1の電話をします。電話が来たら、右を押すと出て、左を押すと出ません。";
 const visualStartupChoice =
   "初期起動は、グループ、電話、チャット、と言ってください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";
 const visualLoggedInGuide = `${visualCallButtons}${visualIncomingGuide}${visualStartupChoice}`;
@@ -5206,7 +5202,7 @@ export default function App() {
     const wasAway = homeAwayRef.current;
     homeAwayRef.current = away;
     if (!wasAway || away) return;
-    if (!visualSupportEnabled || !token || !profile || isIphoneDevice()) return;
+    if (!visualSupportEnabled || !token || !profile) return;
     if (showDirectCall || dmInCallRef.current || dmIncomingRef.current) return;
     speakJapanese(visualReturnHome);
   }, [
@@ -6016,9 +6012,7 @@ export default function App() {
     setVoiceAutoMode(false);
     setVoiceConfirmationAutoStart(false);
     if (enabled) {
-      const text = `視覚サポートを有効にしました。${
-        isIphoneDevice() ? visualCallGuideIphone : visualCallGuide
-      }`;
+      const text = `視覚サポートを有効にしました。${visualCallGuide}`;
       if (missedCountRef.current > 0) {
         pendingGuideRef.current = text;
         guideReadyRef.current = false;
@@ -7114,78 +7108,6 @@ export default function App() {
     if (iphoneChatArmedRef.current) return;
     if (!visualSupportEnabledRef.current) return;
     if (!token || !profile || showWalking) return;
-    if (isIphoneDevice()) {
-      iphoneChatArmedRef.current = true;
-      const allowChatTap = () => {
-        setIphoneChatTapReady(true);
-      };
-      const started = Date.now();
-      let idleSince = 0;
-      let sawSpeech = false;
-      let windowTimer = 0;
-      const finishWindow = () => {
-        iphoneChatWindowRef.current = false;
-        window.clearTimeout(windowTimer);
-        iphoneChatListenRef.current?.stop();
-        iphoneChatListenRef.current = null;
-        allowChatTap();
-      };
-      const openWindow = () => {
-        if (iphoneChatWindowRef.current) return;
-        if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
-          allowChatTap();
-          return;
-        }
-        iphoneChatWindowRef.current = true;
-        iphoneChatListenRef.current = listenForChatStart({
-          gate: () => {
-            const synth =
-              "speechSynthesis" in window ? window.speechSynthesis : null;
-            if (synth && (synth.speaking || synth.pending)) return false;
-            if (!iphoneChatWindowRef.current) return false;
-            if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
-              return false;
-            }
-            return true;
-          },
-          onMatch: () => {
-            iphoneChatWindowRef.current = false;
-            window.clearTimeout(windowTimer);
-            iphoneChatListenRef.current = null;
-            allowChatTap();
-            openAssistedVoiceRef.current();
-          },
-        });
-        windowTimer = window.setTimeout(finishWindow, 8000);
-      };
-      const wait = () => {
-        if (!iphoneChatArmedRef.current || iphoneChatWindowRef.current) return;
-        const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
-        const busy = Boolean(synth && (synth.speaking || synth.pending));
-        if (busy) {
-          sawSpeech = true;
-          idleSince = 0;
-          window.setTimeout(wait, 200);
-          return;
-        }
-        if (!sawSpeech) {
-          if (Date.now() - started < 1500) {
-            window.setTimeout(wait, 200);
-            return;
-          }
-          openWindow();
-          return;
-        }
-        if (!idleSince) idleSince = Date.now();
-        if (Date.now() - idleSince < 1000) {
-          window.setTimeout(wait, 200);
-          return;
-        }
-        openWindow();
-      };
-      wait();
-      return;
-    }
     iphoneChatArmedRef.current = true;
     iphoneChatMatchedRef.current = false;
     startupDoneRef.current = false;
@@ -7384,7 +7306,7 @@ export default function App() {
       trackEvent("message_sent");
       setSentNotice(true);
       window.setTimeout(() => setSentNotice(false), 2200);
-      if (visualSupportEnabledRef.current && !isIphoneDevice()) {
+      if (visualSupportEnabledRef.current) {
         speakJapanese("送信しました。次に送信する場合は一番下を押してください。");
       }
     } catch (reason) {
@@ -7392,7 +7314,7 @@ export default function App() {
       setLoadError(
         reason instanceof Error ? reason.message : "返事を送信できませんでした。",
       );
-      if (!visualSupportEnabledRef.current || isIphoneDevice()) return;
+      if (!visualSupportEnabledRef.current) return;
       speakJapanese("エラーになりました。");
       if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) return;
       assistedShortCueRef.current = false;
@@ -7798,20 +7720,26 @@ export default function App() {
     <button
       className="iphone-tap-guide"
       type="button"
-        onClick={() => {
+      onClick={() => {
         setIphoneTapGuide(false);
         setIphoneSpeechReady(true);
         const inChat = Boolean(token && profile && !showWalking);
-        if (inChat) unlockSpeechRecognition();
+        if (inChat) {
+          iphoneChatMatchedRef.current = false;
+          iphoneChatAcceptRef.current = false;
+          iphoneMicLostRef.current = false;
+          iphoneRetapShownRef.current = false;
+          startIphoneHeldListen(false);
+        }
         const spokeMissed = dmControlRef.current?.speakMissedGuide() === true;
         if (!spokeMissed) {
           speakJapanese(
             inChat
-              ? `茶話会アプリが起動しました。${visualCallGuideIphone}チャットは、話す、または、チャット、と言ってください。`
-              : `茶話会アプリが起動しました。${visualCallGuideIphone}`,
+              ? `茶話会アプリが起動しました。${visualLoggedInGuide}`
+              : `茶話会アプリが起動しました。${visualCallGuide}`,
           );
+          if (inChat) armIphoneChatStart();
         }
-        if (inChat) armIphoneChatStart();
       }}
     >
       画面のどこかを、一度タップしてください
@@ -7986,7 +7914,7 @@ export default function App() {
       {iphoneTapGuideLayer}
       {iphoneChatRetapLayer}
       <header className="group-header">
-        {visualSupportEnabled && !isIphoneDevice() && (
+        {visualSupportEnabled && (
           <button
             aria-expanded={!headerToolsCollapsed}
             aria-label={
@@ -8005,7 +7933,7 @@ export default function App() {
         )}
         {visualSupportEnabled &&
           !showVoice &&
-          (isIphoneDevice() || !headerToolsCollapsed || directCallAttention > 0) && (
+          (!headerToolsCollapsed || directCallAttention > 0) && (
           <div className="voice-join-banner" role="region" aria-label="通話">
             <button
               className="voice-join-banner__button"
@@ -8085,7 +8013,7 @@ export default function App() {
             <span>退出</span>
           </button>
         </div>
-        {!(visualSupportEnabled && headerToolsCollapsed && !isIphoneDevice()) && (
+        {!(visualSupportEnabled && headerToolsCollapsed) && (
         <nav aria-label="メニュー" className="header-actions">
           <button
             aria-label="おさんぽ日和を開く"
@@ -8416,14 +8344,12 @@ export default function App() {
                 <VoiceInput
                   apiRoot={apiRoot}
                   cancelSignal={voiceCancelSignal}
-                  holdForEnd={isIphoneDevice() && !showConfirmation}
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
                   onCue={(done) => {
                     const short = assistedShortCueRef.current;
                     assistedShortCueRef.current = false;
-                    const iphone = isIphoneDevice();
-                    const cue = iphone || short
+                    const cue = short
                       ? "どうぞ"
                       : "返事を話してください。終わったら、終わり、と言ってください。どうぞ。";
                     let armed = false;
@@ -8433,8 +8359,7 @@ export default function App() {
                       done();
                     };
                     if (!speakJapanese(cue, finish, finish)) finish();
-                    if (!iphone) window.setTimeout(finish, short ? 2500 : 12000);
-                    else if (short) window.setTimeout(finish, 2500);
+                    window.setTimeout(finish, short ? 2500 : 12000);
                   }}
                   autoStart={
                     showConfirmation &&
@@ -8806,9 +8731,7 @@ export default function App() {
           setDirectAssistedPick(false);
         }}
         onReturnedHome={() => {
-          if (visualSupportEnabledRef.current && !isIphoneDevice()) {
-            speakJapanese(visualReturnHome);
-          }
+          if (visualSupportEnabledRef.current) speakJapanese(visualReturnHome);
         }}
         assistedPick={directAssistedPick}
         onBusyChange={setDmInCall}
@@ -9790,7 +9713,7 @@ export default function App() {
         </div>
       )}
 
-      {sentNotice && (!visualSupportEnabled || isIphoneDevice()) && (
+      {sentNotice && !visualSupportEnabled && (
         <div className="sent-notice" role="status">
           {showGroup ? "招待コードをコピーしました" : "返事を送りました"}
         </div>
