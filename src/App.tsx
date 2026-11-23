@@ -7292,16 +7292,21 @@ export default function App() {
     setIsReplyPanelOpen(true);
   };
 
+  const startTalkChat = () => {
+    if (isIphoneDevice()) {
+      stopStartupChoiceRef.current();
+      openIphoneTalk();
+      return;
+    }
+    selectReplyMode("voice");
+  };
+
   startupHeardRef.current = (text) => {
     if (!startupActiveRef.current || startupDoneRef.current) return;
     const choice = startupChoice(text);
     if (!choice) return;
-    if (isIphoneDevice() && choice !== "close" && choice !== "group" && choice !== "phone") {
-      window.setTimeout(() => {
-        endVisualGuidance();
-        stopStartupChoiceRef.current();
-        openIphoneTalk();
-      }, 800);
+    if (isIphoneDevice() && choice === "chat") {
+      startTalkChat();
       return;
     }
     stopStartupChoiceRef.current();
@@ -8573,6 +8578,10 @@ export default function App() {
                     onClick={() => {
                       setVoiceAutoMode(false);
                       setVoiceConfirmationAutoStart(false);
+                      if (iphonePlainVoice) {
+                        stopSpeakingDraft();
+                        setDraft("");
+                      }
                       setIsReplyPanelOpen(false);
                     }}
                     type="button"
@@ -8781,14 +8790,7 @@ export default function App() {
           {visualSupportEnabled && (
             <button
               className="talk-chat-button"
-              onClick={() => {
-                if (isIphoneDevice()) {
-                  stopStartupChoiceRef.current();
-                  openIphoneTalk();
-                  return;
-                }
-                selectReplyMode("voice");
-              }}
+              onClick={startTalkChat}
               type="button"
             >
               話してチャット

@@ -743,6 +743,7 @@ function listenIphoneStartup(handlers: {
   let live = false;
   let failed = false;
   let restarts = 0;
+  let pendingChat: string | null = null;
   let current: Recognition | null = null;
   let watch = 0;
   let restartTimer = 0;
@@ -792,19 +793,18 @@ function listenIphoneStartup(handlers: {
         matched = true;
         ready = false;
         if (startupChoice(text) === "chat") {
-          // チャットだけは、結果の途中でマイクを切ると次の聞き取りが失敗する。
-          // 終了してからセッションを戻す。
-          const recognition = current;
+          // 結果の途中ではアプリを開かない。終了してセッションを戻してから、
+          // タップと同じ起動を呼ぶ。
+          pendingChat = text;
           try {
-            recognition?.stop();
+            recognition.stop();
           } catch {
             try {
-              recognition?.abort();
+              recognition.abort();
             } catch {
               // already stopped
             }
           }
-          handlers.onMatch(text);
           return;
         }
         abortCurrent();
@@ -828,8 +828,11 @@ function listenIphoneStartup(handlers: {
       if (current !== recognition) return;
       live = false;
       current = null;
+      const chatText = pendingChat;
+      pendingChat = null;
       if (stopped || matched || !ready || failed) {
         releaseIphoneAudioSession();
+        if (chatText) handlers.onMatch(chatText);
         return;
       }
       if (restarts >= 1) {
