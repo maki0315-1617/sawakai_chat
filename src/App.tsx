@@ -528,7 +528,7 @@ const visualIncomingGuide =
   "電話が来たら、出るときは下の緑を押します。出ないときは、一番上の、出ない、を押してください。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
 const visualStartupChoice =
-  "初期起動は、グループ、電話、チャット、と言ってください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";
+  "初期画面では、グループ、電話、チャットのいずれかをお話しください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";
 const visualLoggedInGuide = `${visualCallButtons}${visualIncomingGuide}${visualStartupChoice}`;
 const visualRetryChoice =
   "もう一度お願いします。グループ、電話、チャット、と言ってください。どうぞ。";
@@ -7391,7 +7391,7 @@ export default function App() {
     trackEvent("send_undone");
   };
 
-  const handleVoiceReply = (text: string) => {
+  const handleVoiceReply = (text: string, endedByVoice = false) => {
     const command = text
       .normalize("NFKC")
       .replace(/[\s。、．.!！?？]/g, "");
@@ -7460,10 +7460,24 @@ export default function App() {
       if (sendContent !== null) {
         const message = sendContent || draft.trim();
         setVoiceConfirmationAutoStart(false);
-        if (message && sendMessage(message)) {
-          speakJapanese("送信を予約しました。5秒後に送信します。");
+        if (message) {
+          setDraft(message);
+          prepareMessage(message);
         } else {
           speakJapanese("送信する文章がありません。先に返事を話してください。", () => {
+            if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+          });
+        }
+        return;
+      }
+      if (endedByVoice) {
+        const message = [draft.trim(), text.trim()].filter(Boolean).join("\n").slice(0, 500);
+        setVoiceConfirmationAutoStart(false);
+        if (message) {
+          setDraft(message);
+          prepareMessage(message);
+        } else {
+          speakJapanese("返事がありません。もう一度お話しください。どうぞ。", () => {
             if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
           });
         }
@@ -8369,6 +8383,7 @@ export default function App() {
                   cancelSignal={voiceCancelSignal}
                   restartSignal={assistedVoiceRestart}
                   startRef={assistedVoiceStartRef}
+                  holdForEnd={!showConfirmation}
                   onCue={(done) => {
                     const short = assistedShortCueRef.current;
                     assistedShortCueRef.current = false;
@@ -8416,7 +8431,7 @@ export default function App() {
                   disabled={showVoice || dmInCall}
                   disabledReason="通話中は、話して入力を使えません。"
                   headers={apiHeaders(token, activeGroupId)}
-                  onText={handleVoiceReply}
+                  onText={(text) => handleVoiceReply(text, !showConfirmation)}
                   onListeningStart={() => {
                     setVoiceConfirmationAutoStart(false);
                     setVoiceAutoMode(true);
@@ -8450,7 +8465,7 @@ export default function App() {
                 </button>
                 <div className="assisted-voice__body">
                   <p className="writing-panel__lead" role="status">
-                    「どうぞ」のあとで返事を話します。終わったら「終わり」と言ってください。緑のボタンでも終われます。青いボタンで閉じます。
+                    「どうぞ」のあとで返事を話し、終わったら「終わり」と言ってください。内容を読み上げたあと「送信」と言うと送信します。緑のボタンでも終われます。青いボタンで閉じます。
                   </p>
                   {voiceInputStatus && (
                     <p className="voice-input__status" role="status">
@@ -8580,7 +8595,7 @@ export default function App() {
                 </button>
                 {visualSupportEnabled && (
                   <p className="visual-voice-command-help" role="status">
-                    文章を話した後「送信」と言うと確認します。読み上げ後に「はい、送信」で送信、「修正」で言い直し、「取り消し」で中止できます。
+                    文章を話した後「送信」と言うと内容を読み上げて確認します。読み上げ後に「送信」と言うと送信、「修正」で言い直し、「取り消し」で中止できます。
                   </p>
                 )}
                 {voiceInputStatus && (

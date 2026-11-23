@@ -362,6 +362,7 @@ export default function VoiceInput({
   const armedAtRef = useRef(0);
   const ignoreVoiceUntilRef = useRef(0);
   const armTimerRef = useRef(0);
+  const holdForEndFallbackRef = useRef(false);
   const assistedMicRef = useRef(false);
   const replyReadyRef = useRef(false);
   const lastRestartRef = useRef(restartSignal);
@@ -380,6 +381,7 @@ export default function VoiceInput({
 
   const cleanup = () => {
     holdIphoneReplyMic(false);
+    holdForEndFallbackRef.current = false;
     window.clearTimeout(armTimerRef.current);
     armTimerRef.current = 0;
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
@@ -434,7 +436,10 @@ export default function VoiceInput({
         setError("声が聞き取れませんでした。もう一度、はっきり話してください。");
         return;
       }
-      onTextRef.current(result.text.trim());
+      const text = result.text.trim();
+      onTextRef.current(
+        holdForEndRef.current ? finishedReply(text).body : text,
+      );
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") {
         if (timedOut) {
@@ -599,7 +604,7 @@ export default function VoiceInput({
         const heardVoice = lastVoiceAt > 0;
         if (
           elapsed >= maxSeconds * 1000 ||
-          (!holdForEndRef.current &&
+          ((!holdForEndRef.current || holdForEndFallbackRef.current) &&
             heardVoice &&
             now - lastVoiceAt > silenceStopMs)
         ) {
@@ -706,6 +711,8 @@ export default function VoiceInput({
     } catch {
       recognition?.abort();
     }
+    holdIphoneReplyMic(false);
+    releaseIphoneAudioSession();
     setState("idle");
     onTextRef.current(body);
   };
@@ -713,9 +720,13 @@ export default function VoiceInput({
   const beginUntilEnd = (session: number, deferMic = false) => {
     const Recognition = getDeviceRecognition();
     if (!Recognition) {
-      void begin();
+      holdForEndFallbackRef.current = true;
+      const startFallback = () => void begin();
+      if (onCueRef.current) onCueRef.current(startFallback);
+      else startFallback();
       return;
     }
+    holdForEndFallbackRef.current = false;
     setError("");
     cancelledRef.current = false;
     stoppedRef.current = false;
@@ -933,7 +944,10 @@ export default function VoiceInput({
   };
 
   const finishHeld = () => {
-    if (!userSaidEnd(heardRef.current)) return;
+    if (!userSaidEnd(heardRef.current)) {
+      if (holdForEndFallbackRef.current) finishRef.current?.();
+      return;
+    }
     if (recognitionRef.current) {
       deliverHeld(heardRef.current);
       return;
