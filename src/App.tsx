@@ -528,7 +528,7 @@ const visualIncomingGuide =
   "電話が来たら、出るときは下の緑を押します。出ないときは、一番上の、出ない、を押してください。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
 const visualStartupChoice =
-  "初期画面では、グループ、電話、チャットのいずれかをお話しください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";
+  "チャットは「チャット」、グループ通話は「グループ」、電話は「電話」とお話しください。終了するときは「閉じる」または「終わる」と言ってください。どうぞ。";
 const visualLoggedInGuide = `${visualCallButtons}${visualIncomingGuide}${visualStartupChoice}`;
 const visualRetryChoice =
   "もう一度お願いします。グループ、電話、チャット、と言ってください。どうぞ。";
@@ -6192,7 +6192,7 @@ export default function App() {
       const voiceReply = voicePanelRef.current;
       speakJapanese(
         voiceReply
-          ? `送信前の確認です。内容は、${pendingMessage}。音声で答えるには「声で答える」を押してください。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
+          ? `返信 2/2、送信前の確認です。内容は、${pendingMessage}。もう一度聞く場合は画面の「内容をもう一度聞く」を押してください。修正する場合は画面の「修正」、返信をやめる場合は「取り消し」、送信する場合は「送信」を押してください。声で操作する場合は「声で答える」を押してから、修正、取り消し、送信のいずれかをお話しください。送信は予約され、5秒後に実行されます。`
           : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         undefined,
         () => {
@@ -7055,6 +7055,19 @@ export default function App() {
     speakDraft(draft);
   };
 
+  const readConfirmationAloud = () => {
+    if (isSpeakingDraft) {
+      stopSpeakingDraft();
+      return;
+    }
+    if (!("speechSynthesis" in window)) {
+      setLoadError("このブラウザは読み上げに対応していません。");
+      return;
+    }
+    trackEvent("draft_read_aloud");
+    speakDraft(pendingMessage);
+  };
+
   const selectReplyMode = (mode: ReplyMode) => {
     if (isReplyPanelOpen && replyMode === mode) {
       setIsReplyPanelOpen(false);
@@ -7083,7 +7096,7 @@ export default function App() {
       localStorage.setItem(replyModeStorageKey, mode);
       trackEvent(`reply_mode_${mode}`);
       speakJapanese(
-        "チャット入力です。返事を録音するには「話して入力」を押してください。話し終わったら、緑のボタンを押します。",
+        "返信の録音です。画面一番上の緑の「話して入力」を押してください。録音後は、画面一番上の赤い「録音を止めて確認」を押します。",
       );
       return;
     }
@@ -7394,6 +7407,37 @@ export default function App() {
     trackEvent("send_undone");
   };
 
+  const isAssistedVoiceConfirmation =
+    visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen;
+
+  const confirmVoiceSend = () => {
+    if (sendMessage()) {
+      speakJapanese("送信を予約しました。5秒後に送信します。");
+    } else {
+      speakJapanese("まだ送信できません。画面をご確認ください。");
+    }
+  };
+
+  const reviseVoiceReply = () => {
+    setVoiceConfirmationAutoStart(false);
+    setVoiceAutoMode(false);
+    setShowConfirmation(false);
+    setPendingMessage("");
+    setDraft("");
+    stopSpeakingDraft();
+    speakJapanese(
+      "修正します。返信を録音するには、画面一番上の緑の「話して入力」を押してください。",
+    );
+  };
+
+  const cancelVoiceReply = () => {
+    cancelConfirmation();
+    setDraft("");
+    setPendingMessage("");
+    setIsReplyPanelOpen(false);
+    speakJapanese("返信を取り消しました。チャットに戻りました。");
+  };
+
   const handleVoiceReply = (text: string, captureComplete = false) => {
     const command = text
       .normalize("NFKC")
@@ -7405,7 +7449,9 @@ export default function App() {
         ["はい送信", "はい送って"].includes(command) ||
         (isSpokenSend(text) && voicePanelRef.current)
       ) {
-        if (sendMessage()) {
+        if (voicePanelRef.current) {
+          confirmVoiceSend();
+        } else if (sendMessage()) {
           speakJapanese("送信を予約しました。5秒後に送信します。");
         } else {
           speakJapanese("まだ送信できません。画面をご確認ください。");
@@ -7420,20 +7466,17 @@ export default function App() {
           });
           return;
         }
-        setVoiceConfirmationAutoStart(false);
-        setShowConfirmation(false);
-        setPendingMessage("");
-        setDraft("");
-        setVoiceAutoMode(false);
-        speakJapanese(
-          "修正します。返事を録音するには「話して入力」を押してください。",
-        );
+        reviseVoiceReply();
       } else if (["取り消し", "取消", "キャンセル"].includes(command)) {
-        cancelConfirmation();
-        setDraft("");
-        setPendingMessage("");
-        setVoiceAutoMode(false);
-        speakJapanese("返信を取り消しました。");
+        if (voicePanelRef.current) {
+          cancelVoiceReply();
+        } else {
+          cancelConfirmation();
+          setDraft("");
+          setPendingMessage("");
+          setVoiceAutoMode(false);
+          speakJapanese("返信を取り消しました。");
+        }
       } else if (
         voicePanelRef.current &&
         /送信|そうしん/.test(command) &&
@@ -8405,8 +8448,8 @@ export default function App() {
                   manualStopOnly={!showConfirmation}
                   onCue={(done) => {
                     const cue = showConfirmation
-                      ? "送信、修正、取り消しのどれかをお話しください。どうぞ。"
-                      : "マイクが開いたら返事を話してください。話し終わったら緑のボタンを押してください。どうぞ。";
+                      ? "送信、修正、取り消しのどれか一つをお話しください。話し終わると自動で確認します。どうぞ。"
+                      : "マイクが開いたら返事を話してください。話し終わったら、一番上の赤い「録音を止めて確認」ボタンを押してください。どうぞ。";
                     let armed = false;
                     let backupTimer = 0;
                     const finish = () => {
@@ -8456,8 +8499,8 @@ export default function App() {
                           ? "マイクを準備しています。"
                           : status === "listening"
                             ? showConfirmation
-                              ? "聞いています。「送信」「修正」「取り消し」とお話しください。"
-                              : "聞いています。話し終わったら緑のボタンを押してください。"
+                              ? "確認の操作を聞いています。送信、修正、取り消しのどれか一つを話してください。話し終わると自動で確認します。"
+                              : "録音中です。話し終わったら一番上の赤い「録音を止めて確認」ボタンを押してください。"
                             : status === "sending"
                               ? "文字にしています。少しお待ちください。"
                               : ""),
@@ -8476,49 +8519,10 @@ export default function App() {
                   閉じる
                 </button>
                 <div className="assisted-voice__body">
+                  <p className="dialog-eyebrow">返信 1/2：録音</p>
                   <p className="writing-panel__lead" role="status">
-                    「話して入力」を押して話してください。話し終わったら録音中の緑のボタンを押して確定します。内容を読み上げたあと、画面の「送る」を押すか、「声で答える」を押してから「送信」と話してください。
+                    返信の録音です。画面一番上の緑の「話して入力」を押して話してください。話し終わったら、画面一番上の赤い「録音を止めて確認」を押します。
                   </p>
-                  {voiceInputStatus && (
-                    <p className="voice-input__status" role="status">
-                      {voiceInputStatus}
-                    </p>
-                  )}
-                  <textarea
-                    id="voice-message"
-                    maxLength={500}
-                    onChange={(event) => setDraft(event.target.value)}
-                    placeholder="話した内容がここに表示されます。"
-                    rows={3}
-                    value={draft}
-                  />
-                  <button
-                    className="read-aloud-button"
-                    disabled={!draft.trim()}
-                    onClick={readDraftAloud}
-                    type="button"
-                  >
-                    {isSpeakingDraft ? "読み上げを止める" : "もう一度読み上げる"}
-                  </button>
-                  <button
-                    className="reply-button reply-button--primary"
-                    disabled={!draft.trim()}
-                    onClick={() => prepareMessage(draft)}
-                  >
-                    内容を確認する
-                  </button>
-                  {draft && (
-                    <button
-                      className="media-select-button"
-                      onClick={() => {
-                        stopSpeakingDraft();
-                        setDraft("");
-                      }}
-                      type="button"
-                    >
-                      消して話し直す
-                    </button>
-                  )}
                 </div>
               </div>,
               document.body,
@@ -8933,29 +8937,47 @@ export default function App() {
           <section
             aria-labelledby="confirm-title"
             aria-modal="true"
-            className="confirm-dialog"
+            className={`confirm-dialog${
+              isAssistedVoiceConfirmation ? " confirm-dialog--voice" : ""
+            }`}
             role="dialog"
           >
-            <button
-              aria-label="確認画面を閉じる"
-              className="dialog-close"
-              onClick={cancelConfirmation}
-            >
-              <CloseIcon />
-            </button>
-            <p className="dialog-eyebrow">送信前の確認</p>
+            {!isAssistedVoiceConfirmation && (
+              <button
+                aria-label="確認画面を閉じる"
+                className="dialog-close"
+                onClick={cancelConfirmation}
+              >
+                <CloseIcon />
+              </button>
+            )}
+            <p className="dialog-eyebrow">
+              {isAssistedVoiceConfirmation
+                ? "返信 2/2：内容を確認"
+                : "送信前の確認"}
+            </p>
             <h2 id="confirm-title" ref={confirmationHeadingRef} tabIndex={-1}>
-              この返事を送りますか？
+              {isAssistedVoiceConfirmation
+                ? "この返事を送信しますか？"
+                : "この返事を送りますか？"}
             </h2>
             <div className="message-preview">{pendingMessage}</div>
             <p className="dialog-note">
-              {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen
-                ? "音声で操作する場合は「声で答える」を押してから話してください。「送る」を押すと送信します。"
+              {isAssistedVoiceConfirmation
+                ? "もう一度聞くには「内容をもう一度聞く」を押してください。修正は「修正」、返信をやめる場合は「取り消し」、送信する場合は「送信」を選んでください。声で操作する場合は「声で答える」を押してから話してください。送信は予約され、5秒後に実行されます。"
                 : "「送る」を押すまで、自動で送信されることはありません。"}
             </p>
-            {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen && (
+            {isAssistedVoiceConfirmation && (
               <>
                 {voiceInputStatus && <p role="status">{voiceInputStatus}</p>}
+                <button
+                  className="read-aloud-button"
+                  disabled={!pendingMessage.trim()}
+                  onClick={readConfirmationAloud}
+                  type="button"
+                >
+                  {isSpeakingDraft ? "読み上げを止める" : "内容をもう一度聞く"}
+                </button>
                 <button
                   className="read-aloud-button"
                   disabled={showVoice || dmInCall || voiceInputBusy}
@@ -8967,29 +8989,56 @@ export default function App() {
                   }}
                   type="button"
                 >
-                  🎤 声で答える
+                  声で答える
                 </button>
               </>
             )}
-            <div className="dialog-actions">
-              <button
-                className="dialog-button dialog-button--back"
-                disabled={isSending}
-                onClick={cancelConfirmation}
-              >
-                戻る
-              </button>
-              <button
-                className="dialog-button dialog-button--send"
-                disabled={isSending}
-                onClick={() => {
-                  sendMessage();
-                }}
-              >
-                <SendIcon />
-                {isSending ? "送信中…" : "送る"}
-              </button>
-            </div>
+            {isAssistedVoiceConfirmation ? (
+              <div className="dialog-actions dialog-actions--voice">
+                <button
+                  className="dialog-button dialog-button--back"
+                  disabled={isSending}
+                  onClick={reviseVoiceReply}
+                >
+                  修正
+                </button>
+                <button
+                  className="dialog-button delete-confirm-button"
+                  disabled={isSending}
+                  onClick={cancelVoiceReply}
+                >
+                  取り消し
+                </button>
+                <button
+                  className="dialog-button dialog-button--send"
+                  disabled={isSending}
+                  onClick={confirmVoiceSend}
+                >
+                  <SendIcon />
+                  {isSending ? "送信中…" : "送信"}
+                </button>
+              </div>
+            ) : (
+              <div className="dialog-actions">
+                <button
+                  className="dialog-button dialog-button--back"
+                  disabled={isSending}
+                  onClick={cancelConfirmation}
+                >
+                  戻る
+                </button>
+                <button
+                  className="dialog-button dialog-button--send"
+                  disabled={isSending}
+                  onClick={() => {
+                    sendMessage();
+                  }}
+                >
+                  <SendIcon />
+                  {isSending ? "送信中…" : "送る"}
+                </button>
+              </div>
+            )}
           </section>
         </div>
       )}

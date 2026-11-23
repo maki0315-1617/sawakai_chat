@@ -1192,7 +1192,9 @@ export default function VoiceInput({
           state === "listening"
             ? holdForEnd
               ? "終わりと言うか、もう一度押してください"
-              : "話し終わったら押してください"
+              : manualStopOnly
+                ? "録音を止めて確認。画面一番上の赤いボタン"
+                : "話し終わったら押してください"
             : "話して入力する"
         }
         className={`voice-input__button ${state === "listening" ? "is-listening" : ""}`}
@@ -1203,7 +1205,9 @@ export default function VoiceInput({
         {state === "listening"
           ? holdForEnd
             ? `終わり、と言う（${seconds}秒）`
-            : `⏹ 話し終わったら押す（${seconds}秒）`
+            : manualStopOnly
+              ? `⏹ 録音を止めて確認（${seconds}秒）`
+              : `⏹ 話し終わったら押す（${seconds}秒）`
           : state === "starting"
             ? "🎤 マイクを準備しています…"
           : state === "sending"
@@ -1216,7 +1220,9 @@ export default function VoiceInput({
             ? "マイクの準備をしています。"
             : holdForEnd
               ? "聞いています。終わったら、終わり、と言ってください。"
-              : "🔴 聞いています。ゆっくり話してください。"}
+              : manualStopOnly
+                ? "録音中です。話し終わったら一番上の赤い「録音を止めて確認」ボタンを押してください。"
+                : "🔴 聞いています。ゆっくり話してください。"}
           <button className="voice-input__cancel" onClick={cancel} type="button">
             やめる
           </button>

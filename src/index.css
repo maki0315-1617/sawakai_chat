@@ -5011,10 +5011,36 @@ input:focus-visible {
   line-height: 1.6;
 }
 
+.confirm-dialog--voice {
+  max-height: min(90dvh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.confirm-dialog--voice .dialog-eyebrow,
+.confirm-dialog--voice h2 {
+  margin-right: 0;
+}
+
+.confirm-dialog--voice .dialog-note {
+  color: #46514d;
+  font-size: 18px;
+}
+
 .dialog-actions {
   display: grid;
   grid-template-columns: 1fr 1.5fr;
   gap: 12px;
+}
+
+.dialog-actions--voice {
+  grid-template-columns: 1fr;
+}
+
+.confirm-dialog--voice .read-aloud-button,
+.dialog-actions--voice .dialog-button {
+  min-height: 64px;
+  font-size: 20px;
 }
 
 .dialog-button {
