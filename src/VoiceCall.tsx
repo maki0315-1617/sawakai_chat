@@ -227,7 +227,7 @@ export default function VoiceCall({
   const leaveFromTop = () => {
     leave();
     const message = "通話から抜けました。ほかの人の通話は続きます。";
-    setLeaveNotice(message);
+    if (!assisted) setLeaveNotice(message);
     speakRef.current?.(message);
     onClose();
   };

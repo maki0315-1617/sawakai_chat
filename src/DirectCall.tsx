@@ -590,14 +590,20 @@ export default function DirectCall({
     setPeerSpeaking(false);
   };
 
+  const showNotice = (message: string) => {
+    if (!message) return;
+    if (visualSupportRef.current) {
+      announceRef.current(message);
+      return;
+    }
+    setNotice(message);
+  };
+
   const finishCall = (message: string) => {
     leaveRoom();
     const panelOpen = showPanelRef.current;
     changeCall(null, null);
-    if (message) {
-      setNotice(message);
-      if (visualSupportRef.current) announceRef.current(message);
-    }
+    if (message) showNotice(message);
     if (!panelOpen) tellHome();
   };
 
@@ -727,7 +733,7 @@ export default function DirectCall({
       leaveRoom();
       changeCall(null, null);
       if (current) void request(`/dm/${current.id}/end`, { method: "POST" });
-      setNotice(
+      showNotice(
         reason instanceof DOMException && reason.name === "NotAllowedError"
           ? "マイクが許可されていません。ブラウザの設定でマイクを許可してください。"
           : reason instanceof Error
@@ -755,11 +761,9 @@ export default function DirectCall({
         stopCallingRing();
         if (typeof result.callsLeft === "number") setCallsLeft(result.callsLeft);
         const message = result.error ?? "電話をかけられませんでした。";
-        setNotice(message);
-        if (assistedPick && visualSupportEnabled) announce(message);
+        showNotice(message);
         if (guideAfterCallRef.current) {
           guideAfterCallRef.current = false;
-          if (visualSupportRef.current) announce(message);
           const more = missedRef.current.some(
             (item) => !askedMissedRef.current.has(item.id),
           );
@@ -772,11 +776,9 @@ export default function DirectCall({
     } catch {
       stopCallingRing();
       const message = "電話をかけられませんでした。通信状態を確認してください。";
-      setNotice(message);
-      if (assistedPick && visualSupportEnabled) announce(message);
+      showNotice(message);
       if (guideAfterCallRef.current) {
         guideAfterCallRef.current = false;
-        if (visualSupportRef.current) announce(message);
         const more = missedRef.current.some(
           (item) => !askedMissedRef.current.has(item.id),
         );
@@ -903,7 +905,7 @@ export default function DirectCall({
       await room.localParticipant.setCameraEnabled(false).catch(() => undefined);
       setCameraOn(false);
       setLocalVideo(null);
-      setNotice(cameraErrorMessage(reason));
+      showNotice(cameraErrorMessage(reason));
     } finally {
       setCameraBusy(false);
     }
@@ -1486,7 +1488,7 @@ export default function DirectCall({
     // 2秒たっても映像が届かない場合は、画面で原因の見当を伝える
     const check = window.setTimeout(() => {
       if (element.videoWidth > 0 && !track.muted) return;
-      setNotice(
+      showNotice(
         track.readyState !== "live"
           ? "カメラが止まっています。Zoomなど、ほかのアプリやタブを閉じてから、もう一度カメラをつけてください。"
           : "カメラの映像が届いていません。Windowsの「設定」→「プライバシーとセキュリティ」→「カメラ」で、ブラウザのカメラ使用がオンか確認してください。ノートPCのカメラのシャッターやカメラ用のキーがオフになっていないかもご確認ください。",
@@ -2276,7 +2278,7 @@ export default function DirectCall({
         </div>
       )}
 
-      {notice && (
+      {notice && !visualSupportEnabled && (
         <div className="dm-notice-backdrop">
           <section
             aria-labelledby="dm-notice-title"

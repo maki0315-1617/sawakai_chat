@@ -9713,7 +9713,7 @@ export default function App() {
         </div>
       )}
 
-      {sentNotice && (
+      {sentNotice && !visualSupportEnabled && (
         <div className="sent-notice" role="status">
           {showGroup ? "招待コードをコピーしました" : "返事を送りました"}
         </div>
