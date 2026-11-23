@@ -366,7 +366,7 @@ export function isSpokenChatStart(text: string) {
     return false;
   }
   if (value.length > 20) return false;
-  return /話す|はなす|チャット|ちゃっと/.test(value);
+  return /話す|はなす|話そう|はなそう|離す|チャット|ちゃっと/.test(value);
 }
 
 /** タップの直後に一度だけ開いて閉じ、案内のあとでもマイクを使えるようにします。 */
@@ -397,18 +397,28 @@ export function unlockSpeechRecognition() {
 export function listenForChatStart(handlers: {
   gate: () => boolean;
   onMatch: () => void;
+  onFailed?: () => void;
 }): { stop: () => void } {
   const RecognitionClass = getRecognitionClass();
-  if (!RecognitionClass) return { stop() {} };
+  if (!RecognitionClass) {
+    handlers.onFailed?.();
+    return { stop() {} };
+  }
   let stopped = false;
   let current: Recognition | null = null;
   let failedStarts = 0;
   const iphone = isIphoneDevice();
+  const giveUp = () => {
+    if (stopped) return;
+    stopped = true;
+    handlers.onFailed?.();
+  };
   const start = () => {
     if (stopped) return;
     const recognition = new RecognitionClass();
     current = recognition;
     recognition.lang = "ja-JP";
+    recognition.maxAlternatives = 3;
     // iPhoneは連続認識のまま終了して、話した言葉が最終結果にならない
     recognition.continuous = !iphone;
     recognition.interimResults = true;
@@ -417,28 +427,30 @@ export function listenForChatStart(handlers: {
       const rich = event as unknown as {
         resultIndex?: number;
         results: ArrayLike<
-          ArrayLike<{ transcript: string }> & { isFinal?: boolean }
+          ArrayLike<{ transcript: string }> & { isFinal?: boolean; length?: number }
         >;
       };
       const from = rich.resultIndex ?? 0;
       for (let index = from; index < rich.results.length; index += 1) {
         const row = rich.results[index];
-        const text = row?.[0]?.transcript ?? "";
-        if (!row?.isFinal && !iphone) continue;
-        if (!isSpokenChatStart(text)) continue;
-        stopped = true;
-        try {
-          recognition.abort();
-        } catch {
-          // already stopped
+        const choices = Math.min(row?.length ?? 1, 3);
+        for (let alt = 0; alt < choices; alt += 1) {
+          const text = row?.[alt]?.transcript ?? "";
+          if (!isSpokenChatStart(text)) continue;
+          stopped = true;
+          try {
+            recognition.abort();
+          } catch {
+            // already stopped
+          }
+          handlers.onMatch();
+          return;
         }
-        handlers.onMatch();
-        return;
       }
     };
     recognition.onerror = (event) => {
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        stopped = true;
+        giveUp();
       }
     };
     recognition.onend = () => {
@@ -450,7 +462,10 @@ export function listenForChatStart(handlers: {
       failedStarts = 0;
     } catch {
       failedStarts += 1;
-      if (!iphone || failedStarts > 4) return;
+      if (failedStarts > 4) {
+        giveUp();
+        return;
+      }
       window.setTimeout(start, 400);
     }
   };
