@@ -559,6 +559,27 @@ function keepSpeechAlive() {
   }, 4000);
 }
 
+function guideSpeechBusy() {
+  if (speechPlaying || speechQueue.length > 0 || blockedSpeech !== "") return true;
+  if (isIphoneDevice()) return false;
+  const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+  return Boolean(synth && (synth.speaking || synth.pending));
+}
+
+function allowIphoneChatMic() {
+  if (!isIphoneDevice()) return;
+  try {
+    const session = (
+      navigator as unknown as { audioSession?: { type: string } }
+    ).audioSession;
+    if (session?.type === "playback") session.type = "auto";
+  } catch {
+    // 古いiPhoneには音声セッションの切り替えがない
+  }
+  const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+  if (synth && (synth.speaking || synth.pending)) synth.cancel();
+}
+
 function endVisualGuidance() {
   const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
   const active =
@@ -7027,11 +7048,10 @@ export default function App() {
         return;
       }
       iphoneChatWindowRef.current = true;
+      allowIphoneChatMic();
       iphoneChatListenRef.current = listenForChatStart({
         gate: () => {
-          const synth =
-            "speechSynthesis" in window ? window.speechSynthesis : null;
-          if (synth && (synth.speaking || synth.pending)) return false;
+          if (guideSpeechBusy()) return false;
           if (!iphoneChatWindowRef.current) return false;
           if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
             return false;
@@ -7050,8 +7070,7 @@ export default function App() {
     };
     const wait = () => {
       if (!iphoneChatArmedRef.current || iphoneChatWindowRef.current) return;
-      const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
-      const busy = Boolean(synth && (synth.speaking || synth.pending));
+      const busy = guideSpeechBusy();
       if (busy) {
         sawSpeech = true;
         idleSince = 0;

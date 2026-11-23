@@ -389,11 +389,6 @@ export function unlockSpeechRecognition() {
       }
     };
     recognition.start();
-    try {
-      recognition.abort();
-    } catch {
-      // まだ始まっていない
-    }
   } catch {
     // この端末では、案内のあとの画面タップでチャットを開く
   }
@@ -407,12 +402,15 @@ export function listenForChatStart(handlers: {
   if (!RecognitionClass) return { stop() {} };
   let stopped = false;
   let current: Recognition | null = null;
+  let failedStarts = 0;
+  const iphone = isIphoneDevice();
   const start = () => {
     if (stopped) return;
     const recognition = new RecognitionClass();
     current = recognition;
     recognition.lang = "ja-JP";
-    recognition.continuous = true;
+    // iPhoneは連続認識のまま終了して、話した言葉が最終結果にならない
+    recognition.continuous = !iphone;
     recognition.interimResults = true;
     recognition.onresult = (event) => {
       if (stopped || !handlers.gate()) return;
@@ -425,8 +423,8 @@ export function listenForChatStart(handlers: {
       const from = rich.resultIndex ?? 0;
       for (let index = from; index < rich.results.length; index += 1) {
         const row = rich.results[index];
-        if (!row?.isFinal) continue;
-        const text = row[0]?.transcript ?? "";
+        const text = row?.[0]?.transcript ?? "";
+        if (!row?.isFinal && !iphone) continue;
         if (!isSpokenChatStart(text)) continue;
         stopped = true;
         try {
@@ -444,13 +442,16 @@ export function listenForChatStart(handlers: {
       }
     };
     recognition.onend = () => {
-      if (stopped) return;
+      if (stopped || current !== recognition) return;
       window.setTimeout(start, 400);
     };
     try {
       recognition.start();
+      failedStarts = 0;
     } catch {
-      // 案内のあとの開始ができない端末は、画面タップで開く
+      failedStarts += 1;
+      if (!iphone || failedStarts > 4) return;
+      window.setTimeout(start, 400);
     }
   };
   start();
