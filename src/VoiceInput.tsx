@@ -22,7 +22,6 @@ type State = "idle" | "starting" | "listening" | "sending";
 
 const maxSeconds = 60;
 const silenceStopMs = 3000;
-const noSpeechStopMs = 10000;
 const speechLevel = 0.02;
 const targetRate = 16000;
 const consentKey = "sawakai-voice-input-consent";
@@ -529,7 +528,6 @@ export default function VoiceInput({
         }
         if (!chunks.length || peakNow < 0.005) {
           setState("idle");
-          setError("声が録音できませんでした。マイクの近くで、もう一度話してください。");
           return;
         }
         void transcribe(encodeWav(chunks, rate));
@@ -550,8 +548,7 @@ export default function VoiceInput({
           elapsed >= maxSeconds * 1000 ||
           (!holdForEndRef.current &&
             heardVoice &&
-            now - lastVoiceAt > silenceStopMs) ||
-          (!holdForEndRef.current && !heardVoice && elapsed > noSpeechStopMs)
+            now - lastVoiceAt > silenceStopMs)
         ) {
           finishRef.current?.();
         }
