@@ -5087,6 +5087,8 @@ export default function App() {
   );
   const [headerToolsCollapsed, setHeaderToolsCollapsed] = useState(false);
   const [iphonePlainVoice, setIphonePlainVoice] = useState(false);
+  const iphonePlainVoiceRef = useRef(false);
+  iphonePlainVoiceRef.current = iphonePlainVoice;
   const [iphoneTapGuide, setIphoneTapGuide] = useState(false);
   const [iphoneChatRetap, setIphoneChatRetap] = useState(false);
   const [iphoneChatTapReady, setIphoneChatTapReady] = useState(false);
@@ -6189,7 +6191,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!showConfirmation || !visualSupportEnabled) return;
+    if (!showConfirmation || !visualSupportEnabled || iphonePlainVoiceRef.current) return;
     let active = true;
     setVoiceConfirmationAutoStart(false);
     const timer = window.setTimeout(() => {
@@ -7412,6 +7414,14 @@ export default function App() {
       .normalize("NFKC")
       .replace(/[\s。、．.!！?？]/g, "");
 
+    if (iphonePlainVoiceRef.current) {
+      const next = `${draft ? `${draft}\n` : ""}${text}`.slice(0, 500);
+      setDraft(next);
+      setVoiceConfirmationAutoStart(false);
+      speakDraft(next);
+      return;
+    }
+
     if (visualSupportEnabledRef.current && showConfirmation) {
       setVoiceConfirmationAutoStart(false);
       if (
@@ -8558,6 +8568,7 @@ export default function App() {
                   cancelSignal={voiceCancelSignal}
                   autoStart={
                     visualSupportEnabled &&
+                    !iphonePlainVoice &&
                     voiceAutoMode &&
                     voiceConfirmationAutoStart
                   }
@@ -8567,7 +8578,7 @@ export default function App() {
                   onText={handleVoiceReply}
                   onListeningStart={() => {
                     setVoiceConfirmationAutoStart(false);
-                    setVoiceAutoMode(true);
+                    if (!iphonePlainVoice) setVoiceAutoMode(true);
                   }}
                   onStatusChange={(status, error) => {
                     setVoiceInputBusy(status !== "idle");
@@ -8942,11 +8953,17 @@ export default function App() {
             </h2>
             <div className="message-preview">{pendingMessage}</div>
             <p className="dialog-note">
-              {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen
+              {visualSupportEnabled &&
+              replyMode === "voice" &&
+              isReplyPanelOpen &&
+              !iphonePlainVoice
                 ? "「送信」と話すか、「送る」を押すと送信します。「修正」で話し直し、「取り消し」でやめます。"
                 : "「送る」を押すまで、自動で送信されることはありません。"}
             </p>
-            {visualSupportEnabled && replyMode === "voice" && isReplyPanelOpen && (
+            {visualSupportEnabled &&
+              replyMode === "voice" &&
+              isReplyPanelOpen &&
+              !iphonePlainVoice && (
               <>
                 {voiceInputStatus && <p role="status">{voiceInputStatus}</p>}
                 <button
