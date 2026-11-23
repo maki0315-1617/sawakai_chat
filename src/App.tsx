@@ -6075,7 +6075,7 @@ export default function App() {
   }, [iphoneChatTapReady]);
 
   const startSendListening = (start: () => void) => {
-    start();
+    window.setTimeout(start, isIphoneDevice() ? 400 : 200);
   };
 
   useEffect(() => {
@@ -6087,7 +6087,7 @@ export default function App() {
       const voiceReply = voicePanelRef.current;
       speakJapanese(
         voiceReply
-          ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。`
+          ? `送信前の確認です。内容は、${pendingMessage}。送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。どうぞ。`
           : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         () => {
           if (
@@ -7221,8 +7221,8 @@ export default function App() {
       } else {
         speakJapanese(
           voicePanelRef.current
-            ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。"
-            : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。",
+            ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。どうぞ。"
+            : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。どうぞ。",
           () => {
             if (!voiceAutoMode) return;
             startSendListening(() => setVoiceConfirmationAutoStart(true));
