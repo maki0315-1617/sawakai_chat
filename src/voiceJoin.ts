@@ -40,6 +40,18 @@ let desktopMicPrimed = false;
 let desktopMicPriming = false;
 const releaseMicHandlers = new Set<() => void>();
 
+function prepareIphoneRecognition() {
+  if (!isIphoneDevice()) return;
+  try {
+    const session = (
+      navigator as unknown as { audioSession?: { type: string } }
+    ).audioSession;
+    if (session?.type === "playback") session.type = "auto";
+  } catch {
+    // 古いiPhoneには音声セッションの切り替えがない
+  }
+}
+
 /** iPhoneは録音モードのままだと、上部のマイク表示が消えず、声も読めません。 */
 export function releaseIphoneAudioSession() {
   if (!isIphoneDevice()) return;
@@ -804,6 +816,7 @@ function listenIphoneStartup(handlers: {
         expectStart();
       }, 0);
     };
+    prepareIphoneRecognition();
     try {
       recognition.start();
     } catch (error) {

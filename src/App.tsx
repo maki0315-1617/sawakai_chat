@@ -579,13 +579,27 @@ function guideSpeechBusy() {
   return Boolean(synth && (synth.speaking || synth.pending));
 }
 
+function iphoneAudioSession() {
+  return (
+    navigator as unknown as { audioSession?: { type: string } }
+  ).audioSession;
+}
+
 function allowIphoneChatMic() {
   if (!isIphoneDevice()) return;
   try {
-    const session = (
-      navigator as unknown as { audioSession?: { type: string } }
-    ).audioSession;
+    const session = iphoneAudioSession();
     if (session?.type === "playback") session.type = "auto";
+  } catch {
+    // 古いiPhoneには音声セッションの切り替えがない
+  }
+}
+
+function useIphoneSpeaker() {
+  if (!isIphoneDevice()) return;
+  try {
+    const session = iphoneAudioSession();
+    if (session?.type === "auto") session.type = "playback";
   } catch {
     // 古いiPhoneには音声セッションの切り替えがない
   }
@@ -639,7 +653,7 @@ function playNextSpeech() {
     speechPlaying = false;
     playNextSpeech();
   };
-  const estimated = Math.min(30000, Math.max(4000, job.text.length * 180));
+  const estimated = Math.min(90000, Math.max(8000, job.text.length * 400));
   const safety = window.setTimeout(() => {
     if (finished || epoch !== speechEpoch) return;
     const synth = window.speechSynthesis;
@@ -649,7 +663,7 @@ function playNextSpeech() {
         if (synth.speaking || synth.pending) synth.cancel();
         notifyEnd();
         finish();
-      }, 8000);
+      }, 20000);
       return;
     }
     notifyEnd();
@@ -678,13 +692,21 @@ function playNextSpeech() {
     finish();
   };
   synth.resume();
+  useIphoneSpeaker();
+  if (isIphoneDevice()) {
+    const primer = new SpeechSynthesisUtterance(" ");
+    primer.lang = "ja-JP";
+    primer.volume = 0;
+    synth.speak(primer);
+  }
   synth.speak(utterance);
   keepSpeechAlive();
-  // iPhoneは読み上げ開始が遅れ、最初の案内だけ消えることがある
+  // 再起動直後は読み上げ開始が遅れる。始まる前に終わった扱いにすると、マイクが先に開いて音が切れる。
   window.setTimeout(() => {
     if (epoch !== speechEpoch || finished) return;
-    if (!synth.speaking && !synth.pending) finish();
-  }, isIphoneDevice() ? 1200 : 350);
+    if (synth.speaking || synth.pending) return;
+    finish();
+  }, isIphoneDevice() ? 8000 : 350);
 }
 
 function speakJapanese(text: string, onEnd?: () => void, onError?: () => void) {
