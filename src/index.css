@@ -5047,35 +5047,48 @@ input:focus-visible {
   gap: 12px;
 }
 
-.voice-command-choices {
+.confirm-dialog--voice .message-preview {
+  max-height: min(30dvh, 220px);
+  overflow-y: auto;
+}
+
+.voice-confirmation-actions {
   display: grid;
   gap: 12px;
   margin: 18px 0 20px;
 }
 
-.voice-command-choice {
+.voice-confirmation-action {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 84px;
+  width: 100%;
+  min-height: 80px;
+  padding: 14px;
   border: 3px solid;
   border-radius: 18px;
   font-family: "Noto Sans JP:Bold", sans-serif;
   font-size: clamp(36px, 9vw, 48px);
   font-weight: 800;
   line-height: 1.2;
+  cursor: pointer;
 }
 
-.voice-command-choice--send {
+.voice-confirmation-action--send {
   color: #0b6b4f;
   background: #e6f4ee;
   border-color: #0b6b4f;
 }
 
-.voice-command-choice--cancel {
+.voice-confirmation-action--cancel {
   color: #a9443d;
   background: #f8e9e7;
   border-color: #a9443d;
+}
+
+.voice-confirmation-action:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .confirm-dialog--voice .read-aloud-button {

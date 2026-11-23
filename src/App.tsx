@@ -5175,6 +5175,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [pendingMessage, setPendingMessage] = useState("");
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [voiceConfirmationMode, setVoiceConfirmationMode] = useState(false);
   const [showLeaveConfirmation, setShowLeaveConfirmation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sentNotice, setSentNotice] = useState(false);
@@ -6184,7 +6185,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    const voiceReply = voicePanelRef.current;
+    const voiceReply =
+      voiceConfirmationMode ||
+      (replyMode === "voice" && isReplyPanelOpen);
     if (!showConfirmation || (!visualSupportEnabled && !voiceReply)) return;
     let active = true;
     setVoiceConfirmationAutoStart(false);
@@ -6212,6 +6215,7 @@ export default function App() {
     showConfirmation,
     visualSupportEnabled,
     pendingMessage,
+    voiceConfirmationMode,
     replyMode,
     isReplyPanelOpen,
   ]);
@@ -6268,9 +6272,17 @@ export default function App() {
     else say();
   };
 
-  const prepareMessage = (message: string) => {
+  const prepareMessage = (
+    message: string,
+    voiceReply = replyMode === "voice" && isReplyPanelOpen,
+  ) => {
     if (!message.trim()) return;
     setPendingMessage(message.trim());
+    setVoiceConfirmationMode(voiceReply);
+    if (voiceReply) {
+      setReplyModeState("voice");
+      setIsReplyPanelOpen(true);
+    }
     setShowConfirmation(true);
   };
 
@@ -6284,6 +6296,7 @@ export default function App() {
     setVoiceConfirmationAutoStart(false);
     setVoiceAutoMode(false);
     setVoiceCancelSignal((signal) => signal + 1);
+    setVoiceConfirmationMode(false);
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     setShowConfirmation(false);
   };
@@ -7392,6 +7405,7 @@ export default function App() {
     setPendingSend(optimisticMessage);
     setPendingMessage("");
     setDraft("");
+    setVoiceConfirmationMode(false);
     setVoiceConfirmationAutoStart(false);
     setVoiceAutoMode(false);
     stopSpeakingDraft();
@@ -7416,7 +7430,9 @@ export default function App() {
   };
 
   const isVoiceReplyConfirmation =
-    replyMode === "voice" && isReplyPanelOpen;
+    showConfirmation &&
+    (voiceConfirmationMode ||
+      (replyMode === "voice" && isReplyPanelOpen));
 
   const confirmVoiceSend = () => {
     if (sendMessage()) {
@@ -7441,18 +7457,21 @@ export default function App() {
 
     if (
       showConfirmation &&
-      (visualSupportEnabledRef.current || voicePanelRef.current)
+      (visualSupportEnabledRef.current ||
+        voicePanelRef.current ||
+        voiceConfirmationMode)
     ) {
       setVoiceConfirmationAutoStart(false);
       const hasSendCommand = /送信|そうしん/.test(command);
       const hasCancelCommand = /取り消し|取消|キャンセル/.test(command);
-      const sendCommand = voicePanelRef.current
+      const voiceReply = voicePanelRef.current || voiceConfirmationMode;
+      const sendCommand = voiceReply
         ? ["送信", "そうしん"].includes(command)
         : ["はい送信", "はい送って"].includes(command);
-      if (voicePanelRef.current && hasSendCommand && hasCancelCommand) {
+      if (voiceReply && hasSendCommand && hasCancelCommand) {
         speakJapanese("「送信」か「取り消し」のどちらか一つをお話しください。");
       } else if (sendCommand) {
-        if (voicePanelRef.current) {
+        if (voiceReply) {
           confirmVoiceSend();
         } else if (sendMessage()) {
           speakJapanese("送信を予約しました。5秒後に送信します。");
@@ -7471,7 +7490,7 @@ export default function App() {
         });
         return;
       } else if (["取り消し", "取消", "キャンセル"].includes(command)) {
-        if (voicePanelRef.current) {
+        if (voiceReply) {
           cancelVoiceReply();
         } else {
           cancelConfirmation();
@@ -7482,11 +7501,11 @@ export default function App() {
         }
       } else {
         speakJapanese(
-          voicePanelRef.current
+          voiceReply
             ? "「送信」または「取り消し」とお話しください。"
             : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。どうぞ。",
           () => {
-            if (voicePanelRef.current || !voiceAutoMode) return;
+            if (voiceReply || !voiceAutoMode) return;
             startSendListening(() => setVoiceConfirmationAutoStart(true));
           },
         );
@@ -7506,7 +7525,7 @@ export default function App() {
         setVoiceAutoMode(false);
         if (message) {
           setDraft(message);
-          prepareMessage(message);
+          prepareMessage(message, true);
         } else {
           speakJapanese("送信する文章がありません。先に返事を話してください。", () => {
             if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
@@ -7520,7 +7539,7 @@ export default function App() {
         setVoiceAutoMode(false);
         if (message) {
           setDraft(message);
-          prepareMessage(message);
+          prepareMessage(message, true);
         } else {
           speakJapanese("返事がありません。もう一度お話しください。どうぞ。", () => {
             if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
@@ -7544,7 +7563,7 @@ export default function App() {
         if (!message) return;
         setDraft(message);
         setVoiceConfirmationAutoStart(false);
-        prepareMessage(message);
+        prepareMessage(message, true);
         return;
       }
       if (body) {
@@ -8983,16 +9002,26 @@ export default function App() {
             <div className="message-preview">{pendingMessage}</div>
             {isVoiceReplyConfirmation ? (
               <div
-                aria-label="声で伝える言葉"
-                className="voice-command-choices"
+                aria-label="返信の操作"
+                className="voice-confirmation-actions"
                 role="group"
               >
-                <span className="voice-command-choice voice-command-choice--send">
+                <button
+                  className="voice-confirmation-action voice-confirmation-action--send"
+                  disabled={isSending}
+                  onClick={confirmVoiceSend}
+                  type="button"
+                >
                   送信
-                </span>
-                <span className="voice-command-choice voice-command-choice--cancel">
+                </button>
+                <button
+                  className="voice-confirmation-action voice-confirmation-action--cancel"
+                  disabled={isSending}
+                  onClick={cancelVoiceReply}
+                  type="button"
+                >
                   取り消し
-                </span>
+                </button>
               </div>
             ) : (
               <p className="dialog-note">
