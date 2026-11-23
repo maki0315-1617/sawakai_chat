@@ -527,9 +527,8 @@ const visualCallButtons =
 const visualIncomingGuide =
   "電話が来たら、出るときは下の緑を押します。出ないときは、一番上の、出ない、を押してください。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
-const visualStartupChoice =
-  "処理を起動して下さい。iPhone以外は音声で起動出来ます。グループ、電話、チャットと話して下さい。";
-const visualLoggedInGuide = `${visualCallButtons}${visualIncomingGuide}${visualStartupChoice}`;
+const visualStartupAnnouncement =
+  "茶話会アプリを起動しました。処理を起動して下さい。iPhone以外は音声で起動出来ます。グループ、電話、チャットと話して下さい。";
 const visualRetryChoice =
   "もう一度お願いします。グループ、電話、チャット、と言ってください。どうぞ。";
 const visualCloseHint =
@@ -5110,7 +5109,7 @@ export default function App() {
     const text = pendingGuideRef.current;
     if (!text || !guideReadyRef.current) return;
     pendingGuideRef.current = null;
-    if (text.startsWith("茶話会アプリが起動しました。")) {
+    if (text === visualStartupAnnouncement) {
       speakOrRetry(text);
       armChatStartRef.current();
     } else speakJapanese(text);
@@ -6058,9 +6057,7 @@ export default function App() {
     if (!shouldAnnounceStartupRef.current) return;
     shouldAnnounceStartupRef.current = false;
     if (localStorage.getItem(visualSupportStorageKey) !== "enabled") return;
-    const text = `茶話会アプリが起動しました。${
-      token && profile ? visualLoggedInGuide : visualCallGuide
-    }`;
+    const text = visualStartupAnnouncement;
     if (isIphoneDevice()) {
       setIphoneTapGuide(true);
       return;
@@ -7797,15 +7794,8 @@ export default function App() {
       onClick={() => {
         setIphoneTapGuide(false);
         setIphoneSpeechReady(true);
-        const inChat = Boolean(token && profile && !showWalking);
         const spokeMissed = dmControlRef.current?.speakMissedGuide() === true;
-        if (!spokeMissed) {
-          speakJapanese(
-            inChat
-              ? `茶話会アプリが起動しました。${visualLoggedInGuide}`
-              : `茶話会アプリが起動しました。${visualCallGuide}`,
-          );
-        }
+        if (!spokeMissed) speakJapanese(visualStartupAnnouncement);
       }}
     >
       画面のどこかを、一度タップしてください
