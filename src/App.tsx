@@ -10,7 +10,7 @@ import { createPortal, flushSync } from "react-dom";
 import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
-import VoiceInput, { finishedReply } from "./VoiceInput";
+import VoiceInput, { finishedReply, isSpokenSend } from "./VoiceInput";
 import {
   failureMessage,
   isAndroidDevice,
@@ -7150,7 +7150,7 @@ export default function App() {
       setVoiceConfirmationAutoStart(false);
       if (
         ["はい送信", "はい送って"].includes(command) ||
-        (command === "送信" && voicePanelRef.current)
+        (isSpokenSend(text) && voicePanelRef.current)
       ) {
         if (sendMessage()) {
           speakJapanese("送信を予約しました。5秒後に送信します。");
@@ -7179,6 +7179,14 @@ export default function App() {
         setPendingMessage("");
         setVoiceAutoMode(false);
         speakJapanese("返信を取り消しました。");
+      } else if (
+        voicePanelRef.current &&
+        /送信|そうしん/.test(command) &&
+        /修正|取り消し|取消/.test(command)
+      ) {
+        if (voiceAutoMode) {
+          startSendListening(() => setVoiceConfirmationAutoStart(true));
+        }
       } else {
         speakJapanese(
           voicePanelRef.current
@@ -7200,6 +7208,17 @@ export default function App() {
       voicePanelRef.current &&
       !showConfirmation
     ) {
+      if (isSpokenSend(text)) {
+        if (draft.trim()) {
+          setVoiceConfirmationAutoStart(false);
+          prepareMessage(draft);
+        } else {
+          speakJapanese("送信する文章がありません。先に返事を話してください。", () => {
+            if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+          });
+        }
+        return;
+      }
       const body = finishedReply(text).body.trim();
       if (!body) {
         assistedShortCueRef.current = true;
@@ -7212,7 +7231,7 @@ export default function App() {
       return;
     }
 
-    if (visualSupportEnabledRef.current && command === "送信") {
+    if (visualSupportEnabledRef.current && isSpokenSend(text)) {
       if (draft.trim()) {
         setVoiceConfirmationAutoStart(false);
         prepareMessage(draft);

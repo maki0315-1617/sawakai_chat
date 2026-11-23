@@ -119,6 +119,46 @@ function compactSpeech(text: string) {
     .replace(/[\s　]/g, "");
 }
 
+/** 視覚サポートの確認で、発話全体が「送信」の指示か */
+export function isSpokenSend(text: string) {
+  let compact = compactSpeech(text).replace(/[。、．.!！?？]/g, "");
+  if (!compact || compact.length > 20) return false;
+  if (/修正|訂正|直す|取り消し|取消|キャンセル|やめる/.test(compact)) return false;
+  compact = compact.replace(/^(はい|ハイ|どうぞ)+/, "");
+  compact = compact.replace(
+    /(します|して|です|下さい|ください|ね|よ|だ|ます)+$/g,
+    "",
+  );
+  return ["送信", "そうしん", "送る", "おくる", "送って", "おくって"].includes(
+    compact,
+  );
+}
+
+function trailingSendBody(compact: string) {
+  const tails = [
+    "そうしんします",
+    "送信します",
+    "おくってください",
+    "送ってください",
+    "送って下さい",
+    "そうしん",
+    "送信",
+    "おくって",
+    "送って",
+    "おくる",
+    "送る",
+  ];
+  for (const tail of tails) {
+    if (!compact.endsWith(tail) || compact.length === tail.length) continue;
+    const body = compact
+      .slice(0, -tail.length)
+      .replace(/[。、．.!！?？をはが]+$/g, "")
+      .trim();
+    return body || null;
+  }
+  return null;
+}
+
 function phoneEndBody(compact: string) {
   const match = compact.match(
     /^(.*?)(終わりです|おわりです|終わり|おわり)[。.!！ねよ]?$/,
@@ -156,6 +196,11 @@ function desktopEndBody(compact: string, loose: boolean) {
 
 export function finishedReply(text: string, loose = true) {
   const compact = compactSpeech(text);
+  if (loose && isSpokenSend(text)) return { done: true, body: text.trim() };
+  if (loose) {
+    const sent = trailingSendBody(compact.replace(/[。、．.!！?？]/g, ""));
+    if (sent) return { done: true, body: sent };
+  }
   if (isDesktopDevice()) {
     const body = desktopEndBody(compact, loose);
     if (body !== null) return { done: true, body };
