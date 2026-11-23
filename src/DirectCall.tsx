@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   AudioPresets,
   LocalVideoTrack,
@@ -1398,7 +1399,13 @@ export default function DirectCall({
 
   useEffect(() => {
     if (phase !== "incall" || !visualSupportEnabled) return;
-    endGuidanceRef.current?.();
+    const message =
+      "通話がつながりました。終わるときは、一番上の、電話を切る、を押してください。";
+    let timer = 0;
+    const say = () => announceRef.current(message);
+    if (endGuidanceRef.current?.()) timer = window.setTimeout(say, 100);
+    else say();
+    return () => window.clearTimeout(timer);
   }, [phase, visualSupportEnabled]);
 
   useEffect(() => {
@@ -1794,8 +1801,25 @@ export default function DirectCall({
     };
   }
 
+  const leaveFromTop =
+    visualSupportEnabled && phase === "incall"
+      ? createPortal(
+          <div className="voice-join-banner voice-leave-banner">
+            <button
+              className="voice-join-banner__button voice-leave-top"
+              onClick={() => void hangUp()}
+              type="button"
+            >
+              電話を切る
+            </button>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <>
+      {leaveFromTop}
       {assistedChooser &&
         showPanel &&
         !call &&
@@ -2010,7 +2034,7 @@ export default function DirectCall({
 
       {call && phase && (
         <div
-          className={`dm-screen ${videoMode ? "dm-screen--video" : ""} ${phase === "incoming" && visualSupportEnabled ? "dm-screen--sides" : ""}`}
+          className={`dm-screen ${videoMode ? "dm-screen--video" : ""} ${phase === "incoming" && visualSupportEnabled ? "dm-screen--sides" : ""} ${phase === "incall" && visualSupportEnabled ? "dm-screen--leave" : ""}`}
           role="alertdialog"
           aria-label="1対1通話"
         >
@@ -2182,12 +2206,15 @@ export default function DirectCall({
                   </p>
                 </>
               )}
-              <button
-                className="dm-big-button dm-big-button--end"
-                onClick={() => void hangUp()}
-              >
-                {phase === "calling" ? "やめる" : "電話を切る"}
-              </button>
+              {!(visualSupportEnabled && phase === "incall") && (
+                <button
+                  className="dm-big-button dm-big-button--end"
+                  onClick={() => void hangUp()}
+                  type="button"
+                >
+                  {phase === "calling" ? "やめる" : "電話を切る"}
+                </button>
+              )}
             </div>
           )}
         </div>

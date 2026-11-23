@@ -5880,6 +5880,11 @@ input:focus-visible {
   justify-content: safe center;
 }
 
+.dm-screen--leave {
+  justify-content: flex-start;
+  padding-top: 176px;
+}
+
 .dm-screen__time.is-warning {
   color: #ffd166;
 }
