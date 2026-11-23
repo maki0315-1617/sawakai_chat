@@ -10,7 +10,7 @@ import { createPortal, flushSync } from "react-dom";
 import { projectId, publicAnonKey } from "../utils/supabase/info";
 import VoiceCall from "./VoiceCall";
 import DirectCall, { type DirectCallControl } from "./DirectCall";
-import VoiceInput, { finishedReply, isSpokenSend } from "./VoiceInput";
+import VoiceInput, { finishedReply, isSpokenSend, spokenSendContent } from "./VoiceInput";
 import {
   failureMessage,
   isAndroidDevice,
@@ -7104,13 +7104,14 @@ export default function App() {
     }
   };
 
-  const sendMessage = () => {
-    if (pendingSend || !profile || !pendingMessage.trim()) return false;
+  const sendMessage = (text?: string) => {
+    const message = (typeof text === "string" ? text : pendingMessage).trim();
+    if (pendingSend || !profile || !message) return false;
     setIsSending(true);
     const optimisticMessage: ChatMessage = {
       id: `pending-${Date.now()}`,
       sender: profile.name,
-      text: pendingMessage,
+      text: message,
       createdAt: new Date().toISOString(),
       avatar: "mint",
       pending: true,
@@ -7208,10 +7209,12 @@ export default function App() {
       voicePanelRef.current &&
       !showConfirmation
     ) {
-      if (isSpokenSend(text)) {
-        if (draft.trim()) {
-          setVoiceConfirmationAutoStart(false);
-          prepareMessage(draft);
+      const sendContent = spokenSendContent(text);
+      if (sendContent !== null) {
+        const message = sendContent || draft.trim();
+        setVoiceConfirmationAutoStart(false);
+        if (message && sendMessage(message)) {
+          speakJapanese("送信を予約しました。5秒後に送信します。");
         } else {
           speakJapanese("送信する文章がありません。先に返事を話してください。", () => {
             if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
@@ -7231,10 +7234,11 @@ export default function App() {
       return;
     }
 
-    if (visualSupportEnabledRef.current && isSpokenSend(text)) {
-      if (draft.trim()) {
-        setVoiceConfirmationAutoStart(false);
-        prepareMessage(draft);
+    if (visualSupportEnabledRef.current && spokenSendContent(text) !== null) {
+      const message = spokenSendContent(text) || draft.trim();
+      setVoiceConfirmationAutoStart(false);
+      if (message && sendMessage(message)) {
+        speakJapanese("送信を予約しました。5秒後に送信します。");
       } else {
         speakJapanese("送信する文章がありません。先に返事を話してください。", () => {
           if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
@@ -8632,7 +8636,9 @@ export default function App() {
               <button
                 className="dialog-button dialog-button--send"
                 disabled={isSending}
-                onClick={sendMessage}
+                onClick={() => {
+                  sendMessage();
+                }}
               >
                 <SendIcon />
                 {isSending ? "送信中…" : "送る"}

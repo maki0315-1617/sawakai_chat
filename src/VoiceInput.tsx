@@ -134,6 +134,12 @@ export function isSpokenSend(text: string) {
   );
 }
 
+/** 送信の発話なら本文を返す。言葉だけなら空文字、送信でなければ null */
+export function spokenSendContent(text: string) {
+  if (isSpokenSend(text)) return "";
+  return trailingSendBody(compactSpeech(text).replace(/[。、．.!！?？]/g, ""));
+}
+
 function trailingSendBody(compact: string) {
   const tails = [
     "そうしんします",
@@ -196,10 +202,12 @@ function desktopEndBody(compact: string, loose: boolean) {
 
 export function finishedReply(text: string, loose = true) {
   const compact = compactSpeech(text);
-  if (loose && isSpokenSend(text)) return { done: true, body: text.trim() };
+  if (loose && isSpokenSend(text)) {
+    return { done: true, body: text.trim(), send: true };
+  }
   if (loose) {
     const sent = trailingSendBody(compact.replace(/[。、．.!！?？]/g, ""));
-    if (sent) return { done: true, body: sent };
+    if (sent) return { done: true, body: text.trim(), send: true };
   }
   if (isDesktopDevice()) {
     const body = desktopEndBody(compact, loose);
@@ -582,6 +590,14 @@ export default function VoiceInput({
     }, 250);
   };
 
+  const textToHold = (source: string, loose = true) => {
+    const finished = finishedReply(source, loose);
+    return {
+      done: finished.done,
+      text: finished.send ? source.trim() : finished.body,
+    };
+  };
+
   const deliverHeld = (body: string) => {
     if (deliveredRef.current) return;
     deliveredRef.current = true;
@@ -645,9 +661,9 @@ export default function VoiceInput({
       if (!combined) return;
       heardRef.current = combined;
       const last = event.results[event.results.length - 1];
-      const finished = finishedReply(combined, Boolean(last?.isFinal));
-      if (finished.done) {
-        deliverHeld(finished.body);
+      const held = textToHold(combined, Boolean(last?.isFinal));
+      if (held.done) {
+        deliverHeld(held.text);
         return;
       }
       if (!desktop || !last?.isFinal) return;
@@ -664,9 +680,9 @@ export default function VoiceInput({
       for (let index = 1; index < count; index += 1) {
         const alt = choice[index]?.transcript?.trim() ?? "";
         if (!alt || alt.length + 2 < top.length) continue;
-        const attempt = finishedReply(`${previous}${alt}`, true);
+        const attempt = textToHold(`${previous}${alt}`, true);
         if (!attempt.done) continue;
-        deliverHeld(attempt.body);
+        deliverHeld(attempt.text);
         return;
       }
     };
@@ -690,8 +706,8 @@ export default function VoiceInput({
         if (timerRef.current !== null) window.clearInterval(timerRef.current);
         timerRef.current = null;
         recognitionRef.current = null;
-        const finished = finishedReply(heardRef.current);
-        if (heardRef.current.trim()) deliverHeld(finished.body);
+        const held = textToHold(heardRef.current);
+        if (heardRef.current.trim()) deliverHeld(held.text);
         else {
           deliveredRef.current = true;
           setState("idle");
@@ -796,8 +812,8 @@ export default function VoiceInput({
       const elapsed = Date.now() - startedAt;
       setSeconds(Math.floor(elapsed / 1000));
       if (elapsed < maxSeconds * 1000 || deliveredRef.current) return;
-      const finished = finishedReply(heardRef.current);
-      if (heardRef.current.trim()) deliverHeld(finished.body);
+      const held = textToHold(heardRef.current);
+      if (heardRef.current.trim()) deliverHeld(held.text);
       else {
         deliveredRef.current = true;
         recognition.stop();
@@ -842,7 +858,7 @@ export default function VoiceInput({
 
   const finishHeld = () => {
     if (recognitionRef.current) {
-      const finished = finishedReply(heardRef.current);
+      const held = textToHold(heardRef.current);
       if (!heardRef.current.trim()) {
         deliveredRef.current = true;
         sessionRef.current += 1;
@@ -854,7 +870,7 @@ export default function VoiceInput({
         setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
         return;
       }
-      deliverHeld(finished.body);
+      deliverHeld(held.text);
       return;
     }
     finishRef.current?.();
@@ -893,7 +909,7 @@ export default function VoiceInput({
       heardRef.current.trim() &&
       !deliveredRef.current
     ) {
-      deliverHeld(finishedReply(heardRef.current).body);
+      deliverHeld(textToHold(heardRef.current).text);
       return;
     }
     if (localStorage.getItem(consentKey) !== "agreed") {
