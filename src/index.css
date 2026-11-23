@@ -5834,6 +5834,43 @@ input:focus-visible {
   min-height: 140px;
 }
 
+.voice-panel--iphone-talk .writing-panel__heading {
+  order: 1;
+  display: block;
+}
+
+.voice-panel--iphone-talk .writing-panel__heading label {
+  display: none;
+}
+
+.voice-panel--iphone-talk .close-button--labeled {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  font-size: 22px;
+}
+
+.voice-panel--iphone-talk .writing-panel__lead,
+.voice-panel--iphone-talk .read-aloud-button,
+.voice-panel--iphone-talk .media-select-button,
+.voice-panel--iphone-talk .writing-panel__close-bottom,
+.voice-panel--iphone-talk > .voice-input__status {
+  display: none;
+}
+
+.voice-panel--iphone-talk .voice-input {
+  order: 2;
+}
+
+.voice-panel--iphone-talk .reply-button--primary {
+  order: 3;
+  min-height: 128px;
+}
+
+.voice-panel--iphone-talk textarea {
+  order: 4;
+}
+
 .keyboard-mic-button {
   width: 100%;
   min-height: 64px;
