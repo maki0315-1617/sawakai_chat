@@ -17,6 +17,7 @@ import {
   isIphoneDevice,
   isVoiceSupported,
   listenLikeChatInput,
+  startupChoice,
   listenOnce,
   primeDesktopMicrophone,
   normalizeInviteCode,
@@ -520,15 +521,17 @@ const themeStorageKey = "sawakai-theme";
 const visualSupportStorageKey = "sawakai-visual-support";
 const visualCallButtons =
   "グループ通話は、画面の一番上の緑のボタンを一度押します。その下の青いボタンで、1対1の電話をします。";
-const visualChatButtonGuide = "チャットは一番下の赤いボタンです。";
 const visualIncomingGuide =
   "電話が来たら、右を押すと出て、左を押すと出ません。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
-const visualLoggedInGuide = `${visualCallButtons}${visualChatButtonGuide}${visualIncomingGuide}チャットは、話す、または、チャット、と言ってください。`;
-const visualListenCue =
-  "マイクの準備ができました。話す、または、チャット、と言ってください。どうぞ。";
-const visualIphoneRetapCue =
-  "もう一度、画面を押してから、チャット、と言ってください。";
+const visualStartupChoice =
+  "初期起動は、グループ、電話、チャット、と言ってください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";
+const visualLoggedInGuide = `${visualCallButtons}${visualIncomingGuide}${visualStartupChoice}`;
+const visualRetryChoice =
+  "もう一度お願いします。グループ、電話、チャット、と言ってください。どうぞ。";
+const visualCloseHint =
+  "この画面を閉じるときは、ブラウザまたはアプリを閉じてください。";
+const visualIphoneRetapCue = "もう一度、画面を押してください。";
 const visualReturnHome = "初期画面に戻りました。処理を選択して下さい。";
 const replyModeStorageKey = "sawakai-reply-mode";
 type ReplyMode = "ai" | "voice" | "write";
@@ -5230,6 +5233,13 @@ export default function App() {
   const iphoneWindowTimerRef = useRef(0);
   const finishChatWindowRef = useRef<() => void>(() => undefined);
   const showIphoneRetapRef = useRef<() => void>(() => undefined);
+  const stopStartupChoiceRef = useRef<() => void>(() => undefined);
+  const startupActiveRef = useRef(false);
+  const startupDoneRef = useRef(false);
+  const startupRetryRef = useRef(false);
+  const startupHeardRef = useRef<(text: string) => void>(() => undefined);
+  const startupMissRef = useRef<() => void>(() => undefined);
+  const startupFailRef = useRef<() => void>(() => undefined);
   const [dmMissedCount, setDmMissedCount] = useState(0);
   const [dmCallsLeft, setDmCallsLeft] = useState<number | null>(null);
   const [dmPeer, setDmPeer] = useState<string | null>(null);
@@ -6044,6 +6054,7 @@ export default function App() {
       if (target.closest(".iphone-tap-guide")) return;
       if (!target.closest("button, a, [role='button']")) return;
       endVisualGuidance();
+      stopStartupChoiceRef.current();
     };
     const primeMic = (event: Event) => {
       if (isIphoneDevice()) return;
@@ -7075,21 +7086,23 @@ export default function App() {
     if (!token || !profile || showWalking) return;
     iphoneChatArmedRef.current = true;
     iphoneChatMatchedRef.current = false;
+    startupDoneRef.current = false;
+    startupActiveRef.current = true;
+    startupRetryRef.current = false;
     if (isDesktopDevice()) primeDesktopMicrophone();
-    const allowChatTap = () => {
-      if (isIphoneDevice()) setIphoneChatTapReady(true);
-    };
     const started = Date.now();
     let idleSince = 0;
     let sawSpeech = false;
-    let windowFinished = false;
     const clearWindowTimer = () => {
       window.clearTimeout(iphoneWindowTimerRef.current);
       iphoneWindowTimerRef.current = 0;
     };
-    const finishWindow = () => {
-      if (windowFinished || iphoneChatMatchedRef.current) return;
-      windowFinished = true;
+    const stopQuiet = () => {
+      if (startupDoneRef.current) return;
+      startupDoneRef.current = true;
+      startupActiveRef.current = false;
+      startupRetryRef.current = false;
+      iphoneChatMatchedRef.current = true;
       iphoneChatWindowRef.current = false;
       iphoneChatAcceptRef.current = false;
       clearWindowTimer();
@@ -7099,19 +7112,14 @@ export default function App() {
       iphoneHeldListenRef.current = null;
       setIphoneChatRetap(false);
       setIphoneChatTapReady(false);
-      if (!visualSupportEnabledRef.current) return;
-      speakJapanese(visualReturnHome);
     };
-    finishChatWindowRef.current = finishWindow;
-    const armWindowTimer = () => {
-      clearWindowTimer();
-      iphoneWindowTimerRef.current = window.setTimeout(finishWindow, 8000);
-    };
+    stopStartupChoiceRef.current = stopQuiet;
+    finishChatWindowRef.current = stopQuiet;
     const promptIphoneRetap = () => {
       if (
         iphoneRetapShownRef.current ||
-        windowFinished ||
-        iphoneChatMatchedRef.current ||
+        startupDoneRef.current ||
+        !startupActiveRef.current ||
         !iphoneChatWindowRef.current
       ) {
         return;
@@ -7120,86 +7128,65 @@ export default function App() {
       iphoneChatAcceptRef.current = false;
       clearWindowTimer();
       setIphoneChatRetap(true);
-      const armTapTimeout = () => {
-        if (
-          windowFinished ||
-          iphoneChatMatchedRef.current ||
-          !iphoneChatWindowRef.current
-        ) {
-          return;
-        }
-        armWindowTimer();
-      };
-      if (!speakJapanese(visualIphoneRetapCue, armTapTimeout, armTapTimeout)) {
-        armTapTimeout();
-      }
+      speakJapanese(visualIphoneRetapCue);
     };
     showIphoneRetapRef.current = promptIphoneRetap;
-    const commandHandlers = () => ({
-      onMatch: () => {
-        if (iphoneChatMatchedRef.current) return;
-        iphoneChatMatchedRef.current = true;
-        iphoneChatWindowRef.current = false;
-        clearWindowTimer();
-        iphoneHeldListenRef.current = null;
-        setIphoneChatRetap(false);
-        allowChatTap();
-        openAssistedVoiceRef.current();
-      },
-      onFailed: () => {
-        if (windowFinished || iphoneChatMatchedRef.current || !iphoneChatWindowRef.current) {
-          return;
-        }
-        if (isIphoneDevice()) {
-          if (iphoneListenFromRetapRef.current) finishWindow();
-          else promptIphoneRetap();
-        }
-      },
-    });
     const ensureCommand = () => {
       if (iphoneHeldListenRef.current) return;
       iphoneListenFromRetapRef.current = false;
-      iphoneHeldListenRef.current = listenLikeChatInput(commandHandlers());
+      iphoneHeldListenRef.current = listenLikeChatInput({
+        accept: (text) => startupChoice(text) !== null,
+        onMatch: (text) => startupHeardRef.current(text ?? ""),
+        onUnrecognized: () => startupMissRef.current(),
+        onFailed: () => startupFailRef.current(),
+      });
       iphoneHeldListenRef.current.prime();
     };
     const beginCommand = () => {
-      if (!iphoneChatWindowRef.current || windowFinished || iphoneChatMatchedRef.current) {
+      if (
+        startupDoneRef.current ||
+        !startupActiveRef.current ||
+        !iphoneChatWindowRef.current ||
+        showVoiceRef.current ||
+        dmInCallRef.current ||
+        dmIncomingRef.current
+      ) {
         return;
       }
       ensureCommand();
       iphoneHeldListenRef.current?.arm();
-      armWindowTimer();
     };
     startChatListenRef.current = () => {
       if (isIphoneDevice()) return;
-      if (!iphoneChatWindowRef.current || windowFinished || iphoneChatMatchedRef.current) {
+      if (
+        startupDoneRef.current ||
+        !startupActiveRef.current ||
+        !iphoneChatWindowRef.current
+      ) {
         return;
       }
       if (speechPlaying || speechQueue.length > 0) return;
       ensureCommand();
       iphoneHeldListenRef.current?.listenNow();
-      armWindowTimer();
     };
     const openWindow = () => {
-      if (iphoneChatWindowRef.current) return;
+      if (startupDoneRef.current || iphoneChatWindowRef.current) return;
       if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
-        allowChatTap();
         return;
       }
       iphoneChatWindowRef.current = true;
       ensureCommand();
       iphoneHeldListenRef.current?.prime();
-      let began = false;
-      const afterCue = () => {
-        if (began || !iphoneChatWindowRef.current || windowFinished) return;
-        began = true;
-        beginCommand();
-      };
-      if (!speakJapanese(visualListenCue, afterCue, afterCue)) afterCue();
-      window.setTimeout(afterCue, 12000);
+      beginCommand();
     };
     const wait = () => {
-      if (!iphoneChatArmedRef.current || iphoneChatWindowRef.current) return;
+      if (
+        !iphoneChatArmedRef.current ||
+        startupDoneRef.current ||
+        iphoneChatWindowRef.current
+      ) {
+        return;
+      }
       const busy = guideSpeechBusy();
       if (busy) {
         sawSpeech = true;
@@ -7225,6 +7212,55 @@ export default function App() {
     wait();
   };
   armChatStartRef.current = armIphoneChatStart;
+
+  startupHeardRef.current = (text) => {
+    if (!startupActiveRef.current || startupDoneRef.current) return;
+    const choice = startupChoice(text);
+    if (!choice) return;
+    stopStartupChoiceRef.current();
+    if (!visualSupportEnabledRef.current) return;
+    if (choice === "close") {
+      speakJapanese(`${visualReturnHome}${visualCloseHint}`);
+      return;
+    }
+    if (choice === "group") {
+      joinGroupCallByButton();
+      return;
+    }
+    if (choice === "phone") {
+      openDirectCall();
+      return;
+    }
+    openAssistedVoiceRef.current();
+  };
+  startupMissRef.current = () => {
+    if (
+      !startupActiveRef.current ||
+      startupDoneRef.current ||
+      startupRetryRef.current
+    ) {
+      return;
+    }
+    startupRetryRef.current = true;
+    let began = false;
+    const again = () => {
+      if (began) return;
+      began = true;
+      startupRetryRef.current = false;
+      if (!startupActiveRef.current || startupDoneRef.current) return;
+      if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) {
+        return;
+      }
+      iphoneHeldListenRef.current?.arm();
+    };
+    if (!speakJapanese(visualRetryChoice, again, again)) again();
+    window.setTimeout(again, 8000);
+  };
+  startupFailRef.current = () => {
+    if (!startupActiveRef.current || startupDoneRef.current) return;
+    if (!iphoneChatWindowRef.current) return;
+    if (isIphoneDevice()) showIphoneRetapRef.current();
+  };
 
   const persistMessage = async (message: ChatMessage) => {
     try {
@@ -7641,25 +7677,12 @@ export default function App() {
     iphoneMicLostRef.current = false;
     iphoneHeldListenRef.current?.stop();
     const session = listenLikeChatInput({
-      onMatch: () => {
-        if (iphoneChatMatchedRef.current) return;
-        iphoneChatMatchedRef.current = true;
-        iphoneChatAcceptRef.current = false;
-        iphoneChatWindowRef.current = false;
-        window.clearTimeout(iphoneWindowTimerRef.current);
-        iphoneHeldListenRef.current = null;
-        setIphoneChatRetap(false);
-        setIphoneChatTapReady(true);
-        openAssistedVoiceRef.current();
-      },
+      accept: (text) => startupChoice(text) !== null,
+      onMatch: (text) => startupHeardRef.current(text ?? ""),
+      onUnrecognized: () => startupMissRef.current(),
       onFailed: () => {
         iphoneMicLostRef.current = true;
-        if (!iphoneChatWindowRef.current || iphoneChatMatchedRef.current) return;
-        if (iphoneListenFromRetapRef.current) {
-          finishChatWindowRef.current();
-          return;
-        }
-        showIphoneRetapRef.current();
+        startupFailRef.current();
       },
     });
     session.prime();
@@ -7688,8 +7711,8 @@ export default function App() {
               ? `茶話会アプリが起動しました。${visualLoggedInGuide}`
               : `茶話会アプリが起動しました。${visualCallGuide}`,
           );
+          if (inChat) armIphoneChatStart();
         }
-        if (inChat) armIphoneChatStart();
       }}
     >
       画面のどこかを、一度タップしてください
@@ -7709,15 +7732,16 @@ export default function App() {
         startIphoneHeldListen(true);
         let began = false;
         const begin = () => {
-          if (began || iphoneChatMatchedRef.current || !iphoneChatWindowRef.current) {
+          if (
+            began ||
+            startupDoneRef.current ||
+            !startupActiveRef.current ||
+            !iphoneChatWindowRef.current
+          ) {
             return;
           }
           began = true;
           iphoneHeldListenRef.current?.arm();
-          iphoneWindowTimerRef.current = window.setTimeout(
-            () => finishChatWindowRef.current(),
-            8000,
-          );
         };
         if (!speakJapanese("どうぞ。", begin, begin)) begin();
         window.setTimeout(begin, 2500);

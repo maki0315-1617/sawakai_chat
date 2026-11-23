@@ -355,6 +355,26 @@ export function isSpokenPlaceCall(text: string) {
   return /はい|かける|かけます/.test(value);
 }
 
+export type StartupChoice = "group" | "phone" | "chat" | "close";
+
+/** 起動案内のあとだけ。「グループ」「電話」「チャット」「閉じる」「終わる」の短い発話です。 */
+export function startupChoice(text: string): StartupChoice | null {
+  const value = normalizeSpeech(text).replace(/(です|だよ|だね|だ)$/, "");
+  if (!value || value.length > 12) return null;
+  if (
+    /ボタン|押す|言って|または|初期|起動|画面|一番|緑|青|右|左|来たら|終了する|ください|下さい|どうぞ/.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  if (/^(閉じる|とじる|終わる|おわる)$/.test(value)) return "close";
+  if (/^(グループ|ぐるーぷ)$/.test(value)) return "group";
+  if (/^(電話|でんわ)$/.test(value)) return "phone";
+  if (/^(チャット|ちゃっと)$/.test(value)) return "chat";
+  return null;
+}
+
 /** 起動直後の音声チャット開始。「話す」または「チャット」だけを受けます。 */
 export function isSpokenChatStart(text: string) {
   const value = normalizeSpeech(text);
@@ -467,8 +487,10 @@ export function listenForChatStart(handlers: {
  * 電話では区切って聞き、途中の文字も見ます。案内のあいだの結果は使いません。
  */
 export function listenLikeChatInput(handlers: {
-  onMatch: () => void;
+  onMatch: (text?: string) => void;
   onFailed: () => void;
+  onUnrecognized?: () => void;
+  accept?: (text: string) => boolean;
 }): { stop: () => void; prime: () => void; arm: () => void; listenNow: () => void } {
   const RecognitionClass = getRecognitionClass();
   const noop = { stop() {}, prime() {}, arm() {}, listenNow() {} };
@@ -496,17 +518,21 @@ export function listenLikeChatInput(handlers: {
     ready = false;
     handlers.onFailed();
   };
+  const acceptText = (text: string) =>
+    handlers.accept ? handlers.accept(text) : isSpokenChatStart(text);
   const hear = (text: string) => {
-    if (!ready || stopped || matched || failed) return;
-    if (!isSpokenChatStart(text)) return;
+    if (!ready || stopped || matched || failed) return false;
+    if (!acceptText(text)) return false;
     matched = true;
     stopped = true;
+    ready = false;
     try {
       recognition.abort();
     } catch {
       // already stopped
     }
-    handlers.onMatch();
+    handlers.onMatch(text);
+    return true;
   };
   recognition.lang = "ja-JP";
   recognition.continuous = desktop;
@@ -517,18 +543,35 @@ export function listenLikeChatInput(handlers: {
     const results = event.results as ArrayLike<
       ArrayLike<{ transcript: string }> & { isFinal?: boolean; length?: number }
     >;
+    const lastResult = results[results.length - 1];
+    if (handlers.accept && !lastResult?.isFinal) return;
     let combined = "";
     for (let index = 0; index < results.length; index += 1) {
       combined += results[index]?.[0]?.transcript ?? "";
     }
-    hear(combined);
-    if (matched || !desktop) return;
-    const last = results[results.length - 1];
-    const count = Math.min(last?.length ?? 1, 5);
-    for (let index = 1; index < count; index += 1) {
-      const alt = last[index]?.transcript ?? "";
-      if (alt) hear(alt);
+    if (hear(combined)) return;
+    if (desktop) {
+      const last = results[results.length - 1];
+      const count = Math.min(last?.length ?? 1, 5);
+      for (let index = 1; index < count; index += 1) {
+        const alt = last[index]?.transcript ?? "";
+        if (alt && hear(alt)) return;
+      }
     }
+    if (!handlers.onUnrecognized) return;
+    let finalText = "";
+    for (let index = 0; index < results.length; index += 1) {
+      if (!results[index]?.isFinal) continue;
+      finalText += results[index]?.[0]?.transcript ?? "";
+    }
+    if (!finalText.trim() || acceptText(finalText)) return;
+    ready = false;
+    try {
+      recognition.abort();
+    } catch {
+      // already stopped
+    }
+    handlers.onUnrecognized();
   };
   recognition.onerror = (event) => {
     if (stopped || matched || rearming || !ready) return;
