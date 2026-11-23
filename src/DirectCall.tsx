@@ -38,6 +38,7 @@ type DirectCallProps = {
   showPanel: boolean;
   assistedPick?: boolean;
   onClosePanel: () => void;
+  onReturnedHome?: () => void;
   onListeningChange: (listening: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
   onIncomingChange?: (incoming: boolean) => void;
@@ -421,6 +422,7 @@ export default function DirectCall({
   showPanel,
   assistedPick = false,
   onClosePanel,
+  onReturnedHome,
   onListeningChange,
   onBusyChange,
   onIncomingChange,
@@ -469,6 +471,13 @@ export default function DirectCall({
   visualSupportRef.current = visualSupportEnabled;
   const announceRef = useRef(announce);
   announceRef.current = announce;
+  const onReturnedHomeRef = useRef(onReturnedHome);
+  onReturnedHomeRef.current = onReturnedHome;
+  const showPanelRef = useRef(showPanel);
+  showPanelRef.current = showPanel;
+  const tellHome = () => {
+    if (visualSupportRef.current) onReturnedHomeRef.current?.();
+  };
   onIphoneRingFailed = () => {
     if (phaseRef.current !== "calling" || !visualSupportRef.current) return;
     announceRef.current("呼び出し中です。");
@@ -573,10 +582,13 @@ export default function DirectCall({
 
   const finishCall = (message: string) => {
     leaveRoom();
+    const panelOpen = showPanelRef.current;
     changeCall(null, null);
-    if (!message) return;
-    setNotice(message);
-    if (visualSupportRef.current) announceRef.current(message);
+    if (message) {
+      setNotice(message);
+      if (visualSupportRef.current) announceRef.current(message);
+    }
+    if (!panelOpen) tellHome();
   };
 
   const hangUp = async (message = "通話を終了しました。") => {
@@ -712,6 +724,7 @@ export default function DirectCall({
             ? reason.message
             : "通話をつなげませんでした。",
       );
+      if (!showPanelRef.current) tellHome();
     }
   };
 
@@ -1228,6 +1241,7 @@ export default function DirectCall({
     const returnHome = () => {
       onClosePanel();
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      tellHome();
       onVisualGuideReadyRef.current?.(true);
     };
     const finishNo = () => {
@@ -1538,6 +1552,7 @@ export default function DirectCall({
           "今日の1対1の電話は、3回まで使いました。また明日おかけください。",
         );
         onClosePanel();
+        tellHome();
       }
       return;
     }
@@ -1547,6 +1562,7 @@ export default function DirectCall({
         assistedSpokenRef.current = "empty";
         announceRef.current("電話できる相手はいません。");
         onClosePanel();
+        tellHome();
       }
       return;
     }
@@ -1601,6 +1617,7 @@ export default function DirectCall({
     callYesRef.current = null;
     announce("呼び出しを終わります。");
     onClosePanel();
+    tellHome();
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
   const assistedSkip = () => {
@@ -1611,6 +1628,7 @@ export default function DirectCall({
     if (isIphoneDevice() && assistedLast) {
       announce("やめるが選択されました。");
       onClosePanel();
+      tellHome();
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       return;
     }
@@ -1705,7 +1723,11 @@ export default function DirectCall({
     [],
   );
 
-  const sheetDrag = useSheetDrag(onClosePanel);
+  const closePicker = () => {
+    onClosePanel();
+    tellHome();
+  };
+  const sheetDrag = useSheetDrag(closePicker);
 
   if (controlRef) {
     controlRef.current = {
@@ -1827,7 +1849,7 @@ export default function DirectCall({
             <button
               aria-label="1対1通話を閉じる"
               className="dialog-close"
-              onClick={onClosePanel}
+              onClick={closePicker}
             >
               ×
             </button>

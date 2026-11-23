@@ -529,7 +529,7 @@ const visualListenCue =
   "マイクの準備ができました。話す、または、チャット、と言ってください。どうぞ。";
 const visualIphoneRetapCue =
   "もう一度、画面を押してから、チャット、と言ってください。";
-const visualReturnHome = "初期画面に戻りました。";
+const visualReturnHome = "初期画面に戻りました。処理を選択して下さい。";
 const replyModeStorageKey = "sawakai-reply-mode";
 type ReplyMode = "ai" | "voice" | "write";
 const appName = "茶話会・みんなで脳活";
@@ -5178,6 +5178,7 @@ export default function App() {
   const [showDirectCall, setShowDirectCall] = useState(false);
   const [directAssistedPick, setDirectAssistedPick] = useState(false);
   const [showDocuments, setShowDocuments] = useState(false);
+  const homeAwayRef = useRef(false);
   const [dmListening, setDmListening] = useState(true);
   const [dmInCall, setDmInCall] = useState(false);
   const dmInCallRef = useRef(dmInCall);
@@ -5185,6 +5186,32 @@ export default function App() {
   const [dmIncoming, setDmIncoming] = useState(false);
   const dmIncomingRef = useRef(false);
   dmIncomingRef.current = dmIncoming;
+  useEffect(() => {
+    const away =
+      showVoice ||
+      showWalking ||
+      showBrain ||
+      showDocuments ||
+      showGroup ||
+      (visualSupportEnabled && isReplyPanelOpen);
+    const wasAway = homeAwayRef.current;
+    homeAwayRef.current = away;
+    if (!wasAway || away) return;
+    if (!visualSupportEnabled || !token || !profile) return;
+    if (showDirectCall || dmInCallRef.current || dmIncomingRef.current) return;
+    speakJapanese(visualReturnHome);
+  }, [
+    showVoice,
+    showWalking,
+    showBrain,
+    showDocuments,
+    showGroup,
+    isReplyPanelOpen,
+    visualSupportEnabled,
+    token,
+    profile,
+    showDirectCall,
+  ]);
   const openAssistedVoiceRef = useRef<() => void>(() => undefined);
   const iphoneChatArmedRef = useRef(false);
   const iphoneChatListenRef = useRef<{ stop: () => void } | null>(null);
@@ -8666,6 +8693,9 @@ export default function App() {
         onClosePanel={() => {
           setShowDirectCall(false);
           setDirectAssistedPick(false);
+        }}
+        onReturnedHome={() => {
+          if (visualSupportEnabledRef.current) speakJapanese(visualReturnHome);
         }}
         assistedPick={directAssistedPick}
         onBusyChange={setDmInCall}
