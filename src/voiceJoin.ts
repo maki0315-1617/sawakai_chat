@@ -462,94 +462,152 @@ export function listenForChatStart(handlers: {
 }
 
 /**
- * iPhoneでは、タップの中でマイクを開き、案内が終わるまで結果を捨てます。
- * 案内でマイクが止まっても、次のタップで同じ聞き取りをやり直します。
+ * 話してチャットの入力と同じ聞き方です。
+ * まずマイクを開き、案内が終わってから止めて、300ミリ秒後にもう一度開きます。
+ * 電話では区切って聞き、途中の文字も見ます。案内のあいだの結果は使いません。
  */
-export function listenForIphoneChatStart(handlers: {
-  gate: () => boolean;
+export function listenLikeChatInput(handlers: {
   onMatch: () => void;
-  onLost: () => void;
-}): { stop: () => void } {
+  onFailed: () => void;
+}): { stop: () => void; prime: () => void; arm: () => void; listenNow: () => void } {
   const RecognitionClass = getRecognitionClass();
+  const noop = { stop() {}, prime() {}, arm() {}, listenNow() {} };
   if (!RecognitionClass) {
-    handlers.onLost();
-    return { stop() {} };
+    return {
+      ...noop,
+      arm() {
+        handlers.onFailed();
+      },
+      listenNow() {
+        handlers.onFailed();
+      },
+    };
   }
+  const desktop = isDesktopDevice();
+  const recognition = new RecognitionClass();
   let stopped = false;
   let matched = false;
-  let lost = false;
-  let current: Recognition | null = null;
-  const lose = () => {
-    if (stopped || matched || lost) return;
-    lost = true;
+  let ready = false;
+  let rearming = false;
+  let failed = false;
+  const fail = () => {
+    if (stopped || matched || failed) return;
+    failed = true;
+    ready = false;
+    handlers.onFailed();
+  };
+  const hear = (text: string) => {
+    if (!ready || stopped || matched || failed) return;
+    if (!isSpokenChatStart(text)) return;
+    matched = true;
     stopped = true;
     try {
-      current?.abort();
+      recognition.abort();
     } catch {
       // already stopped
     }
-    handlers.onLost();
+    handlers.onMatch();
   };
-  const start = () => {
-    if (stopped || matched) return;
-    const recognition = new RecognitionClass();
-    current = recognition;
-    recognition.lang = "ja-JP";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      if (stopped || matched || !handlers.gate()) return;
-      const rich = event as unknown as {
-        resultIndex?: number;
-        results: ArrayLike<
-          ArrayLike<{ transcript: string }> & { isFinal?: boolean }
-        >;
-      };
-      const from = rich.resultIndex ?? 0;
-      for (let index = from; index < rich.results.length; index += 1) {
-        const text = rich.results[index]?.[0]?.transcript ?? "";
-        if (!isSpokenChatStart(text)) continue;
-        matched = true;
-        stopped = true;
-        try {
-          recognition.abort();
-        } catch {
-          // already stopped
-        }
-        handlers.onMatch();
-        return;
-      }
-    };
-    recognition.onerror = (event) => {
-      if (stopped || matched) return;
-      if (
-        event.error === "not-allowed" ||
-        event.error === "service-not-allowed"
-      ) {
-        lose();
-      }
-    };
-    recognition.onend = () => {
-      if (stopped || matched) return;
-      window.setTimeout(() => {
-        if (stopped || matched) return;
-        start();
-      }, 250);
-    };
-    try {
-      recognition.start();
-    } catch {
-      lose();
+  recognition.lang = "ja-JP";
+  recognition.continuous = desktop;
+  recognition.interimResults = true;
+  if (desktop) recognition.maxAlternatives = 5;
+  recognition.onresult = (event) => {
+    if (!ready || stopped || matched || failed) return;
+    const results = event.results as ArrayLike<
+      ArrayLike<{ transcript: string }> & { isFinal?: boolean; length?: number }
+    >;
+    let combined = "";
+    for (let index = 0; index < results.length; index += 1) {
+      combined += results[index]?.[0]?.transcript ?? "";
+    }
+    hear(combined);
+    if (matched || !desktop) return;
+    const last = results[results.length - 1];
+    const count = Math.min(last?.length ?? 1, 5);
+    for (let index = 1; index < count; index += 1) {
+      const alt = last[index]?.transcript ?? "";
+      if (alt) hear(alt);
     }
   };
-  start();
+  recognition.onerror = (event) => {
+    if (stopped || matched || rearming || !ready) return;
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+      fail();
+    }
+  };
+  recognition.onend = () => {
+    if (stopped || matched || rearming || !ready || failed) return;
+    window.setTimeout(() => {
+      if (stopped || matched || !ready || failed) return;
+      try {
+        recognition.start();
+      } catch {
+        fail();
+      }
+    }, desktop ? 40 : 250);
+  };
+  const startMic = () => {
+    if (isIphoneDevice()) {
+      try {
+        const session = (
+          navigator as unknown as { audioSession?: { type: string } }
+        ).audioSession;
+        if (session?.type === "playback") session.type = "auto";
+      } catch {
+        // 古いiPhoneには音声セッションの切り替えがない
+      }
+    }
+    recognition.start();
+  };
   return {
     stop() {
       stopped = true;
+      ready = false;
       try {
-        current?.abort();
+        recognition.abort();
       } catch {
         // already stopped
+      }
+    },
+    prime() {
+      if (stopped || matched) return;
+      try {
+        startMic();
+      } catch {
+        // 案内のあと、arm でもう一度開く
+      }
+    },
+    arm() {
+      if (stopped || matched) return;
+      failed = false;
+      ready = true;
+      rearming = true;
+      try {
+        recognition.abort();
+      } catch {
+        rearming = false;
+      }
+      window.setTimeout(() => {
+        rearming = false;
+        if (stopped || matched) return;
+        try {
+          startMic();
+        } catch {
+          fail();
+        }
+      }, 300);
+    },
+    listenNow() {
+      if (stopped || matched) return;
+      failed = false;
+      ready = true;
+      try {
+        startMic();
+      } catch (error) {
+        const name = error instanceof DOMException ? error.name : "";
+        if (name === "InvalidStateError") return;
+        fail();
       }
     },
   };
