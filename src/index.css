@@ -6378,6 +6378,44 @@ input:focus-visible {
   cursor: pointer;
 }
 
+.call-menu-toggle {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  background: #ffffff;
+  border: 0;
+  cursor: pointer;
+}
+
+.call-menu-toggle::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: #245c46;
+}
+
+.call-menu-toggle__mark {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-right: 9px solid transparent;
+  border-bottom: 10px solid #245c46;
+  border-left: 9px solid transparent;
+  transform: translateX(-50%);
+}
+
+.call-menu-toggle.is-collapsed .call-menu-toggle__mark {
+  border-top: 10px solid #245c46;
+  border-bottom: 0;
+}
+
 .voice-join-banner {
   display: flex;
   flex-direction: column;

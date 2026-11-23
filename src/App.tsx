@@ -5030,6 +5030,7 @@ export default function App() {
   const [visualSupportEnabled, setVisualSupportEnabled] = useState(
     () => localStorage.getItem(visualSupportStorageKey) === "enabled",
   );
+  const [headerToolsCollapsed, setHeaderToolsCollapsed] = useState(false);
   const [iphoneTapGuide, setIphoneTapGuide] = useState(false);
   const [iphoneChatTapReady, setIphoneChatTapReady] = useState(false);
   const [iphoneSpeechReady, setIphoneSpeechReady] = useState(
@@ -5925,6 +5926,7 @@ export default function App() {
     );
     visualSupportEnabledRef.current = enabled;
     setVisualSupportEnabled(enabled);
+    if (!enabled) setHeaderToolsCollapsed(false);
     setVoiceAutoMode(false);
     setVoiceConfirmationAutoStart(false);
     if (enabled) {
@@ -7609,7 +7611,26 @@ export default function App() {
     >
       {iphoneTapGuideLayer}
       <header className="group-header">
-        {visualSupportEnabled && !showVoice && (
+        {visualSupportEnabled && (
+          <button
+            aria-expanded={!headerToolsCollapsed}
+            aria-label={
+              headerToolsCollapsed
+                ? "通話とメニューを出す"
+                : "通話とメニューを隠す"
+            }
+            className={`call-menu-toggle${
+              headerToolsCollapsed ? " is-collapsed" : ""
+            }`}
+            onClick={() => setHeaderToolsCollapsed((collapsed) => !collapsed)}
+            type="button"
+          >
+            <span aria-hidden="true" className="call-menu-toggle__mark" />
+          </button>
+        )}
+        {visualSupportEnabled &&
+          !showVoice &&
+          (!headerToolsCollapsed || directCallAttention > 0) && (
           <div className="voice-join-banner" role="region" aria-label="通話">
             <button
               className="voice-join-banner__button"
@@ -7689,6 +7710,7 @@ export default function App() {
             <span>退出</span>
           </button>
         </div>
+        {!(visualSupportEnabled && headerToolsCollapsed) && (
         <nav aria-label="メニュー" className="header-actions">
           <button
             aria-label="おさんぽ日和を開く"
@@ -7751,6 +7773,7 @@ export default function App() {
             <span>参加者</span>
           </button>
         </nav>
+        )}
       </header>
 
       <main className="chat-area">
