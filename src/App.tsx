@@ -7352,11 +7352,7 @@ export default function App() {
         /おわったら|いってください|へんじをはなして|といって/.test(folded) ||
         /^(どうぞ|おわり|おわりです|おわりました|おわります)+$/.test(folded);
       const body = finishedReply(text).body.trim();
-      if (!saidEnd || !body || heardGuidance) {
-        assistedShortCueRef.current = true;
-        window.setTimeout(() => setAssistedVoiceRestart((value) => value + 1), 150);
-        return;
-      }
+      if (!saidEnd || !body || heardGuidance) return;
       setDraft(body);
       setVoiceConfirmationAutoStart(false);
       prepareMessage(body);

@@ -194,7 +194,7 @@ function trailingSendBody(compact: string) {
 
 function phoneEndBody(compact: string) {
   const match = compact.match(
-    /^(.*?)(終わりです|おわりです|終わり|おわり)[。.!！ねよ]?$/,
+    /^(.*?)(終わりました|おわりました|終わります|おわります|終わりです|おわりです|終わり|おわり)[。.!！ねよ]?$/,
   );
   if (!match) return null;
   return match[1].replace(/[。、．.!！?？]+$/g, "").trim();
@@ -668,6 +668,7 @@ export default function VoiceInput({
     let captureErrors = 0;
     let ready = false;
     let rearming = false;
+    let acceptEndAt = 0;
     const readResults = (
       results: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }>,
     ) => {
@@ -693,12 +694,16 @@ export default function VoiceInput({
         utterance = "";
         return;
       }
+      if (Date.now() < acceptEndAt && userSaidEnd(combined)) {
+        utterance = "";
+        return;
+      }
       heardRef.current = combined;
       const last = event.results[event.results.length - 1];
       if (!userSaidEnd(combined)) return;
       const held = textToHold(combined, true);
       if (held.done && held.text.trim()) {
-        deliverHeld(held.text);
+        deliverHeld(combined);
         return;
       }
       if (!desktop || !last?.isFinal) return;
@@ -719,7 +724,7 @@ export default function VoiceInput({
         if (!userSaidEnd(candidate)) continue;
         const attempt = textToHold(candidate, true);
         if (!attempt.done || !attempt.text.trim()) continue;
-        deliverHeld(attempt.text);
+        deliverHeld(candidate);
         return;
       }
     };
@@ -818,7 +823,7 @@ export default function VoiceInput({
       } catch {
         rearming = false;
       }
-      // 案内の「終わり」を返事と取らないよう、読み上げが消えてから聞き始める
+      // 案内を切ってから、すぐ返事を聞き始める。開き始めの「終わり」はあとで捨てる
       window.setTimeout(() => {
         rearming = false;
         if (
@@ -831,6 +836,7 @@ export default function VoiceInput({
           return;
         }
         ready = true;
+        acceptEndAt = Date.now() + 1500;
         try {
           recognition.start();
           setState("listening");
@@ -839,7 +845,7 @@ export default function VoiceInput({
           setState("idle");
           setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
         }
-      }, desktop ? 500 : 1000);
+      }, 300);
     };
     try {
       if (!deferMic) recognition.start();
