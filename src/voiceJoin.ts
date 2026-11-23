@@ -791,6 +791,22 @@ function listenIphoneStartup(handlers: {
       if (acceptTextNow(text)) {
         matched = true;
         ready = false;
+        if (startupChoice(text) === "chat") {
+          // チャットだけは、結果の途中でマイクを切ると次の聞き取りが失敗する。
+          // 終了してからセッションを戻す。
+          const recognition = current;
+          try {
+            recognition?.stop();
+          } catch {
+            try {
+              recognition?.abort();
+            } catch {
+              // already stopped
+            }
+          }
+          handlers.onMatch(text);
+          return;
+        }
         abortCurrent();
         releaseIphoneAudioSession();
         handlers.onMatch(text);

@@ -7301,7 +7301,7 @@ export default function App() {
         endVisualGuidance();
         stopStartupChoiceRef.current();
         openIphoneTalk();
-      }, 300);
+      }, 800);
       return;
     }
     stopStartupChoiceRef.current();
