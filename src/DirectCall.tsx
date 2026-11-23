@@ -17,7 +17,7 @@ import {
   VideoPresets,
 } from "livekit-client";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
-import { isAndroidDevice, isIphoneDevice, isSpokenAnswer, isSpokenCallYes, isSpokenPlaceCall, isSpokenStop, listenForAnswer, type VoiceSession } from "./voiceJoin";
+import { isAndroidDevice, isDesktopDevice, isIphoneDevice, isSpokenAnswer, isSpokenCallYes, isSpokenPlaceCall, isSpokenStop, listenForAnswer, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -1671,7 +1671,7 @@ export default function DirectCall({
     callYesReadyRef.current = false;
     callYesTokenRef.current += 1;
     if (!assistedPerson || others.length === 0) return;
-    if ((isIphoneDevice() || isAndroidDevice()) && assistedLast) {
+    if ((isIphoneDevice() || isAndroidDevice() || isDesktopDevice()) && assistedLast) {
       leaveLastPerson();
       return;
     }
@@ -1919,7 +1919,7 @@ export default function DirectCall({
                 type="button"
               >
                 <small>左</small>
-                {(isIphoneDevice() || isAndroidDevice()) && assistedLast ? "やめる" : "次の人"}
+                {(isIphoneDevice() || isAndroidDevice() || isDesktopDevice()) && assistedLast ? "やめる" : "次の人"}
               </button>
               <button
                 className="dm-side dm-side--answer"
