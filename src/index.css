@@ -5597,6 +5597,27 @@ input:focus-visible {
   font-weight: 700;
 }
 
+.dm-person .member-call-status {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #ecebe7;
+  color: #68645a;
+  font-family: "Noto Sans JP:Bold", sans-serif;
+  font-size: 12px;
+  text-align: center;
+}
+
+.dm-person .member-call-status--available {
+  background: #e2edf6;
+  color: #315d7b;
+}
+
+.dm-person .member-call-status--busy {
+  background: #f3e7e4;
+  color: #85463e;
+}
+
 .dm-history {
   display: flex;
   align-items: center;

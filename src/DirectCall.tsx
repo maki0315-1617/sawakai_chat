@@ -35,7 +35,7 @@ type DirectCallProps = {
   apiRoot: string;
   headers: Record<string, string>;
   myName: string;
-  members: { name: string }[];
+  members: { name: string; callStatus?: "available" | "busy" | "offline" }[];
   showPanel: boolean;
   assistedPick?: boolean;
   onClosePanel: () => void;
@@ -1997,6 +1997,19 @@ export default function DirectCall({
                           onClick={() => void startCall(member.name)}
                         >
                           <span className="dm-person__name">{member.name}さん</span>
+                          {!visualSupportEnabled && (
+                            <span
+                              className={`member-call-status member-call-status--${
+                                member.callStatus ?? "offline"
+                              }`}
+                            >
+                              {member.callStatus === "available"
+                                ? "通話可能"
+                                : member.callStatus === "busy"
+                                  ? "通話中"
+                                  : "応答待機なし"}
+                            </span>
+                          )}
                           <span className="dm-person__action">📞 電話をかける</span>
                         </button>
                       </li>
