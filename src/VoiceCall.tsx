@@ -5,7 +5,7 @@ import VoiceGame from "./VoiceGame";
 import VoiceWordGame from "./VoiceWordGame";
 import VoiceTurnGame from "./VoiceTurnGame";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
-import { isIphoneDevice } from "./voiceJoin";
+import { holdIphoneReplyMic, isIphoneDevice } from "./voiceJoin";
 
 type VoiceCallProps = {
   apiRoot: string;
@@ -13,10 +13,10 @@ type VoiceCallProps = {
   myName: string;
   onClose: () => void;
   autoJoin?: boolean;
-  announce?: (text: string) => void;
+  announce?: (text: string, onEnd?: () => void, onError?: () => void) => void;
   /** 視覚サポートがオンのとき、大きな退出ボタンと案内を出します。 */
   assisted?: boolean;
-  speak?: (text: string) => void;
+  speak?: (text: string, onEnd?: () => void, onError?: () => void) => void;
   endGuidance?: () => boolean;
 };
 
@@ -72,6 +72,7 @@ export default function VoiceCall({
   endGuidanceRef.current = endGuidance;
   const assistedRef = useRef(assisted);
   assistedRef.current = assisted;
+  const iphoneCallMicHeldRef = useRef(false);
 
   const refreshParticipants = (room: Room) => {
     const people = [
@@ -90,7 +91,14 @@ export default function VoiceCall({
     setReactions(nextReactions);
   };
 
+  const releaseIphoneCallMic = () => {
+    if (!iphoneCallMicHeldRef.current) return;
+    iphoneCallMicHeldRef.current = false;
+    holdIphoneReplyMic(false);
+  };
+
   const leave = () => {
+    releaseIphoneCallMic();
     roomRef.current?.disconnect();
     roomRef.current = null;
     if (audioRef.current) audioRef.current.innerHTML = "";
@@ -133,6 +141,10 @@ export default function VoiceCall({
         .on(RoomEvent.TrackSubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) {
             const element = track.attach();
+            if (isIphoneDevice()) {
+              element.setAttribute("playsinline", "true");
+              void element.play().catch(() => undefined);
+            }
             audioRef.current?.appendChild(element);
           }
         })
@@ -143,17 +155,69 @@ export default function VoiceCall({
           if (roomRef.current === room) leave();
         });
       await room.connect(result.url, result.token);
-      if (isIphoneDevice()) {
-        try {
-          const session = (
-            navigator as unknown as { audioSession?: { type: string } }
-          ).audioSession;
-          if (session?.type === "playback") session.type = "play-and-record";
-        } catch {
-          // 古いiPhoneには音声セッションの切り替えがない
+      const playRoomAudio = () => {
+        audioRef.current?.querySelectorAll("audio").forEach((element) => {
+          element.setAttribute("playsinline", "true");
+          void element.play().catch(() => undefined);
+        });
+      };
+      const enableMicrophone = async () => {
+        if (isIphoneDevice() && assistedRef.current) {
+          try {
+            const session = (
+              navigator as unknown as { audioSession?: { type: string } }
+            ).audioSession;
+            if (session && session.type !== "auto") session.type = "auto";
+          } catch {
+            // 古いiPhoneには音声セッションの切り替えがない
+          }
+          iphoneCallMicHeldRef.current = true;
+          holdIphoneReplyMic(true);
+        } else if (isIphoneDevice()) {
+          try {
+            const session = (
+              navigator as unknown as { audioSession?: { type: string } }
+            ).audioSession;
+            if (session?.type === "playback") session.type = "play-and-record";
+          } catch {
+            // 古いiPhoneには音声セッションの切り替えがない
+          }
         }
+        await room.localParticipant.setMicrophoneEnabled(true);
+        if (isIphoneDevice()) playRoomAudio();
+      };
+      if (isIphoneDevice() && assistedRef.current && !announcedJoinRef.current) {
+        announcedJoinRef.current = true;
+        const others = [...room.remoteParticipants.values()]
+          .map((participant) => participant.name || participant.identity)
+          .filter((name) => name && name !== myName);
+        const message =
+          others.length > 0
+            ? `通話に入りました。${others.join("さん、")}さんがいらっしゃいます。終わるときは、一番上の、通話から抜ける、を押してください。`
+            : "通話に入りました。まだほかの人はいません。終わるときは、一番上の、通話から抜ける、を押してください。";
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const done = () => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(backup);
+            resolve();
+          };
+          const backup = window.setTimeout(done, 12000);
+          const say = () => {
+            const tell = announceRef.current ?? speakRef.current;
+            if (!tell) {
+              done();
+              return;
+            }
+            tell(message, done, done);
+          };
+          if (endGuidanceRef.current?.()) window.setTimeout(say, 100);
+          else say();
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
       }
-      await room.localParticipant.setMicrophoneEnabled(true);
+      await enableMicrophone();
       refreshParticipants(room);
       setStatus("connected");
       if (!announcedJoinRef.current && (announceRef.current || assistedRef.current)) {
@@ -176,6 +240,7 @@ export default function VoiceCall({
         else say();
       }
     } catch (reason) {
+      releaseIphoneCallMic();
       roomRef.current?.disconnect();
       roomRef.current = null;
       setStatus("error");
@@ -224,6 +289,10 @@ export default function VoiceCall({
 
   useEffect(
     () => () => {
+      if (iphoneCallMicHeldRef.current) {
+        iphoneCallMicHeldRef.current = false;
+        holdIphoneReplyMic(false);
+      }
       void roomRef.current?.disconnect();
     },
     [],
