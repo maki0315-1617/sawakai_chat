@@ -528,7 +528,7 @@ const visualIncomingGuide =
   "電話が来たら、出るときは下の緑を押します。出ないときは、一番上の、出ない、を押してください。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
 const visualStartupChoice =
-  "初期起動は、グループ、電話、チャット、と言ってください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";
+  "処理を起動して下さい。iPhone以外は音声で起動出来ます。グループ、電話、チャットと話して下さい。";
 const visualLoggedInGuide = `${visualCallButtons}${visualIncomingGuide}${visualStartupChoice}`;
 const visualRetryChoice =
   "もう一度お願いします。グループ、電話、チャット、と言ってください。どうぞ。";
@@ -7147,6 +7147,7 @@ export default function App() {
   };
 
   const armIphoneChatStart = () => {
+    if (isIphoneDevice()) return;
     if (iphoneChatArmedRef.current) return;
     if (!visualSupportEnabledRef.current) return;
     if (!token || !profile || showWalking) return;
@@ -7302,13 +7303,10 @@ export default function App() {
   };
 
   startupHeardRef.current = (text) => {
+    if (isIphoneDevice()) return;
     if (!startupActiveRef.current || startupDoneRef.current) return;
     const choice = startupChoice(text);
     if (!choice) return;
-    if (isIphoneDevice() && choice === "chat") {
-      startTalkChat();
-      return;
-    }
     stopStartupChoiceRef.current();
     if (!visualSupportEnabledRef.current) return;
     if (choice === "close") {
@@ -7773,6 +7771,7 @@ export default function App() {
   };
 
   const startIphoneHeldListen = (fromRetap: boolean) => {
+    if (isIphoneDevice()) return;
     allowIphoneChatMic();
     iphoneListenFromRetapRef.current = fromRetap;
     iphoneMicLostRef.current = false;
@@ -7799,13 +7798,6 @@ export default function App() {
         setIphoneTapGuide(false);
         setIphoneSpeechReady(true);
         const inChat = Boolean(token && profile && !showWalking);
-        if (inChat) {
-          iphoneChatMatchedRef.current = false;
-          iphoneChatAcceptRef.current = false;
-          iphoneMicLostRef.current = false;
-          iphoneRetapShownRef.current = false;
-          startIphoneHeldListen(false);
-        }
         const spokeMissed = dmControlRef.current?.speakMissedGuide() === true;
         if (!spokeMissed) {
           speakJapanese(
@@ -7813,7 +7805,6 @@ export default function App() {
               ? `茶話会アプリが起動しました。${visualLoggedInGuide}`
               : `茶話会アプリが起動しました。${visualCallGuide}`,
           );
-          if (inChat) armIphoneChatStart();
         }
       }}
     >
