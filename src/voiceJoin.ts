@@ -38,6 +38,25 @@ export function isVoiceSupported() {
 
 let desktopMicPrimed = false;
 let desktopMicPriming = false;
+const releaseMicHandlers = new Set<() => void>();
+
+/** 画面を閉じたとき、起動中のマイクをすべて止めます。 */
+export function releaseAllMicrophones() {
+  releaseMicHandlers.forEach((release) => {
+    try {
+      release();
+    } catch {
+      // すでに止まっている
+    }
+  });
+}
+
+export function holdMicrophoneRelease(release: () => void) {
+  releaseMicHandlers.add(release);
+  return () => {
+    releaseMicHandlers.delete(release);
+  };
+}
 
 function releaseDesktopMic(stream: MediaStream) {
   stream.getTracks().forEach((track) => track.stop());
@@ -468,17 +487,17 @@ export function listenForChatStart(handlers: {
       // 案内のあとの開始ができない端末は、画面タップで開く
     }
   };
-  start();
-  return {
-    stop() {
-      stopped = true;
-      try {
-        current?.abort();
-      } catch {
-        // already stopped
-      }
-    },
+  const stop = () => {
+    stopped = true;
+    try {
+      current?.abort();
+    } catch {
+      // already stopped
+    }
   };
+  holdMicrophoneRelease(stop);
+  start();
+  return { stop };
 }
 
 /**
@@ -511,10 +530,30 @@ function listenAndroidStartup(handlers: {
   let ready = false;
   let generation = 0;
   let current: Recognition | null = null;
+  const owned = new Set<Recognition>();
+  let restartTimer = 0;
+  const forget = (recognition: Recognition) => {
+    owned.delete(recognition);
+    if (current === recognition) current = null;
+  };
+  const abortOwned = () => {
+    window.clearTimeout(restartTimer);
+    owned.forEach((recognition) => {
+      try {
+        recognition.abort();
+      } catch {
+        // already stopped
+      }
+    });
+    owned.clear();
+    current = null;
+  };
   const start = () => {
     if (stopped || matched || !ready) return;
+    abortOwned();
     const token = ++generation;
     const recognition = new RecognitionClass();
+    owned.add(recognition);
     current = recognition;
     recognition.lang = "ja-JP";
     recognition.continuous = true;
@@ -558,8 +597,10 @@ function listenAndroidStartup(handlers: {
       }
     };
     recognition.onend = () => {
+      forget(recognition);
       if (token !== generation || stopped || matched || !ready) return;
-      window.setTimeout(() => {
+      window.clearTimeout(restartTimer);
+      restartTimer = window.setTimeout(() => {
         if (token !== generation || stopped || matched || !ready) return;
         start();
       }, 300);
@@ -567,7 +608,9 @@ function listenAndroidStartup(handlers: {
     try {
       recognition.start();
     } catch {
-      window.setTimeout(() => {
+      forget(recognition);
+      window.clearTimeout(restartTimer);
+      restartTimer = window.setTimeout(() => {
         if (token !== generation || stopped || matched || !ready) return;
         start();
       }, 400);
@@ -575,15 +618,19 @@ function listenAndroidStartup(handlers: {
   };
   const primeOnce = () => {
     if (stopped || matched) return;
+    abortOwned();
     try {
       const recognition = new RecognitionClass();
+      owned.add(recognition);
       current = recognition;
       recognition.lang = "ja-JP";
-      recognition.continuous = true;
+      recognition.continuous = false;
       recognition.interimResults = false;
       recognition.onresult = () => undefined;
       recognition.onerror = () => undefined;
-      recognition.onend = () => undefined;
+      recognition.onend = () => {
+        forget(recognition);
+      };
       recognition.onstart = () => {
         try {
           recognition.abort();
@@ -596,17 +643,16 @@ function listenAndroidStartup(handlers: {
       // 案内のあと、arm でもう一度開く
     }
   };
+  const stop = () => {
+    stopped = true;
+    ready = false;
+    matched = true;
+    generation += 1;
+    abortOwned();
+  };
+  holdMicrophoneRelease(stop);
   return {
-    stop() {
-      stopped = true;
-      ready = false;
-      generation += 1;
-      try {
-        current?.abort();
-      } catch {
-        // already stopped
-      }
-    },
+    stop,
     prime() {
       primeOnce();
     },
@@ -614,22 +660,15 @@ function listenAndroidStartup(handlers: {
       if (stopped || matched) return;
       ready = true;
       generation += 1;
-      try {
-        current?.abort();
-      } catch {
-        // already stopped
-      }
-      window.setTimeout(start, 300);
+      abortOwned();
+      window.clearTimeout(restartTimer);
+      restartTimer = window.setTimeout(start, 300);
     },
     listenNow() {
       if (stopped || matched) return;
       ready = true;
       generation += 1;
-      try {
-        current?.abort();
-      } catch {
-        // already stopped
-      }
+      abortOwned();
       start();
     },
   };
@@ -778,17 +817,22 @@ function listenIphoneStartup(handlers: {
     start();
     expectStart();
   };
+  const stop = () => {
+    stopped = true;
+    ready = false;
+    matched = true;
+    window.clearTimeout(watch);
+    try {
+      current?.abort();
+    } catch {
+      // already stopped
+    }
+    current = null;
+    live = false;
+  };
+  holdMicrophoneRelease(stop);
   return {
-    stop() {
-      stopped = true;
-      ready = false;
-      window.clearTimeout(watch);
-      try {
-        current?.abort();
-      } catch {
-        // already stopped
-      }
-    },
+    stop,
     prime() {
       if (stopped || matched || live) return;
       start();
@@ -863,7 +907,11 @@ export function listenLikeChatInput(handlers: {
       ArrayLike<{ transcript: string }> & { isFinal?: boolean; length?: number }
     >;
     const lastResult = results[results.length - 1];
-    if (handlers.accept && !lastResult?.isFinal) return;
+    if (handlers.accept && !lastResult?.isFinal) {
+      const interim = lastResult?.[0]?.transcript ?? "";
+      if (interim.trim()) hear(interim);
+      return;
+    }
     let combined = "";
     for (let index = 0; index < results.length; index += 1) {
       combined += results[index]?.[0]?.transcript ?? "";
@@ -909,6 +957,19 @@ export function listenLikeChatInput(handlers: {
       }
     }, desktop ? 40 : 250);
   };
+  let armTimer = 0;
+  const stop = () => {
+    stopped = true;
+    ready = false;
+    matched = true;
+    window.clearTimeout(armTimer);
+    try {
+      recognition.abort();
+    } catch {
+      // already stopped
+    }
+  };
+  holdMicrophoneRelease(stop);
   const startMic = () => {
     if (isIphoneDevice()) {
       try {
@@ -923,15 +984,7 @@ export function listenLikeChatInput(handlers: {
     recognition.start();
   };
   return {
-    stop() {
-      stopped = true;
-      ready = false;
-      try {
-        recognition.abort();
-      } catch {
-        // already stopped
-      }
-    },
+    stop,
     prime() {
       if (stopped || matched) return;
       try {
@@ -950,7 +1003,8 @@ export function listenLikeChatInput(handlers: {
       } catch {
         rearming = false;
       }
-      window.setTimeout(() => {
+      window.clearTimeout(armTimer);
+      armTimer = window.setTimeout(() => {
         rearming = false;
         if (stopped || matched) return;
         try {
@@ -1095,17 +1149,17 @@ export function listenForAnswer(handlers: {
     }
   };
 
-  start();
-  return {
-    cancel() {
-      cancelled = true;
-      try {
-        current?.abort();
-      } catch {
-        // already stopped
-      }
-    },
+  const cancel = () => {
+    cancelled = true;
+    try {
+      current?.abort();
+    } catch {
+      // already stopped
+    }
   };
+  holdMicrophoneRelease(cancel);
+  start();
+  return { cancel };
 }
 
 export function failureMessage(reason: VoiceFailure) {

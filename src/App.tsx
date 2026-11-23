@@ -18,6 +18,7 @@ import {
   isIphoneDevice,
   isVoiceSupported,
   listenLikeChatInput,
+  releaseAllMicrophones,
   startupChoice,
   listenOnce,
   primeDesktopMicrophone,
@@ -6045,6 +6046,22 @@ export default function App() {
       flushGuide();
     }, 8000);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const stopMics = () => {
+      releaseAllMicrophones();
+      stopStartupChoiceRef.current();
+    };
+    const onHide = () => {
+      if (document.hidden) stopMics();
+    };
+    window.addEventListener("pagehide", stopMics);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", stopMics);
+      document.removeEventListener("visibilitychange", onHide);
+    };
   }, []);
 
   useEffect(() => {

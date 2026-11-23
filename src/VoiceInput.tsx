@@ -1,5 +1,5 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
-import { isDesktopDevice, isIphoneDevice } from "./voiceJoin";
+import { holdMicrophoneRelease, isDesktopDevice, isIphoneDevice } from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -1069,17 +1069,22 @@ export default function VoiceInput({
     cancel();
   }, [cancelSignal]);
 
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
+  useEffect(() => {
+    const release = () => {
       cancelledRef.current = true;
+      sessionRef.current += 1;
       abortRef.current?.abort();
       recognitionRef.current?.abort();
       stoppedRef.current = true;
       cleanup();
-    },
-    [],
-  );
+    };
+    const unregister = holdMicrophoneRelease(release);
+    return () => {
+      unregister();
+      mountedRef.current = false;
+      release();
+    };
+  }, []);
 
   useEffect(() => {
     if (disabled && state !== "idle") cancel();
