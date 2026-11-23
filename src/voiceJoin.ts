@@ -636,6 +636,169 @@ function listenAndroidStartup(handlers: {
 }
 
 /**
+ * iPhoneの初期画面です。タップの中で開いたマイクは、案内のあとで止めません。
+ * 止まっていたときだけ開き直し、開けなければもう一度タップしてもらいます。
+ * 「グループ」などの短い言葉は、確定前でも受けます。
+ */
+function listenIphoneStartup(handlers: {
+  onMatch: (text?: string) => void;
+  onFailed: () => void;
+  onUnrecognized?: () => void;
+  accept?: (text: string) => boolean;
+}): { stop: () => void; prime: () => void; arm: () => void; listenNow: () => void } {
+  const RecognitionClass = getRecognitionClass();
+  const noop = { stop() {}, prime() {}, arm() {}, listenNow() {} };
+  if (!RecognitionClass) {
+    return {
+      ...noop,
+      arm() {
+        handlers.onFailed();
+      },
+      listenNow() {
+        handlers.onFailed();
+      },
+    };
+  }
+  const acceptText = (text: string) =>
+    handlers.accept ? handlers.accept(text) : isSpokenChatStart(text);
+  let stopped = false;
+  let matched = false;
+  let ready = false;
+  let live = false;
+  let failed = false;
+  let current: Recognition | null = null;
+  let watch = 0;
+  let readyAt = 0;
+  const fail = () => {
+    if (stopped || matched || failed) return;
+    failed = true;
+    ready = false;
+    window.clearTimeout(watch);
+    try {
+      current?.abort();
+    } catch {
+      // already stopped
+    }
+    handlers.onFailed();
+  };
+  const start = () => {
+    if (stopped || matched || live) return;
+    const recognition = new RecognitionClass();
+    current = recognition;
+    recognition.lang = "ja-JP";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.onstart = () => {
+      if (current !== recognition) return;
+      live = true;
+      window.clearTimeout(watch);
+    };
+    recognition.onresult = (event) => {
+      if (!ready || stopped || matched || current !== recognition) return;
+      if (Date.now() - readyAt < 300) return;
+      const results = event.results as ArrayLike<
+        ArrayLike<{ transcript: string }> & { isFinal?: boolean }
+      >;
+      const latest = results[results.length - 1];
+      const text = latest?.[0]?.transcript ?? "";
+      if (!text.trim()) return;
+      if (acceptText(text)) {
+        matched = true;
+        ready = false;
+        live = false;
+        try {
+          recognition.abort();
+        } catch {
+          // already stopped
+        }
+        handlers.onMatch(text);
+        return;
+      }
+      if (!handlers.onUnrecognized || !latest?.isFinal) return;
+      ready = false;
+      live = false;
+      current = null;
+      try {
+        recognition.abort();
+      } catch {
+        // already stopped
+      }
+      handlers.onUnrecognized();
+    };
+    recognition.onerror = (event) => {
+      if (current !== recognition || stopped || matched) return;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        fail();
+      }
+    };
+    recognition.onend = () => {
+      if (current !== recognition) return;
+      live = false;
+      if (stopped || matched || !ready || failed) return;
+      window.setTimeout(() => {
+        if (stopped || matched || !ready || failed || live) return;
+        try {
+          start();
+        } catch {
+          fail();
+        }
+      }, 300);
+    };
+    try {
+      recognition.start();
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      if (name === "InvalidStateError") return;
+      if (ready) fail();
+    }
+  };
+  const holdMic = () => {
+    try {
+      const session = (
+        navigator as unknown as { audioSession?: { type: string } }
+      ).audioSession;
+      if (session) session.type = "play-and-record";
+    } catch {
+      // 古いiPhoneには音声セッションの切り替えがない
+    }
+  };
+  const expectStart = () => {
+    window.clearTimeout(watch);
+    watch = window.setTimeout(() => {
+      if (!live && ready && !stopped && !matched && !failed) fail();
+    }, 1000);
+  };
+  const arm = () => {
+    if (stopped || matched) return;
+    failed = false;
+    ready = true;
+    readyAt = Date.now();
+    holdMic();
+    if (live) return;
+    start();
+    expectStart();
+  };
+  return {
+    stop() {
+      stopped = true;
+      ready = false;
+      window.clearTimeout(watch);
+      try {
+        current?.abort();
+      } catch {
+        // already stopped
+      }
+    },
+    prime() {
+      if (stopped || matched || live) return;
+      start();
+    },
+    arm,
+    listenNow: arm,
+  };
+}
+
+/**
  * 話してチャットの入力と同じ聞き方です。
  * まずマイクを開き、案内が終わってから止めて、300ミリ秒後にもう一度開きます。
  * 電話では区切って聞き、途中の文字も見ます。案内のあいだの結果は使いません。
@@ -660,6 +823,7 @@ export function listenLikeChatInput(handlers: {
     };
   }
   if (isAndroidDevice()) return listenAndroidStartup(handlers);
+  if (isIphoneDevice()) return listenIphoneStartup(handlers);
   const desktop = isDesktopDevice();
   const recognition = new RecognitionClass();
   let stopped = false;

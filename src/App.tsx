@@ -7680,6 +7680,16 @@ export default function App() {
 
   const startIphoneHeldListen = (fromRetap: boolean) => {
     allowIphoneChatMic();
+    if (fromRetap) {
+      try {
+        const session = (
+          navigator as unknown as { audioSession?: { type: string } }
+        ).audioSession;
+        if (session) session.type = "play-and-record";
+      } catch {
+        // 古いiPhoneには音声セッションの切り替えがない
+      }
+    }
     iphoneListenFromRetapRef.current = fromRetap;
     iphoneMicLostRef.current = false;
     iphoneHeldListenRef.current?.stop();
