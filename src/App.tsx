@@ -7296,6 +7296,14 @@ export default function App() {
     if (!startupActiveRef.current || startupDoneRef.current) return;
     const choice = startupChoice(text);
     if (!choice) return;
+    if (isIphoneDevice() && choice !== "close" && choice !== "group" && choice !== "phone") {
+      window.setTimeout(() => {
+        endVisualGuidance();
+        stopStartupChoiceRef.current();
+        openIphoneTalk();
+      }, 300);
+      return;
+    }
     stopStartupChoiceRef.current();
     if (!visualSupportEnabledRef.current) return;
     if (choice === "close") {
@@ -7308,10 +7316,6 @@ export default function App() {
     }
     if (choice === "phone") {
       openDirectCall();
-      return;
-    }
-    if (isIphoneDevice()) {
-      openIphoneTalk();
       return;
     }
     openAssistedVoiceRef.current();
