@@ -6192,12 +6192,14 @@ export default function App() {
       const voiceReply = voicePanelRef.current;
       speakJapanese(
         voiceReply
-          ? `返信 2/2、送信前の確認です。内容は、${pendingMessage}。もう一度聞く場合は画面の「内容をもう一度聞く」を押してください。修正する場合は画面の「修正」、返信をやめる場合は「取り消し」、送信する場合は「送信」を押してください。声で操作する場合は「声で答える」を押してから、修正、取り消し、送信のいずれかをお話しください。送信は予約され、5秒後に実行されます。`
+          ? `返信の確認です。内容は、${pendingMessage}。送信する場合は「送信」、やめる場合は「取り消し」とお話しください。声で答える場合は画面の「声で答える」を押してください。送信は5秒後に実行されます。`
           : `送信前の確認です。内容は、${pendingMessage}。送信する場合は「はい、送信」、修正する場合は「修正」、やめる場合は「取り消し」とお話しください。`,
         undefined,
         () => {
           if (active) {
-            setVoiceInputStatus("読み上げができませんでした。「声で答える」または画面のボタンをお使いください。");
+            setVoiceInputStatus(
+              "読み上げができませんでした。「声で答える」を押してから「送信」か「取り消し」とお話しください。",
+            );
           }
         },
       );
@@ -7418,18 +7420,6 @@ export default function App() {
     }
   };
 
-  const reviseVoiceReply = () => {
-    setVoiceConfirmationAutoStart(false);
-    setVoiceAutoMode(false);
-    setShowConfirmation(false);
-    setPendingMessage("");
-    setDraft("");
-    stopSpeakingDraft();
-    speakJapanese(
-      "修正します。返信を録音するには、画面一番上の緑の「話して入力」を押してください。",
-    );
-  };
-
   const cancelVoiceReply = () => {
     cancelConfirmation();
     setDraft("");
@@ -7445,10 +7435,14 @@ export default function App() {
 
     if (visualSupportEnabledRef.current && showConfirmation) {
       setVoiceConfirmationAutoStart(false);
-      if (
-        ["はい送信", "はい送って"].includes(command) ||
-        (isSpokenSend(text) && voicePanelRef.current)
-      ) {
+      const hasSendCommand = /送信|そうしん/.test(command);
+      const hasCancelCommand = /取り消し|取消|キャンセル/.test(command);
+      const sendCommand = voicePanelRef.current
+        ? ["送信", "そうしん"].includes(command)
+        : ["はい送信", "はい送って"].includes(command);
+      if (voicePanelRef.current && hasSendCommand && hasCancelCommand) {
+        speakJapanese("「送信」か「取り消し」のどちらか一つをお話しください。");
+      } else if (sendCommand) {
         if (voicePanelRef.current) {
           confirmVoiceSend();
         } else if (sendMessage()) {
@@ -7456,17 +7450,17 @@ export default function App() {
         } else {
           speakJapanese("まだ送信できません。画面をご確認ください。");
         }
-      } else if (["修正", "訂正", "直す"].includes(command)) {
-        if (!voicePanelRef.current) {
-          setShowConfirmation(false);
-          setPendingMessage("");
-          setDraft("");
-          speakJapanese("修正する内容を、続けてお話しください。", () => {
-            if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
-          });
-          return;
-        }
-        reviseVoiceReply();
+      } else if (
+        !voicePanelRef.current &&
+        ["修正", "訂正", "直す"].includes(command)
+      ) {
+        setShowConfirmation(false);
+        setPendingMessage("");
+        setDraft("");
+        speakJapanese("修正する内容を、続けてお話しください。", () => {
+          if (voiceAutoMode) setVoiceConfirmationAutoStart(true);
+        });
+        return;
       } else if (["取り消し", "取消", "キャンセル"].includes(command)) {
         if (voicePanelRef.current) {
           cancelVoiceReply();
@@ -7477,16 +7471,10 @@ export default function App() {
           setVoiceAutoMode(false);
           speakJapanese("返信を取り消しました。");
         }
-      } else if (
-        voicePanelRef.current &&
-        /送信|そうしん/.test(command) &&
-        /修正|取り消し|取消/.test(command)
-      ) {
-        speakJapanese("指示を一つずつお話しください。画面の「声で答える」から再試行できます。");
       } else {
         speakJapanese(
           voicePanelRef.current
-            ? "送信する場合は「送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。どうぞ。"
+            ? "「送信」または「取り消し」とお話しください。"
             : "送信する場合は「はい、送信」、直す場合は「修正」、やめる場合は「取り消し」とお話しください。どうぞ。",
           () => {
             if (voicePanelRef.current || !voiceAutoMode) return;
@@ -8448,7 +8436,7 @@ export default function App() {
                   manualStopOnly={!showConfirmation}
                   onCue={(done) => {
                     const cue = showConfirmation
-                      ? "送信、修正、取り消しのどれか一つをお話しください。話し終わると自動で確認します。どうぞ。"
+                      ? "送信か取り消しのどちらかをお話しください。話し終わると自動で確認します。どうぞ。"
                       : "マイクが開いたら返事を話してください。話し終わったら、一番上の赤い「録音を止めて確認」ボタンを押してください。どうぞ。";
                     let armed = false;
                     let backupTimer = 0;
@@ -8499,7 +8487,7 @@ export default function App() {
                           ? "マイクを準備しています。"
                           : status === "listening"
                             ? showConfirmation
-                              ? "確認の操作を聞いています。送信、修正、取り消しのどれか一つを話してください。話し終わると自動で確認します。"
+                              ? "確認の操作を聞いています。送信か取り消しのどちらかを話してください。話し終わると自動で確認します。"
                               : "録音中です。話し終わったら一番上の赤い「録音を止めて確認」ボタンを押してください。"
                             : status === "sending"
                               ? "文字にしています。少しお待ちください。"
@@ -8951,25 +8939,40 @@ export default function App() {
                 <CloseIcon />
               </button>
             )}
-            <p className="dialog-eyebrow">
-              {isAssistedVoiceConfirmation
-                ? "返信 2/2：内容を確認"
-                : "送信前の確認"}
-            </p>
+            {!isAssistedVoiceConfirmation && (
+              <p className="dialog-eyebrow">送信前の確認</p>
+            )}
             <h2 id="confirm-title" ref={confirmationHeadingRef} tabIndex={-1}>
               {isAssistedVoiceConfirmation
-                ? "この返事を送信しますか？"
+                ? "内容を確認してください"
                 : "この返事を送りますか？"}
             </h2>
             <div className="message-preview">{pendingMessage}</div>
-            <p className="dialog-note">
-              {isAssistedVoiceConfirmation
-                ? "もう一度聞くには「内容をもう一度聞く」を押してください。修正は「修正」、返信をやめる場合は「取り消し」、送信する場合は「送信」を選んでください。声で操作する場合は「声で答える」を押してから話してください。送信は予約され、5秒後に実行されます。"
-                : "「送る」を押すまで、自動で送信されることはありません。"}
-            </p>
+            {isAssistedVoiceConfirmation ? (
+              <div
+                aria-label="声で伝える言葉"
+                className="voice-command-choices"
+                role="group"
+              >
+                <span className="voice-command-choice voice-command-choice--send">
+                  送信
+                </span>
+                <span className="voice-command-choice voice-command-choice--cancel">
+                  取り消し
+                </span>
+              </div>
+            ) : (
+              <p className="dialog-note">
+                「送る」を押すまで、自動で送信されることはありません。
+              </p>
+            )}
             {isAssistedVoiceConfirmation && (
               <>
-                {voiceInputStatus && <p role="status">{voiceInputStatus}</p>}
+                {voiceInputStatus && (
+                  <p className="voice-confirmation-status" role="status">
+                    {voiceInputStatus}
+                  </p>
+                )}
                 <button
                   className="read-aloud-button"
                   disabled={!pendingMessage.trim()}
@@ -8993,32 +8996,7 @@ export default function App() {
                 </button>
               </>
             )}
-            {isAssistedVoiceConfirmation ? (
-              <div className="dialog-actions dialog-actions--voice">
-                <button
-                  className="dialog-button dialog-button--back"
-                  disabled={isSending}
-                  onClick={reviseVoiceReply}
-                >
-                  修正
-                </button>
-                <button
-                  className="dialog-button delete-confirm-button"
-                  disabled={isSending}
-                  onClick={cancelVoiceReply}
-                >
-                  取り消し
-                </button>
-                <button
-                  className="dialog-button dialog-button--send"
-                  disabled={isSending}
-                  onClick={confirmVoiceSend}
-                >
-                  <SendIcon />
-                  {isSending ? "送信中…" : "送信"}
-                </button>
-              </div>
-            ) : (
+            {!isAssistedVoiceConfirmation && (
               <div className="dialog-actions">
                 <button
                   className="dialog-button dialog-button--back"
