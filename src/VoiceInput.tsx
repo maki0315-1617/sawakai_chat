@@ -1,5 +1,6 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
 import {
+  holdIphoneReplyMic,
   holdMicrophoneRelease,
   isDesktopDevice,
   isIphoneDevice,
@@ -375,6 +376,7 @@ export default function VoiceInput({
   const supported = canRecord || getDeviceRecognition() !== null;
 
   const cleanup = () => {
+    holdIphoneReplyMic(false);
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
     timerRef.current = null;
     if (nodeRef.current) {
@@ -577,11 +579,12 @@ export default function VoiceInput({
         const elapsed = now - (armedAtRef.current || startedAt);
         setSeconds(Math.floor(elapsed / 1000));
         const heardVoice = lastVoiceAt > 0;
+        const silenceMs = assistedIphone ? 4500 : silenceStopMs;
         if (
           elapsed >= maxSeconds * 1000 ||
           (!holdForEndRef.current &&
             heardVoice &&
-            now - lastVoiceAt > silenceStopMs)
+            now - lastVoiceAt > silenceMs)
         ) {
           finishRef.current?.();
         }
@@ -942,6 +945,7 @@ export default function VoiceInput({
     replyReadyRef.current = false;
     openMicSession(false);
     cancel();
+    if (isIphoneDevice()) holdIphoneReplyMic(true);
     const sessionAtStart = sessionRef.current;
     const stillOpen = () =>
       mountedRef.current && sessionRef.current === sessionAtStart;
@@ -987,11 +991,12 @@ export default function VoiceInput({
           }
           if (!track || track.readyState === "ended" || context?.state === "closed") {
             cleanup();
+            holdIphoneReplyMic(true);
             await begin();
           }
           enable();
         })();
-      }, 350);
+      }, 800);
     };
     recordArmedRef.current = false;
     armedAtRef.current = 0;

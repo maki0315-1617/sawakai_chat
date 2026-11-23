@@ -15,6 +15,7 @@ import {
   failureMessage,
   isAndroidDevice,
   isDesktopDevice,
+  iphoneReplyMicIsHeld,
   isIphoneDevice,
   isVoiceSupported,
   listenLikeChatInput,
@@ -596,7 +597,7 @@ function allowIphoneChatMic() {
 }
 
 function useIphoneSpeaker() {
-  if (!isIphoneDevice()) return;
+  if (!isIphoneDevice() || iphoneReplyMicIsHeld()) return;
   try {
     const session = iphoneAudioSession();
     if (session?.type === "auto") session.type = "playback";
@@ -8381,7 +8382,10 @@ export default function App() {
                       done();
                     };
                     if (!speakJapanese(cue, finish, finish)) finish();
-                    window.setTimeout(finish, short ? 2500 : 12000);
+                    window.setTimeout(
+                      finish,
+                      short ? 2500 : isIphoneDevice() ? 20000 : 12000,
+                    );
                   }}
                   autoStart={
                     showConfirmation &&

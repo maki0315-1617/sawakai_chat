@@ -40,6 +40,17 @@ let desktopMicPrimed = false;
 let desktopMicPriming = false;
 const releaseMicHandlers = new Set<() => void>();
 
+let iphoneReplyMicHeld = false;
+
+/** 返事のマイクを開いているあいだは、読み上げで録音を切らない。 */
+export function holdIphoneReplyMic(held: boolean) {
+  iphoneReplyMicHeld = held;
+}
+
+export function iphoneReplyMicIsHeld() {
+  return iphoneReplyMicHeld;
+}
+
 function prepareIphoneRecognition() {
   if (!isIphoneDevice()) return;
   try {
