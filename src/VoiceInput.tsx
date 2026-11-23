@@ -665,7 +665,6 @@ export default function VoiceInput({
     const startedAt = Date.now();
     let carried = "";
     let utterance = "";
-    let captureErrors = 0;
     let ready = false;
     let rearming = false;
     let acceptEndAt = 0;
@@ -736,29 +735,18 @@ export default function VoiceInput({
         setError("マイクが許可されていません。端末またはブラウザの設定で、マイクを許可してください。");
         return;
       }
-      if (event.error === "audio-capture") captureErrors += 1;
-      if (captureErrors >= 3) {
-        deliveredRef.current = true;
-        setState("idle");
-        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
-      }
     };
     const restart = () => {
-      if (Date.now() - startedAt >= maxSeconds * 1000) {
-        if (timerRef.current !== null) window.clearInterval(timerRef.current);
-        timerRef.current = null;
-        recognitionRef.current = null;
-        if (heardRef.current.trim() && userSaidEnd(heardRef.current)) {
-          const held = textToHold(heardRef.current, true);
-          if (held.text.trim()) {
-            deliverHeld(held.text);
-            return;
-          }
+      if (
+        heardRef.current.trim() &&
+        userSaidEnd(heardRef.current) &&
+        Date.now() >= acceptEndAt
+      ) {
+        const held = textToHold(heardRef.current, true);
+        if (held.done && held.text.trim()) {
+          deliverHeld(heardRef.current);
+          return;
         }
-        deliveredRef.current = true;
-        setState("idle");
-        setError("終わり、と言うまで待っていました。もう一度、緑のボタンを押して話してください。");
-        return;
       }
       if (utterance) {
         carried = `${carried}${utterance}`.trim();
@@ -778,16 +766,9 @@ export default function VoiceInput({
           }
           try {
             recognition.start();
+            setState("listening");
           } catch {
-            if (desktop && attempt < 4) {
-              resume(attempt + 1);
-              return;
-            }
-            recognitionRef.current = null;
-            setState("idle");
-            if (!heardRef.current) {
-              setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
-            }
+            resume(Math.min(attempt + 1, 20));
           }
         }, desktop ? 40 + attempt * 60 : 250);
       };
@@ -841,9 +822,7 @@ export default function VoiceInput({
           recognition.start();
           setState("listening");
         } catch {
-          recognitionRef.current = null;
-          setState("idle");
-          setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
+          restart();
         }
       }, 300);
     };
@@ -859,18 +838,10 @@ export default function VoiceInput({
     timerRef.current = window.setInterval(() => {
       const elapsed = Date.now() - startedAt;
       setSeconds(Math.floor(elapsed / 1000));
-      if (elapsed < maxSeconds * 1000 || deliveredRef.current) return;
-      if (heardRef.current.trim() && userSaidEnd(heardRef.current)) {
-        const held = textToHold(heardRef.current, true);
-        if (held.text.trim()) {
-          deliverHeld(held.text);
-          return;
-        }
-      }
-      deliveredRef.current = true;
-      recognition.stop();
-      setState("idle");
-      setError("終わり、と言うまで待っていました。もう一度、緑のボタンを押して話してください。");
+      if (deliveredRef.current || Date.now() < acceptEndAt) return;
+      if (!heardRef.current.trim() || !userSaidEnd(heardRef.current)) return;
+      const held = textToHold(heardRef.current, true);
+      if (held.done && held.text.trim()) deliverHeld(heardRef.current);
     }, 250);
   };
 
@@ -908,20 +879,9 @@ export default function VoiceInput({
   };
 
   const finishHeld = () => {
+    if (!userSaidEnd(heardRef.current)) return;
     if (recognitionRef.current) {
-      const held = textToHold(heardRef.current);
-      if (!heardRef.current.trim()) {
-        deliveredRef.current = true;
-        sessionRef.current += 1;
-        if (timerRef.current !== null) window.clearInterval(timerRef.current);
-        timerRef.current = null;
-        recognitionRef.current.abort();
-        recognitionRef.current = null;
-        setState("idle");
-        setError("声が聞き取れませんでした。もう一度、緑のボタンを押して話してください。");
-        return;
-      }
-      deliverHeld(held.text);
+      deliverHeld(heardRef.current);
       return;
     }
     finishRef.current?.();
@@ -960,7 +920,8 @@ export default function VoiceInput({
       heardRef.current.trim() &&
       !deliveredRef.current
     ) {
-      deliverHeld(textToHold(heardRef.current).text);
+      if (!userSaidEnd(heardRef.current)) return;
+      deliverHeld(heardRef.current);
       return;
     }
     if (localStorage.getItem(consentKey) !== "agreed") {
