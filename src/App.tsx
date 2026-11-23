@@ -7225,6 +7225,19 @@ export default function App() {
       setLoadError(
         reason instanceof Error ? reason.message : "返事を送信できませんでした。",
       );
+      if (!visualSupportEnabledRef.current) return;
+      speakJapanese("エラーになりました。");
+      if (showVoiceRef.current || dmInCallRef.current || dmIncomingRef.current) return;
+      assistedShortCueRef.current = false;
+      flushSync(() => {
+        setVoiceAutoMode(true);
+        setVoiceConfirmationAutoStart(false);
+        setShowConfirmation(false);
+        setReplyModeState("voice");
+        setIsReplyPanelOpen(true);
+      });
+      localStorage.setItem(replyModeStorageKey, "voice");
+      assistedVoiceStartRef.current?.();
     }
   };
 
