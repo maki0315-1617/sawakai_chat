@@ -19,7 +19,6 @@ type VoiceInputProps = {
   cancelSignal?: number;
   /** 視覚サポートの返事だけ。「終わり」まで切らずに聞く */
   holdForEnd?: boolean;
-  manualStopOnly?: boolean;
   onCue?: (done: () => void) => void;
   startRef?: MutableRefObject<(() => void) | null>;
   restartSignal?: number;
@@ -324,7 +323,6 @@ export default function VoiceInput({
   onStatusChange,
   cancelSignal = 0,
   holdForEnd = false,
-  manualStopOnly = false,
   onCue,
   startRef,
   restartSignal = 0,
@@ -602,7 +600,6 @@ export default function VoiceInput({
         if (
           elapsed >= maxSeconds * 1000 ||
           (!holdForEndRef.current &&
-            !manualStopOnly &&
             heardVoice &&
             now - lastVoiceAt > silenceStopMs)
         ) {
@@ -1115,7 +1112,6 @@ export default function VoiceInput({
       return;
     }
     if (holdForEndRef.current) startAssisted();
-    else if (onCueRef.current) startStandard();
     else startListening();
   };
   if (startRef) {
@@ -1192,9 +1188,7 @@ export default function VoiceInput({
           state === "listening"
             ? holdForEnd
               ? "終わりと言うか、もう一度押してください"
-              : manualStopOnly
-                ? "録音を止めて確認。画面一番上の赤いボタン"
-                : "話し終わったら押してください"
+              : "話し終わったら押してください"
             : "話して入力する"
         }
         className={`voice-input__button ${state === "listening" ? "is-listening" : ""}`}
@@ -1205,9 +1199,7 @@ export default function VoiceInput({
         {state === "listening"
           ? holdForEnd
             ? `終わり、と言う（${seconds}秒）`
-            : manualStopOnly
-              ? `⏹ 録音を止めて確認（${seconds}秒）`
-              : `⏹ 話し終わったら押す（${seconds}秒）`
+            : `⏹ 話し終わったら押す（${seconds}秒）`
           : state === "starting"
             ? "🎤 マイクを準備しています…"
           : state === "sending"
@@ -1220,9 +1212,7 @@ export default function VoiceInput({
             ? "マイクの準備をしています。"
             : holdForEnd
               ? "聞いています。終わったら、終わり、と言ってください。"
-              : manualStopOnly
-                ? "録音中です。話し終わったら一番上の赤い「録音を止めて確認」ボタンを押してください。"
-                : "🔴 聞いています。ゆっくり話してください。"}
+              : "🔴 聞いています。ゆっくり話してください。"}
           <button className="voice-input__cancel" onClick={cancel} type="button">
             やめる
           </button>
