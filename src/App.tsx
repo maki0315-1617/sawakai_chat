@@ -7217,7 +7217,9 @@ export default function App() {
       trackEvent("message_sent");
       setSentNotice(true);
       window.setTimeout(() => setSentNotice(false), 2200);
-      if (visualSupportEnabledRef.current) speakJapanese("送信しました。");
+      if (visualSupportEnabledRef.current) {
+        speakJapanese("送信しました。次に送信する場合は一番下を押してください。");
+      }
     } catch (reason) {
       setPendingSend(null);
       setLoadError(
