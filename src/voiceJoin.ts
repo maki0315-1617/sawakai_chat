@@ -995,9 +995,11 @@ export function listenForAnswer(handlers: {
   onStop?: () => void;
   onOther?: () => void;
   accept?: (text: string) => boolean;
+  isStop?: (text: string) => boolean;
   gate?: () => boolean;
 }): VoiceSession {
   const accept = handlers.accept ?? isSpokenYes;
+  const stop = handlers.isStop ?? isSpokenStop;
   let cancelled = false;
   let decided = false;
   let current: Recognition | null = null;
@@ -1051,7 +1053,7 @@ export function listenForAnswer(handlers: {
         const text = row?.[0]?.transcript ?? "";
         if (!text.trim()) continue;
         if (handlers.gate && !handlers.gate()) continue;
-        if (handlers.onStop && isSpokenStop(text)) {
+        if (handlers.onStop && stop(text)) {
           finish("stop");
           return;
         }

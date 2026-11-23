@@ -17,7 +17,7 @@ import {
   VideoPresets,
 } from "livekit-client";
 import { SheetHandle, useSheetDrag } from "./sheetDrag";
-import { isIphoneDevice, isSpokenAnswer, isSpokenCallYes, isSpokenPlaceCall, listenForAnswer, type VoiceSession } from "./voiceJoin";
+import { isAndroidDevice, isIphoneDevice, isSpokenAnswer, isSpokenCallYes, isSpokenPlaceCall, isSpokenStop, listenForAnswer, type VoiceSession } from "./voiceJoin";
 
 type DmStatus = "ringing" | "active" | "ended" | "missed" | "rejected" | "busy";
 type DmCallView = {
@@ -71,6 +71,15 @@ const defaultLimitSec = 180;
 const warningSec = 30;
 const timeUpMessage =
   "3分になったので、通話を終わりました。またお話ししましょう。";
+
+function isSpokenQuit(text: string) {
+  const value = text
+    .normalize("NFKC")
+    .replace(/[\u30a1-\u30f6]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60))
+    .replace(/[\s。、.,！!？?]/g, "");
+  if (/やめない|やめません/.test(value)) return false;
+  return /やめる|やめます|やめて/.test(value);
+}
 const listenNoticeKey = "sawakai-dm-listen-notice";
 const volumeSteps = [0.4, 0.6, 0.8, 1];
 
@@ -1598,7 +1607,11 @@ export default function DirectCall({
     const token = ++callYesTokenRef.current;
     setAssistedWaitSec(assistedReplyWaitMs / 1000);
     announceRef.current(
-      lastPerson ? `最後の${name}さんです。` : `${name}さんです。`,
+      lastPerson && isAndroidDevice()
+        ? `最後の${name}さんです。やめる、と言うと最初の画面に戻ります。`
+        : lastPerson
+          ? `最後の${name}さんです。`
+          : `${name}さんです。`,
       () => {
         if (callYesTokenRef.current !== token) return;
         callYesReadyRef.current = true;
@@ -1614,6 +1627,19 @@ export default function DirectCall({
     others.length === 0 ? 0 : Math.min(pickIndex, others.length - 1);
   const assistedPerson = others[assistedIndex];
   const assistedLast = others.length === 0 || assistedIndex >= others.length - 1;
+  const assistedLastRef = useRef(false);
+  assistedLastRef.current = assistedLast;
+  const leaveLastPerson = () => {
+    window.clearTimeout(assistedReplyTimerRef.current);
+    callYesReadyRef.current = false;
+    callYesTokenRef.current += 1;
+    callYesRef.current?.cancel();
+    callYesRef.current = null;
+    announce("やめるが選択されました。");
+    onClosePanel();
+    tellHome();
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  };
   const startAssistedReplyWait = (
     token: number,
     waitMs = assistedReplyWaitMs,
@@ -1643,11 +1669,8 @@ export default function DirectCall({
     callYesReadyRef.current = false;
     callYesTokenRef.current += 1;
     if (!assistedPerson || others.length === 0) return;
-    if (isIphoneDevice() && assistedLast) {
-      announce("やめるが選択されました。");
-      onClosePanel();
-      tellHome();
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    if ((isIphoneDevice() || isAndroidDevice()) && assistedLast) {
+      leaveLastPerson();
       return;
     }
     const nextIndex = assistedLast ? 0 : assistedIndex + 1;
@@ -1658,13 +1681,28 @@ export default function DirectCall({
     assistedSpokenRef.current = `${nextIndex}:${others.length}:${next.name}`;
     const token = callYesTokenRef.current;
     announce(
-      last ? `最後の${next.name}さんです。` : `${next.name}さんです。`,
+      last && isAndroidDevice()
+        ? `最後の${next.name}さんです。やめる、と言うと最初の画面に戻ります。`
+        : last
+          ? `最後の${next.name}さんです。`
+          : `${next.name}さんです。`,
       () => startAssistedReplyWait(token),
     );
     setPickIndex(nextIndex);
   };
   const assistedTimeout = () => {
     if (!assistedPerson || others.length === 0) return;
+    if (isAndroidDevice() && assistedLast) {
+      window.clearTimeout(assistedReplyTimerRef.current);
+      callYesReadyRef.current = false;
+      callYesTokenRef.current += 1;
+      callYesRef.current?.cancel();
+      callYesRef.current = null;
+      onClosePanel();
+      tellHome();
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      return;
+    }
     const nextIndex = assistedLast ? 0 : assistedIndex + 1;
     const next = others[nextIndex];
     if (!next) return;
@@ -1707,6 +1745,9 @@ export default function DirectCall({
     if (isIphoneDevice() || callYesRef.current) return;
     callYesRef.current = listenForAnswer({
       accept: isSpokenPlaceCall,
+      isStop: (text) =>
+        isSpokenStop(text) ||
+        (isAndroidDevice() && assistedLastRef.current && isSpokenQuit(text)),
       gate: () => callYesReadyRef.current,
       onYes: () => {
         callYesRef.current = null;
@@ -1865,7 +1906,9 @@ export default function DirectCall({
                 ? assistedLast
                   ? "右を押すと電話がかかります。左を押すとやめます。"
                   : "右を押すと電話がかかります。左を押すと次の人です。"
-                : `次へで次の人です。はい、または、かけるで呼び出します。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`}
+                : isAndroidDevice() && assistedLast
+                  ? `やめる、と言うと最初の画面に戻ります。はい、または、かけるで呼び出します。${assistedWaitSec}秒返事がないと最初の画面に戻ります。`
+                  : `次へで次の人です。はい、または、かけるで呼び出します。「終わる」で終わります。${assistedWaitSec}秒返事がないと次の人です。`}
             </p>
             <div className="dm-screen__sides">
               <button
@@ -1874,7 +1917,7 @@ export default function DirectCall({
                 type="button"
               >
                 <small>左</small>
-                {isIphoneDevice() && assistedLast ? "やめる" : "次の人"}
+                {(isIphoneDevice() || isAndroidDevice()) && assistedLast ? "やめる" : "次の人"}
               </button>
               <button
                 className="dm-side dm-side--answer"
