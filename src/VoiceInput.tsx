@@ -543,14 +543,36 @@ export default function VoiceInput({
           noiseSuppression: true,
           autoGainControl: true,
         };
+    const requestMic = async () => {
+      if (!plainIphone) return navigator.mediaDevices.getUserMedia({ audio });
+      let settled = false;
+      const pending = navigator.mediaDevices.getUserMedia({ audio }).then((stream) => {
+        if (settled) stream.getTracks().forEach((track) => track.stop());
+        return stream;
+      });
+      let timer = 0;
+      try {
+        return await Promise.race([
+          pending,
+          new Promise<MediaStream>((_resolve, reject) => {
+            timer = window.setTimeout(() => {
+              settled = true;
+              reject(new Error("mic-timeout"));
+            }, 8000);
+          }),
+        ]);
+      } finally {
+        window.clearTimeout(timer);
+      }
+    };
     try {
-      let stream = await navigator.mediaDevices.getUserMedia({ audio });
+      let stream = await requestMic();
       if (hearOnIphone || plainIphone) {
         const track = stream.getAudioTracks()[0];
         if (!track || track.readyState !== "live") {
           stream.getTracks().forEach((item) => item.stop());
           ensureIphoneReplyMic();
-          stream = await navigator.mediaDevices.getUserMedia({ audio });
+          stream = await requestMic();
         }
       }
       if (cancelledRef.current || generation !== generationRef.current) {
@@ -614,7 +636,9 @@ export default function VoiceInput({
 
       setSeconds(0);
       setState(
-        assistedIphone && !replyReadyRef.current ? "starting" : "listening",
+        assistedIphone && !plainIphone && !replyReadyRef.current
+          ? "starting"
+          : "listening",
       );
       timerRef.current = window.setInterval(() => {
         const now = Date.now();
