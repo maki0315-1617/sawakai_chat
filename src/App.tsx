@@ -7699,16 +7699,6 @@ export default function App() {
 
   const startIphoneHeldListen = (fromRetap: boolean) => {
     allowIphoneChatMic();
-    if (fromRetap) {
-      try {
-        const session = (
-          navigator as unknown as { audioSession?: { type: string } }
-        ).audioSession;
-        if (session) session.type = "play-and-record";
-      } catch {
-        // 古いiPhoneには音声セッションの切り替えがない
-      }
-    }
     iphoneListenFromRetapRef.current = fromRetap;
     iphoneMicLostRef.current = false;
     iphoneHeldListenRef.current?.stop();
@@ -7721,7 +7711,8 @@ export default function App() {
         startupFailRef.current();
       },
     });
-    session.prime();
+    if (fromRetap) session.listenNow();
+    else session.prime();
     iphoneHeldListenRef.current = session;
   };
 
@@ -7766,21 +7757,6 @@ export default function App() {
         iphoneRetapShownRef.current = false;
         window.clearTimeout(iphoneWindowTimerRef.current);
         startIphoneHeldListen(true);
-        let began = false;
-        const begin = () => {
-          if (
-            began ||
-            startupDoneRef.current ||
-            !startupActiveRef.current ||
-            !iphoneChatWindowRef.current
-          ) {
-            return;
-          }
-          began = true;
-          iphoneHeldListenRef.current?.arm();
-        };
-        if (!speakJapanese("どうぞ。", begin, begin)) begin();
-        window.setTimeout(begin, 2500);
       }}
     >
       もう一度、画面を押してください

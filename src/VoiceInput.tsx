@@ -1,5 +1,10 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
-import { holdMicrophoneRelease, isDesktopDevice, isIphoneDevice } from "./voiceJoin";
+import {
+  holdMicrophoneRelease,
+  isDesktopDevice,
+  isIphoneDevice,
+  releaseIphoneAudioSession,
+} from "./voiceJoin";
 
 type VoiceInputProps = {
   apiRoot: string;
@@ -381,6 +386,7 @@ export default function VoiceInput({
     streamRef.current = null;
     void contextRef.current?.close().catch(() => undefined);
     contextRef.current = null;
+    releaseIphoneAudioSession();
   };
 
   const stop = () => {
@@ -562,7 +568,6 @@ export default function VoiceInput({
       timerRef.current = window.setInterval(() => {
         const now = Date.now();
         if (assistedIphone && recordArmedRef.current && context.state !== "running") {
-          openMicSession(true);
           void context.resume().catch(() => undefined);
         }
         if (!recordArmedRef.current) {

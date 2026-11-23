@@ -40,6 +40,19 @@ let desktopMicPrimed = false;
 let desktopMicPriming = false;
 const releaseMicHandlers = new Set<() => void>();
 
+/** iPhoneは録音モードのままだと、上部のマイク表示が消えず、声も読めません。 */
+export function releaseIphoneAudioSession() {
+  if (!isIphoneDevice()) return;
+  try {
+    const session = (
+      navigator as unknown as { audioSession?: { type: string } }
+    ).audioSession;
+    if (session && session.type !== "auto") session.type = "auto";
+  } catch {
+    // 古いiPhoneには音声セッションの切り替えがない
+  }
+}
+
 /** 画面を閉じたとき、起動中のマイクをすべて止めます。 */
 export function releaseAllMicrophones() {
   releaseMicHandlers.forEach((release) => {
@@ -49,6 +62,7 @@ export function releaseAllMicrophones() {
       // すでに止まっている
     }
   });
+  releaseIphoneAudioSession();
 }
 
 export function holdMicrophoneRelease(release: () => void) {
@@ -675,9 +689,8 @@ function listenAndroidStartup(handlers: {
 }
 
 /**
- * iPhoneの初期画面です。タップの中で開いたマイクは、案内のあとで止めません。
- * 止まっていたときだけ開き直し、開けなければもう一度タップしてもらいます。
- * 「グループ」などの短い言葉は、確定前でも受けます。
+ * iPhoneの初期画面です。案内のあいだはマイクを閉じ、聞くときだけ開きます。
+ * 聞き終わったら上部のマイク表示を消します。開けなければ、もう一度タップしてもらいます。
  */
 function listenIphoneStartup(handlers: {
   onMatch: (text?: string) => void;
@@ -705,23 +718,36 @@ function listenIphoneStartup(handlers: {
   let ready = false;
   let live = false;
   let failed = false;
+  let warmed = false;
+  let restarts = 0;
   let current: Recognition | null = null;
   let watch = 0;
+  let restartTimer = 0;
   let readyAt = 0;
+  const acceptTextNow = acceptText;
+  const abortCurrent = () => {
+    window.clearTimeout(watch);
+    window.clearTimeout(restartTimer);
+    const recognition = current;
+    current = null;
+    live = false;
+    try {
+      recognition?.abort();
+    } catch {
+      // already stopped
+    }
+  };
   const fail = () => {
     if (stopped || matched || failed) return;
     failed = true;
     ready = false;
-    window.clearTimeout(watch);
-    try {
-      current?.abort();
-    } catch {
-      // already stopped
-    }
+    abortCurrent();
+    releaseIphoneAudioSession();
     handlers.onFailed();
   };
   const start = () => {
-    if (stopped || matched || live) return;
+    if (stopped || matched) return;
+    abortCurrent();
     const recognition = new RecognitionClass();
     current = recognition;
     recognition.lang = "ja-JP";
@@ -741,27 +767,18 @@ function listenIphoneStartup(handlers: {
       const latest = results[results.length - 1];
       const text = latest?.[0]?.transcript ?? "";
       if (!text.trim()) return;
-      if (acceptText(text)) {
+      if (acceptTextNow(text)) {
         matched = true;
         ready = false;
-        live = false;
-        try {
-          recognition.abort();
-        } catch {
-          // already stopped
-        }
+        abortCurrent();
+        releaseIphoneAudioSession();
         handlers.onMatch(text);
         return;
       }
       if (!handlers.onUnrecognized || !latest?.isFinal) return;
       ready = false;
-      live = false;
-      current = null;
-      try {
-        recognition.abort();
-      } catch {
-        // already stopped
-      }
+      abortCurrent();
+      releaseIphoneAudioSession();
       handlers.onUnrecognized();
     };
     recognition.onerror = (event) => {
@@ -773,14 +790,19 @@ function listenIphoneStartup(handlers: {
     recognition.onend = () => {
       if (current !== recognition) return;
       live = false;
-      if (stopped || matched || !ready || failed) return;
-      window.setTimeout(() => {
-        if (stopped || matched || !ready || failed || live) return;
-        try {
-          start();
-        } catch {
-          fail();
-        }
+      current = null;
+      if (stopped || matched || !ready || failed) {
+        releaseIphoneAudioSession();
+        return;
+      }
+      if (restarts >= 1) {
+        fail();
+        return;
+      }
+      restarts += 1;
+      restartTimer = window.setTimeout(() => {
+        if (stopped || matched || !ready || failed) return;
+        start();
       }, 300);
     };
     try {
@@ -789,16 +811,6 @@ function listenIphoneStartup(handlers: {
       const name = error instanceof DOMException ? error.name : "";
       if (name === "InvalidStateError") return;
       if (ready) fail();
-    }
-  };
-  const holdMic = () => {
-    try {
-      const session = (
-        navigator as unknown as { audioSession?: { type: string } }
-      ).audioSession;
-      if (session) session.type = "play-and-record";
-    } catch {
-      // 古いiPhoneには音声セッションの切り替えがない
     }
   };
   const expectStart = () => {
@@ -812,7 +824,7 @@ function listenIphoneStartup(handlers: {
     failed = false;
     ready = true;
     readyAt = Date.now();
-    holdMic();
+    restarts = 0;
     if (live) return;
     start();
     expectStart();
@@ -821,21 +833,36 @@ function listenIphoneStartup(handlers: {
     stopped = true;
     ready = false;
     matched = true;
-    window.clearTimeout(watch);
-    try {
-      current?.abort();
-    } catch {
-      // already stopped
-    }
-    current = null;
-    live = false;
+    abortCurrent();
+    releaseIphoneAudioSession();
   };
   holdMicrophoneRelease(stop);
   return {
     stop,
     prime() {
-      if (stopped || matched || live) return;
-      start();
+      if (stopped || matched || warmed || live) return;
+      warmed = true;
+      const recognition = new RecognitionClass();
+      recognition.lang = "ja-JP";
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.onresult = () => undefined;
+      recognition.onerror = () => undefined;
+      recognition.onend = () => {
+        releaseIphoneAudioSession();
+      };
+      recognition.onstart = () => {
+        try {
+          recognition.abort();
+        } catch {
+          // 許可だけ確認して、案内のあいだはマイク表示を消す
+        }
+      };
+      try {
+        recognition.start();
+      } catch {
+        releaseIphoneAudioSession();
+      }
     },
     arm,
     listenNow: arm,
