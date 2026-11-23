@@ -523,7 +523,7 @@ const visualSupportStorageKey = "sawakai-visual-support";
 const visualCallButtons =
   "グループ通話は、画面の一番上の緑のボタンを一度押します。その下の青いボタンで、1対1の電話をします。";
 const visualIncomingGuide =
-  "電話が来たら、右を押すと出て、左を押すと出ません。";
+  "電話が来たら、出るときは下の緑を押します。出ないときは、一番上の、出ない、を押してください。";
 const visualCallGuide = `${visualCallButtons}${visualIncomingGuide}`;
 const visualStartupChoice =
   "初期起動は、グループ、電話、チャット、と言ってください。終了するときは、閉じる、または、終わる、と言ってください。どうぞ。";

@@ -6538,3 +6538,11 @@ input:focus-visible {
 .dm-side--answer {
   background: #0b6b4f;
 }
+
+.dm-screen--sides.dm-screen--leave {
+  padding-top: 176px;
+}
+
+.dm-side--full {
+  grid-column: 1 / -1;
+}

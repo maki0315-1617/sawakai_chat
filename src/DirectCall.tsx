@@ -1157,8 +1157,8 @@ export default function DirectCall({
       window.clearTimeout(releaseTimer);
       releaseTimer = window.setTimeout(resumeRing, 9000);
       const lead = iphone
-        ? "右を押すと出ます。左を押すと出ません。"
-        : "出ます、または、はい、と言うと出ます。右を押すと出ます。左を押すと出ません。";
+        ? "出るときは、下の緑を押します。出ないときは、一番上の、出ない、を押してください。"
+        : "出ます、または、はい、と言うと出ます。出ないときは、一番上の、出ない、を押してください。";
       const line = `${peer}さんから電話です。${lead}`;
       const onSpoken = () => {
         window.clearTimeout(releaseTimer);
@@ -1396,6 +1396,17 @@ export default function DirectCall({
     // dismissMissed と startCall は、この着信のあいだだけ使う
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missedPrompt, call, iphoneSpeechReady]);
+
+  useEffect(() => {
+    if (phase !== "calling" || !visualSupportEnabled) return;
+    const message =
+      "呼び出し中です。やめるときは、一番上の、やめる、を押してください。";
+    let timer = 0;
+    const say = () => announceRef.current(message);
+    if (endGuidanceRef.current?.()) timer = window.setTimeout(say, 100);
+    else say();
+    return () => window.clearTimeout(timer);
+  }, [phase, visualSupportEnabled]);
 
   useEffect(() => {
     if (phase !== "incall" || !visualSupportEnabled) return;
@@ -1801,21 +1812,38 @@ export default function DirectCall({
     };
   }
 
-  const leaveFromTop =
-    visualSupportEnabled && phase === "incall"
-      ? createPortal(
-          <div className="voice-join-banner voice-leave-banner">
-            <button
-              className="voice-join-banner__button voice-leave-top"
-              onClick={() => void hangUp()}
-              type="button"
-            >
-              電話を切る
-            </button>
-          </div>,
-          document.body,
-        )
-      : null;
+  const topEndVisible =
+    visualSupportEnabled &&
+    !!call &&
+    (phase === "calling" ||
+      phase === "incoming" ||
+      phase === "connecting" ||
+      phase === "incall");
+  const topEndLabel =
+    phase === "calling" ? "やめる" : phase === "incoming" ? "出ない" : "電話を切る";
+  const pressTopEnd = () => {
+    if (phase === "incoming") {
+      answerYesRef.current?.cancel();
+      answerYesRef.current = null;
+      incomingChoiceRef.current = true;
+      announceRef.current("出ません。");
+    }
+    void hangUp();
+  };
+  const leaveFromTop = topEndVisible
+    ? createPortal(
+        <div className="voice-join-banner voice-leave-banner">
+          <button
+            className="voice-join-banner__button voice-leave-top"
+            onClick={pressTopEnd}
+            type="button"
+          >
+            {topEndLabel}
+          </button>
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <>
@@ -2034,7 +2062,7 @@ export default function DirectCall({
 
       {call && phase && (
         <div
-          className={`dm-screen ${videoMode ? "dm-screen--video" : ""} ${phase === "incoming" && visualSupportEnabled ? "dm-screen--sides" : ""} ${phase === "incall" && visualSupportEnabled ? "dm-screen--leave" : ""}`}
+          className={`dm-screen ${videoMode ? "dm-screen--video" : ""} ${phase === "incoming" && visualSupportEnabled ? "dm-screen--sides" : ""} ${topEndVisible ? "dm-screen--leave" : ""}`}
           role="alertdialog"
           aria-label="1対1通話"
         >
@@ -2097,29 +2125,15 @@ export default function DirectCall({
             <p className="dm-screen__hint">
               {visualSupportEnabled
                 ? isIphoneDevice()
-                  ? "右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
-                  : "出ます、または、はいと言うと出ます。右を押すと出ます。左を押すと出ません。1回の通話は3分です。"
+                  ? "出るときは、下の緑を押します。出ないときは、一番上の、出ない、を押してください。1回の通話は3分です。"
+                  : "出ます、または、はいと言うと出ます。出ないときは、一番上の、出ない、を押してください。1回の通話は3分です。"
                 : "1回の通話は3分までです"}
             </p>
           )}
           {phase === "incoming" && visualSupportEnabled ? (
             <div className="dm-screen__sides">
               <button
-                className="dm-side dm-side--decline"
-                onClick={() => {
-                  answerYesRef.current?.cancel();
-                  answerYesRef.current = null;
-                  incomingChoiceRef.current = true;
-                  announceRef.current("出ません。");
-                  void hangUp();
-                }}
-                type="button"
-              >
-                <small>左</small>
-                出ない
-              </button>
-              <button
-                className="dm-side dm-side--answer"
+                className="dm-side dm-side--answer dm-side--full"
                 onClick={() => {
                   answerYesRef.current?.cancel();
                   answerYesRef.current = null;
@@ -2129,7 +2143,6 @@ export default function DirectCall({
                 }}
                 type="button"
               >
-                <small>右</small>
                 出る
               </button>
             </div>
@@ -2206,7 +2219,7 @@ export default function DirectCall({
                   </p>
                 </>
               )}
-              {!(visualSupportEnabled && phase === "incall") && (
+              {!topEndVisible && (
                 <button
                   className="dm-big-button dm-big-button--end"
                   onClick={() => void hangUp()}
